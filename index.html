@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a3d1f" />
+  <title>Poker Timer</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Poker Timer" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    html, body { background: #020a06; margin: 0; padding: 0; min-height: 100vh; }
+    #root { min-height: 100vh; }
+    /* Prevent pull-to-refresh and overscroll behaviour */
+    body { overscroll-behavior-y: contain; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react" data-type="module">
+// Destructure hooks for in-browser use
+const { useState, useEffect, useRef, useCallback } = React;
+
+// Inline SVG icon components — replacements for lucide-react
+const Icon = ({ children, size = 24 }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+);
+const Play = (p) => <Icon {...p}><polygon points="6 3 20 12 6 21 6 3"/></Icon>;
+const Pause = (p) => <Icon {...p}><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></Icon>;
+const SkipForward = (p) => <Icon {...p}><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></Icon>;
+const SkipBack = (p) => <Icon {...p}><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></Icon>;
+const Volume2 = (p) => <Icon {...p}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></Icon>;
+const VolumeX = (p) => <Icon {...p}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></Icon>;
+const Users = (p) => <Icon {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Icon>;
+const Settings = (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>;
+const Plus = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
+const Trash2 = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></Icon>;
+const X = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Icon>;
+const ChevronRight = (p) => <Icon {...p}><polyline points="9 18 15 12 9 6"/></Icon>;
+const ChevronLeft = (p) => <Icon {...p}><polyline points="15 18 9 12 15 6"/></Icon>;
+const Edit3 = (p) => <Icon {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></Icon>;
+
+
+
+// Generate a blind structure from buy-in, stack, players, and target duration.
+function generateBlindStructure(buyIn, stackSize, numPlayers, durationMinutes, includeAntes) {
+  const targetFinalBB = Math.max(stackSize / 15, stackSize / 10);
+
+  let levelLength;
+  if (durationMinutes <= 90) levelLength = 12;
+  else if (durationMinutes <= 180) levelLength = 15;
+  else if (durationMinutes <= 300) levelLength = 20;
+  else levelLength = 25;
+
+  const breakEveryNLevels = Math.max(3, Math.round(90 / levelLength));
+  const breakLength = 10;
+
+  let nPlayLevels = Math.floor(durationMinutes / levelLength);
+  const estimatedBreaks = Math.floor(nPlayLevels / breakEveryNLevels);
+  nPlayLevels = Math.max(4, Math.floor((durationMinutes - estimatedBreaks * breakLength) / levelLength));
+
+  const startBB = Math.max(100, roundBlind(stackSize / 100));
+  const endBB = roundBlind(targetFinalBB);
+  const growth = Math.pow(endBB / startBB, 1 / Math.max(1, nPlayLevels - 1));
+
+  const levels = [];
+  let playLevelCount = 0;
+  let lastBB = 0;
+  for (let i = 0; i < nPlayLevels; i++) {
+    let bb = roundBlind(startBB * Math.pow(growth, i));
+    // Ensure strict monotonic increase. If rounding produced same/lower, bump to next step.
+    if (bb <= lastBB) {
+      bb = nextBlindStep(lastBB);
+    }
+    lastBB = bb;
+    // SB should be exactly half BB, snapped down to a valid chip value
+    const sb = Math.max(roundBlind(bb / 2), 50);
+    const ante = includeAntes && i >= Math.floor(nPlayLevels / 3) ? roundBlind(bb / 4) : 0;
+    levels.push({ sb, bb, ante, duration: levelLength, isBreak: false });
+    playLevelCount++;
+    if (playLevelCount % breakEveryNLevels === 0 && i < nPlayLevels - 1) {
+      levels.push({ sb: 0, bb: 0, ante: 0, duration: breakLength, isBreak: true });
+    }
+  }
+  return levels;
+}
+
+// Step to the next sensible blind value above the given one
+function nextBlindStep(current) {
+  if (current < 100) return current + 50;
+  if (current < 500) return current + 100;
+  if (current < 1000) return current + 200;
+  if (current < 5000) return current + 500;
+  if (current < 10000) return current + 1000;
+  return current + 2000;
+}
+
+function roundBlind(value) {
+  if (value < 50) return Math.max(50, Math.round(value / 50) * 50);
+  if (value < 500) return Math.round(value / 50) * 50;
+  if (value < 1000) return Math.round(value / 100) * 100;
+  if (value < 5000) return Math.round(value / 500) * 500;
+  if (value < 10000) return Math.round(value / 500) * 500;
+  return Math.round(value / 1000) * 1000;
+}
+
+const formatTime = (seconds) => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
+
+// ============ SETUP WIZARD ============
+function SetupWizard({ onStart }) {
+  const [step, setStep] = useState(0);
+  const [buyIn, setBuyIn] = useState('20');
+  const [stackSize, setStackSize] = useState('10000');
+  const [roster, setRoster] = useState([]); // every club member, persisted
+  const [playingTonight, setPlayingTonight] = useState(new Set()); // names selected for this game
+  const [newPlayer, setNewPlayer] = useState('');
+  const [duration, setDuration] = useState('180');
+  const [includeAntes, setIncludeAntes] = useState(false);
+  const [rosterLoaded, setRosterLoaded] = useState(false);
+
+  // Load saved roster on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = ({ value: localStorage.getItem("poker-roster") });
+        if (saved && saved.value) {
+          const parsed = JSON.parse(saved.value);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setRoster(parsed);
+            setPlayingTonight(new Set(parsed)); // default: everyone playing
+          }
+        }
+      } catch (e) { /* no saved roster yet */ }
+      setRosterLoaded(true);
+    })();
+  }, []);
+
+  // Persist roster whenever it changes
+  useEffect(() => {
+    if (!rosterLoaded) return;
+    (async () => {
+      try {
+        localStorage.setItem("poker-roster", JSON.stringify(roster));
+      } catch (e) { /* fail silently */ }
+    })();
+  }, [roster, rosterLoaded]);
+
+  const addPlayer = () => {
+    const name = newPlayer.trim();
+    if (!name) return;
+    if (roster.includes(name)) {
+      // Already in roster — just make sure they're selected
+      setPlayingTonight((prev) => new Set([...prev, name]));
+    } else {
+      setRoster([...roster, name]);
+      setPlayingTonight((prev) => new Set([...prev, name]));
+    }
+    setNewPlayer('');
+  };
+
+  const togglePlaying = (name) => {
+    setPlayingTonight((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  // Remove from roster entirely (long-press / trash icon)
+  const removeFromRoster = (name) => {
+    setRoster(roster.filter((p) => p !== name));
+    setPlayingTonight((prev) => {
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
+  };
+
+  const selectAll = () => setPlayingTonight(new Set(roster));
+  const selectNone = () => setPlayingTonight(new Set());
+
+  const playersArray = roster.filter((p) => playingTonight.has(p));
+
+  const canAdvance = () => {
+    if (step === 0) return parseFloat(buyIn) > 0;
+    if (step === 1) return parseInt(stackSize) > 0;
+    if (step === 2) return playersArray.length >= 2;
+    if (step === 3) return parseInt(duration) >= 30;
+    return true;
+  };
+
+  const finish = () => {
+    const levels = generateBlindStructure(
+      parseFloat(buyIn),
+      parseInt(stackSize),
+      playersArray.length,
+      parseInt(duration),
+      includeAntes
+    );
+    onStart({
+      buyIn: parseFloat(buyIn),
+      stackSize: parseInt(stackSize),
+      players: playersArray,
+      duration: parseInt(duration),
+      levels,
+    });
+  };
+
+  const steps = ['BUY-IN', 'STACK', 'PLAYERS', 'DURATION', 'REVIEW'];
+
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center p-4" style={{
+      background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
+      fontFamily: "'Inter', system-ui, sans-serif",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+        .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.02em; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .gold-text {
+          background: linear-gradient(135deg, #f4d03f 0%, #f7dc6f 50%, #d4ac0d 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .gold-border {
+          border: 1px solid rgba(244, 208, 63, 0.3);
+          box-shadow: 0 0 40px rgba(244, 208, 63, 0.1), inset 0 0 60px rgba(244, 208, 63, 0.05);
+        }
+        .felt-texture {
+          background-image:
+            radial-gradient(circle at 25% 25%, rgba(255,255,255,0.03) 1px, transparent 1px),
+            radial-gradient(circle at 75% 75%, rgba(255,255,255,0.02) 1px, transparent 1px);
+          background-size: 24px 24px;
+        }
+        .input-large {
+          font-family: 'Bebas Neue', sans-serif;
+          letter-spacing: 0.02em;
+          background: rgba(0,0,0,0.4);
+          border: 1px solid rgba(244, 208, 63, 0.2);
+          color: #fef3c7;
+          text-align: center;
+          width: 100%;
+          padding: 1rem;
+          border-radius: 1rem;
+          transition: all 0.2s;
+        }
+        .input-large:focus {
+          outline: none;
+          border-color: rgba(244, 208, 63, 0.6);
+          box-shadow: 0 0 30px rgba(244, 208, 63, 0.2);
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(244, 208, 63, 0.3); border-radius: 3px; }
+        @keyframes slideIn {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .step-content { animation: slideIn 0.3s ease-out; }
+      `}</style>
+
+      <div className="felt-texture w-full max-w-2xl">
+        <div className="text-center mb-8">
+          <div className="font-display text-5xl gold-text">HOME GAME</div>
+          <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">TOURNAMENT SETUP</div>
+        </div>
+
+        <div className="flex justify-center gap-2 mb-8">
+          {steps.map((label, i) => (
+            <div key={i} className={`h-2 rounded-full transition-all ${i === step ? 'bg-yellow-400 w-8' : i < step ? 'bg-yellow-600 w-2' : 'bg-yellow-500/20 w-2'}`} />
+          ))}
+        </div>
+
+        <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12">
+          <div key={step} className="step-content">
+            {step === 0 && (
+              <div>
+                <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 text-center">STEP 1 OF 5</div>
+                <div className="font-display text-3xl gold-text text-center mb-2">WHAT'S THE BUY-IN?</div>
+                <div className="text-yellow-100/50 text-center mb-8 text-sm">How much each player puts in to play</div>
+                <div className="relative max-w-xs mx-auto">
+                  <div className="absolute left-6 top-1/2 -translate-y-1/2 font-display text-3xl text-yellow-500/40">£</div>
+                  <input
+                    type="number"
+                    value={buyIn}
+                    onChange={(e) => setBuyIn(e.target.value)}
+                    autoFocus
+                    className="input-large text-5xl pl-14"
+                  />
+                </div>
+                <div className="flex gap-2 justify-center mt-4">
+                  {['10', '20', '50', '100'].map((v) => (
+                    <button key={v} onClick={() => setBuyIn(v)} className="px-4 py-1.5 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50">£{v}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {step === 1 && (
+              <div>
+                <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 text-center">STEP 2 OF 5</div>
+                <div className="font-display text-3xl gold-text text-center mb-2">STARTING STACK?</div>
+                <div className="text-yellow-100/50 text-center mb-8 text-sm">Chips each player starts with</div>
+                <div className="max-w-xs mx-auto">
+                  <input
+                    type="number"
+                    value={stackSize}
+                    onChange={(e) => setStackSize(e.target.value)}
+                    autoFocus
+                    className="input-large text-5xl"
+                  />
+                </div>
+                <div className="flex gap-2 justify-center mt-4 flex-wrap">
+                  {['5000', '10000', '20000', '50000'].map((v) => (
+                    <button key={v} onClick={() => setStackSize(v)} className="px-4 py-1.5 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50">{parseInt(v).toLocaleString()}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {step === 2 && (
+              <div>
+                <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 text-center">STEP 3 OF 5</div>
+                <div className="font-display text-3xl gold-text text-center mb-2">WHO'S PLAYING?</div>
+                <div className="text-yellow-100/50 text-center mb-6 text-sm">
+                  {roster.length === 0
+                    ? 'Add your regulars below'
+                    : `${playersArray.length} of ${roster.length} playing tonight`}
+                </div>
+                <div className="flex gap-2 mb-4 max-w-md mx-auto">
+                  <input
+                    type="text"
+                    value={newPlayer}
+                    onChange={(e) => setNewPlayer(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addPlayer()}
+                    placeholder={roster.length === 0 ? "Add player..." : "Add new player..."}
+                    autoFocus
+                    className="flex-1 px-4 py-3 rounded-xl bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 focus:outline-none focus:border-yellow-500/50"
+                  />
+                  <button onClick={addPlayer} className="px-5 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-yellow-100 hover:bg-yellow-500/30">
+                    <Plus size={20} />
+                  </button>
+                </div>
+
+                {roster.length > 0 && (
+                  <>
+                    <div className="flex justify-center gap-3 mb-3">
+                      <button onClick={selectAll} className="px-3 py-1 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-xs hover:border-yellow-500/50">
+                        ALL IN
+                      </button>
+                      <button onClick={selectNone} className="px-3 py-1 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-xs hover:border-yellow-500/50">
+                        CLEAR
+                      </button>
+                    </div>
+                    <div className="max-w-md mx-auto grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto">
+                      {roster.map((name) => {
+                        const playing = playingTonight.has(name);
+                        return (
+                          <div
+                            key={name}
+                            className={`flex items-center gap-2 p-3 rounded-lg border transition-colors ${
+                              playing
+                                ? 'bg-emerald-950/40 border-emerald-500/40'
+                                : 'bg-black/30 border-yellow-500/10'
+                            }`}
+                          >
+                            <button
+                              onClick={() => togglePlaying(name)}
+                              className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                                playing
+                                  ? 'bg-emerald-500 border-emerald-400'
+                                  : 'border-yellow-100/30'
+                              }`}
+                            >
+                              {playing && (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                              )}
+                            </button>
+                            <button
+                              onClick={() => togglePlaying(name)}
+                              className={`flex-1 text-left ${playing ? 'text-emerald-100' : 'text-yellow-100/50'}`}
+                            >
+                              {name}
+                            </button>
+                            <button
+                              onClick={() => removeFromRoster(name)}
+                              className="text-yellow-100/30 hover:text-red-400"
+                              title="Remove from roster"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+
+                {playersArray.length >= 2 && (
+                  <div className="text-center mt-6 font-mono text-xs text-emerald-300/70">
+                    Prize pool: <span className="text-emerald-200">£{(parseFloat(buyIn) * playersArray.length).toFixed(0)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {step === 3 && (
+              <div>
+                <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 text-center">STEP 4 OF 5</div>
+                <div className="font-display text-3xl gold-text text-center mb-2">HOW LONG?</div>
+                <div className="text-yellow-100/50 text-center mb-8 text-sm">Target tournament duration in minutes</div>
+                <div className="max-w-xs mx-auto">
+                  <input
+                    type="number"
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                    autoFocus
+                    className="input-large text-5xl"
+                  />
+                  <div className="text-center font-mono text-yellow-100/40 text-xs mt-2">
+                    {duration && parseInt(duration) >= 60 ? `≈ ${Math.floor(parseInt(duration) / 60)}h ${parseInt(duration) % 60}m` : ''}
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-center mt-4 flex-wrap">
+                  {[
+                    { label: '1h', v: '60' },
+                    { label: '2h', v: '120' },
+                    { label: '3h', v: '180' },
+                    { label: '4h', v: '240' },
+                    { label: '5h', v: '300' },
+                  ].map(({ label, v }) => (
+                    <button key={v} onClick={() => setDuration(v)} className="px-4 py-1.5 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50">{label}</button>
+                  ))}
+                </div>
+                <div className="mt-8 max-w-md mx-auto flex items-center justify-between p-4 rounded-xl bg-black/30 border border-yellow-500/10">
+                  <div>
+                    <div className="text-yellow-100 text-sm">Include antes</div>
+                    <div className="text-yellow-100/40 text-xs font-mono mt-0.5">Off by default</div>
+                  </div>
+                  <button
+                    onClick={() => setIncludeAntes(!includeAntes)}
+                    className={`relative w-12 h-6 rounded-full transition-colors ${includeAntes ? 'bg-yellow-500' : 'bg-yellow-500/20'}`}
+                  >
+                    <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${includeAntes ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {step === 4 && (
+              <div>
+                <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 text-center">STEP 5 OF 5</div>
+                <div className="font-display text-3xl gold-text text-center mb-6">READY TO PLAY</div>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="p-4 rounded-xl bg-black/30 border border-yellow-500/10">
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest">BUY-IN</div>
+                    <div className="font-display text-3xl gold-text">£{buyIn}</div>
+                  </div>
+                  <div className="p-4 rounded-xl bg-black/30 border border-yellow-500/10">
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest">PRIZE POOL</div>
+                    <div className="font-display text-3xl gold-text">£{(parseFloat(buyIn) * playersArray.length).toFixed(0)}</div>
+                  </div>
+                  <div className="p-4 rounded-xl bg-black/30 border border-yellow-500/10">
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest">STACK</div>
+                    <div className="font-display text-3xl text-emerald-200">{parseInt(stackSize).toLocaleString()}</div>
+                  </div>
+                  <div className="p-4 rounded-xl bg-black/30 border border-yellow-500/10">
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest">PLAYERS</div>
+                    <div className="font-display text-3xl text-emerald-200">{playersArray.length}</div>
+                  </div>
+                </div>
+                <div className="p-4 rounded-xl bg-black/30 border border-yellow-500/10 mb-4">
+                  <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2">TARGET DURATION</div>
+                  <div className="font-display text-2xl text-emerald-200">
+                    {Math.floor(parseInt(duration) / 60)}h {parseInt(duration) % 60}m
+                    {!includeAntes && <span className="text-sm text-yellow-100/40 ml-3 font-sans">• no antes</span>}
+                    {includeAntes && <span className="text-sm text-yellow-100/40 ml-3 font-sans">• with antes</span>}
+                  </div>
+                </div>
+                <div className="text-center text-xs font-mono text-yellow-100/40">
+                  Blind structure will be generated for these settings.<br/>You can edit it after starting.
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-3 mt-6">
+          {step > 0 && (
+            <button onClick={() => setStep(step - 1)} className="px-6 py-3 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm hover:border-yellow-500/50 flex items-center gap-2">
+              <ChevronLeft size={16} /> BACK
+            </button>
+          )}
+          <button
+            onClick={step === 4 ? finish : () => setStep(step + 1)}
+            disabled={!canAdvance()}
+            className="flex-1 px-6 py-3 rounded-full font-display text-xl text-black disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
+          >
+            {step === 4 ? 'START TOURNAMENT' : <>NEXT <ChevronRight size={18} /></>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ MAIN TIMER ============
+function PokerTimerMain({ config, onReset }) {
+  const [levels, setLevels] = useState(config.levels);
+  const [players, setPlayers] = useState(config.players);
+  const [currentLevel, setCurrentLevel] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(config.levels[0].duration * 60);
+  const [isRunning, setIsRunning] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [eliminatedPlayers, setEliminatedPlayers] = useState([]);
+  const [newPlayerName, setNewPlayerName] = useState('');
+  const [activePanel, setActivePanel] = useState(null);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [voices, setVoices] = useState([]);
+  const [selectedVoiceURI, setSelectedVoiceURI] = useState(null);
+
+  const intervalRef = useRef(null);
+
+  // Load available voices. They load asynchronously in some browsers.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    const loadVoices = () => {
+      const all = window.speechSynthesis.getVoices();
+      // Prefer English voices, but show all
+      const sorted = [...all].sort((a, b) => {
+        const aEn = a.lang.startsWith('en') ? 0 : 1;
+        const bEn = b.lang.startsWith('en') ? 0 : 1;
+        if (aEn !== bEn) return aEn - bEn;
+        return a.name.localeCompare(b.name);
+      });
+      setVoices(sorted);
+      if (sorted.length > 0 && !selectedVoiceURI) {
+        // Pick the best default: prefer a Google or natural-sounding en-GB or en-US voice
+        const best = sorted.find(v => /google.*(uk|british|english)/i.test(v.name) && v.lang.startsWith('en'))
+          || sorted.find(v => /natural|premium|enhanced|neural/i.test(v.name) && v.lang.startsWith('en'))
+          || sorted.find(v => v.lang.startsWith('en-GB'))
+          || sorted.find(v => v.lang.startsWith('en'))
+          || sorted[0];
+        setSelectedVoiceURI(best.voiceURI);
+      }
+    };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+    return () => { window.speechSynthesis.onvoiceschanged = null; };
+  }, [selectedVoiceURI]);
+
+  const getVoice = useCallback(() => {
+    if (!selectedVoiceURI) return null;
+    return voices.find(v => v.voiceURI === selectedVoiceURI) || null;
+  }, [voices, selectedVoiceURI]);
+
+  const speak = useCallback((text) => {
+    if (!voiceEnabled || typeof window === 'undefined' || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    const v = getVoice();
+    if (v) utterance.voice = v;
+    utterance.rate = 0.95;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    window.speechSynthesis.speak(utterance);
+  }, [voiceEnabled, getVoice]);
+
+  // Queue multiple lines so they play in sequence (longer welcome message)
+  const speakQueue = useCallback((lines) => {
+    if (!voiceEnabled || typeof window === 'undefined' || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const v = getVoice();
+    lines.forEach((text) => {
+      const u = new SpeechSynthesisUtterance(text);
+      if (v) u.voice = v;
+      u.rate = 0.95;
+      u.pitch = 1;
+      u.volume = 1;
+      window.speechSynthesis.speak(u);
+    });
+  }, [voiceEnabled, getVoice]);
+
+  const announceLevel = useCallback((levelIdx) => {
+    const level = levels[levelIdx];
+    if (!level) return;
+    if (level.isBreak) {
+      speak(`Break time. ${level.duration} minute break. Stretch your legs.`);
+    } else {
+      const anteText = level.ante > 0 ? `, with an ante of ${level.ante}` : '';
+      speakQueue([
+        `Starting level ${levelIdx + 1}.`,
+        `Blinds are now ${level.sb} and ${level.bb}${anteText}.`,
+        `This round runs for ${level.duration} minutes.`,
+      ]);
+    }
+  }, [levels, speak, speakQueue]);
+
+  // Welcome message — only when starting from level 1 for the first time
+  const speakWelcome = useCallback(() => {
+    const level = levels[0];
+    if (!level || level.isBreak) return;
+    const anteText = level.ante > 0 ? `, with an ante of ${level.ante}` : '';
+    const playerCount = players.length;
+    const prizePool = config.buyIn * playerCount;
+    speakQueue([
+      `Welcome to the home game, everyone.`,
+      `We've got ${playerCount} players battling for a prize pool of ${prizePool} pounds.`,
+      `Starting blinds are ${level.sb} and ${level.bb}${anteText}.`,
+      `This first round runs for ${level.duration} minutes.`,
+      `Good luck everyone.`,
+    ]);
+  }, [levels, players.length, config.buyIn, speakQueue]);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    intervalRef.current = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) {
+          setCurrentLevel((lvl) => {
+            const next = Math.min(lvl + 1, levels.length - 1);
+            if (next !== lvl) {
+              setTimeout(() => announceLevel(next), 100);
+              setTimeout(() => setTimeLeft(levels[next].duration * 60), 0);
+            } else {
+              setIsRunning(false);
+              setTimeout(() => speak('Tournament complete. Well played.'), 100);
+            }
+            return next;
+          });
+          return 0;
+        }
+        // Only fire the 5-min warning if the round itself is longer than 5 min
+        if (t === 301 && levels[currentLevel].duration > 5 && !levels[currentLevel].isBreak) {
+          speak('Five minutes remaining in this round.');
+        }
+        if (t === 61 && !levels[currentLevel].isBreak) {
+          speak('One minute remaining.');
+        }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(intervalRef.current);
+  }, [isRunning, levels, currentLevel, announceLevel, speak]);
+
+  const togglePlay = () => {
+    // iOS / Safari requires the very first speak() call to happen synchronously
+    // inside a user gesture. Fire a silent priming utterance to unlock the engine.
+    if (voiceEnabled && typeof window !== 'undefined' && window.speechSynthesis) {
+      try {
+        const prime = new SpeechSynthesisUtterance('');
+        prime.volume = 0;
+        window.speechSynthesis.speak(prime);
+      } catch (e) { /* ignore */ }
+    }
+    // Welcome message only on the very first start (level 1, full time, not yet started)
+    if (!isRunning && !hasStarted && currentLevel === 0 && timeLeft === levels[0].duration * 60) {
+      speakWelcome();
+      setHasStarted(true);
+    }
+    setIsRunning(!isRunning);
+  };
+
+  const nextLevel = () => {
+    if (currentLevel < levels.length - 1) {
+      const next = currentLevel + 1;
+      setCurrentLevel(next);
+      setTimeLeft(levels[next].duration * 60);
+      if (isRunning) announceLevel(next);
+    }
+  };
+
+  const prevLevel = () => {
+    if (currentLevel > 0) {
+      const prev = currentLevel - 1;
+      setCurrentLevel(prev);
+      setTimeLeft(levels[prev].duration * 60);
+    }
+  };
+
+  const addPlayer = () => {
+    if (newPlayerName.trim()) {
+      setPlayers([...players, newPlayerName.trim()]);
+      setNewPlayerName('');
+    }
+  };
+
+  const togglePlayerEliminated = (name) => {
+    setEliminatedPlayers((prev) => prev.includes(name) ? prev.filter((p) => p !== name) : [...prev, name]);
+  };
+
+  const removePlayer = (idx) => setPlayers(players.filter((_, i) => i !== idx));
+
+  const updateLevel = (idx, field, value) => {
+    const newLevels = [...levels];
+    newLevels[idx] = { ...newLevels[idx], [field]: value };
+    setLevels(newLevels);
+  };
+
+  const addLevel = () => {
+    const last = levels[levels.length - 1];
+    setLevels([...levels, { ...last, sb: last.sb * 2, bb: last.bb * 2 }]);
+  };
+
+  const removeLevel = (idx) => {
+    if (levels.length > 1) {
+      setLevels(levels.filter((_, i) => i !== idx));
+      if (currentLevel >= levels.length - 1) setCurrentLevel(Math.max(0, levels.length - 2));
+    }
+  };
+
+  const level = levels[currentLevel];
+  const nextLvl = levels[currentLevel + 1];
+  const activePlayers = players.filter((p) => !eliminatedPlayers.includes(p));
+  const progress = 1 - timeLeft / (level.duration * 60);
+  const prizePool = config.buyIn * players.length;
+
+  return (
+    <div className="min-h-screen w-full" style={{
+      background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
+      fontFamily: "'Inter', system-ui, sans-serif",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+        .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.02em; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .felt-texture {
+          background-image:
+            radial-gradient(circle at 25% 25%, rgba(255,255,255,0.03) 1px, transparent 1px),
+            radial-gradient(circle at 75% 75%, rgba(255,255,255,0.02) 1px, transparent 1px);
+          background-size: 24px 24px;
+        }
+        .gold-text {
+          background: linear-gradient(135deg, #f4d03f 0%, #f7dc6f 50%, #d4ac0d 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .gold-border {
+          border: 1px solid rgba(244, 208, 63, 0.3);
+          box-shadow: 0 0 40px rgba(244, 208, 63, 0.1), inset 0 0 60px rgba(244, 208, 63, 0.05);
+        }
+        @keyframes pulse-warning {
+          0%, 100% { color: #ef4444; text-shadow: 0 0 30px rgba(239, 68, 68, 0.6); }
+          50% { color: #fca5a5; text-shadow: 0 0 50px rgba(239, 68, 68, 0.9); }
+        }
+        .warning { animation: pulse-warning 1s infinite; }
+        .control-btn { transition: all 0.2s ease; }
+        .control-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(244, 208, 63, 0.2); }
+        .control-btn:active { transform: translateY(0); }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(244, 208, 63, 0.3); border-radius: 3px; }
+      `}</style>
+
+      <div className="felt-texture min-h-screen p-4 sm:p-8">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <div>
+              <div className="font-display text-3xl gold-text">HOME GAME</div>
+              <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
+                £{prizePool} POOL · {activePlayers.length}/{players.length} LEFT
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  const nextState = !voiceEnabled;
+                  setVoiceEnabled(nextState);
+                  // When turning ON, test immediately so the user knows it works.
+                  // This also unlocks the speech engine on iOS via the user gesture.
+                  if (nextState && typeof window !== 'undefined' && window.speechSynthesis) {
+                    try {
+                      window.speechSynthesis.cancel();
+                      const u = new SpeechSynthesisUtterance('Voice ready.');
+                      const v = getVoice();
+                      if (v) u.voice = v;
+                      u.rate = 0.95; u.pitch = 1; u.volume = 1;
+                      window.speechSynthesis.speak(u);
+                    } catch (e) { /* ignore */ }
+                  } else if (!nextState && typeof window !== 'undefined' && window.speechSynthesis) {
+                    window.speechSynthesis.cancel();
+                  }
+                }}
+                className="control-btn p-3 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100"
+                title={voiceEnabled ? 'Mute voice (tap to test)' : 'Enable voice'}
+              >
+                {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              </button>
+              <button onClick={() => setActivePanel(activePanel === 'players' ? null : 'players')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'players' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`}>
+                <Users size={18} />
+              </button>
+              <button onClick={() => setActivePanel(activePanel === 'settings' ? null : 'settings')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'settings' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`}>
+                <Settings size={18} />
+              </button>
+              <button onClick={onReset} className="control-btn p-3 rounded-full bg-black/40 border border-red-500/30 text-red-300" title="New tournament">
+                <Edit3 size={18} />
+              </button>
+            </div>
+          </div>
+
+          <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12 mb-6">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <div className="font-mono text-xs text-yellow-500/60 tracking-widest">LEVEL</div>
+                <div className="font-display text-5xl gold-text leading-none">
+                  {(currentLevel + 1).toString().padStart(2, '0')}
+                  <span className="text-2xl text-yellow-500/40"> / {levels.length}</span>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="font-mono text-xs text-emerald-300/60 tracking-widest">AVG STACK</div>
+                <div className="font-display text-5xl text-emerald-200 leading-none">
+                  {activePlayers.length > 0 ? Math.round((config.stackSize * players.length) / activePlayers.length).toLocaleString() : '—'}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-center my-12">
+              <div className={`font-mono font-bold tracking-tighter ${timeLeft <= 60 && timeLeft > 0 && !level.isBreak ? 'warning' : 'text-yellow-50'}`} style={{ fontSize: 'clamp(5rem, 18vw, 11rem)', lineHeight: 1 }}>
+                {formatTime(timeLeft)}
+              </div>
+              <div
+                role="slider"
+                aria-label="Scrub round time"
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  const updateFromEvent = (clientX, rect) => {
+                    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                    // ratio = elapsed, so timeLeft = total - elapsed
+                    const total = level.duration * 60;
+                    const newTimeLeft = Math.round(total - ratio * total);
+                    setTimeLeft(Math.max(0, Math.min(total, newTimeLeft)));
+                  };
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  updateFromEvent(e.clientX, rect);
+                  e.currentTarget.onpointermove = (ev) => updateFromEvent(ev.clientX, rect);
+                  e.currentTarget.onpointerup = (ev) => {
+                    e.currentTarget.onpointermove = null;
+                    e.currentTarget.onpointerup = null;
+                  };
+                }}
+                className="h-3 bg-black/40 rounded-full overflow-hidden mt-4 mx-auto max-w-md cursor-pointer relative group touch-none"
+              >
+                <div className="h-full" style={{
+                  width: `${progress * 100}%`,
+                  background: level.isBreak ? 'linear-gradient(90deg, #3b82f6, #60a5fa)' : 'linear-gradient(90deg, #f4d03f, #d4ac0d)',
+                  transition: 'background 0.2s',
+                }} />
+                {/* scrub handle */}
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-yellow-100 border-2 border-yellow-600 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-lg"
+                  style={{ left: `calc(${progress * 100}% - 8px)` }}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4 mb-8">
+              {level.isBreak ? (
+                <div className="col-span-3 text-center py-6">
+                  <div className="font-display text-6xl text-blue-300">BREAK</div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-center">
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">SMALL BLIND</div>
+                    <div className="font-display text-4xl sm:text-5xl text-yellow-50">{level.sb.toLocaleString()}</div>
+                  </div>
+                  <div className="text-center border-x border-yellow-500/10">
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">BIG BLIND</div>
+                    <div className="font-display text-4xl sm:text-5xl text-yellow-50">{level.bb.toLocaleString()}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">ANTE</div>
+                    <div className="font-display text-4xl sm:text-5xl text-yellow-50">{level.ante > 0 ? level.ante.toLocaleString() : '—'}</div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {nextLvl && (
+              <div className="text-center pt-6 border-t border-yellow-500/10">
+                <div className="font-mono text-xs text-yellow-500/40 tracking-widest mb-1">NEXT</div>
+                <div className="font-mono text-yellow-100/60 text-sm">
+                  {nextLvl.isBreak ? `${nextLvl.duration} min break` : `${nextLvl.sb} / ${nextLvl.bb}${nextLvl.ante > 0 ? ` (ante ${nextLvl.ante})` : ''}`}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-center gap-3 mb-6">
+            <button onClick={prevLevel} className="control-btn p-4 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100">
+              <SkipBack size={20} />
+            </button>
+            <button onClick={togglePlay} className="control-btn px-10 py-4 rounded-full font-display text-2xl text-black" style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}>
+              {isRunning ? <Pause size={28} /> : <Play size={28} />}
+            </button>
+            <button onClick={nextLevel} className="control-btn p-4 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100">
+              <SkipForward size={20} />
+            </button>
+          </div>
+
+          {activePanel === 'players' && (
+            <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
+              <div className="flex justify-between items-center mb-4">
+                <div className="font-display text-2xl gold-text">PLAYERS</div>
+                <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
+              </div>
+              <div className="flex gap-2 mb-4">
+                <input type="text" value={newPlayerName} onChange={(e) => setNewPlayerName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addPlayer()} placeholder="Add late entry..." className="flex-1 px-4 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 focus:outline-none focus:border-yellow-500/50" />
+                <button onClick={addPlayer} className="control-btn px-4 py-2 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-100">
+                  <Plus size={18} />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+                {players.map((name, idx) => {
+                  const isOut = eliminatedPlayers.includes(name);
+                  return (
+                    <div key={idx} className={`flex items-center gap-2 p-3 rounded-lg border ${isOut ? 'bg-red-950/30 border-red-500/20' : 'bg-emerald-950/30 border-emerald-500/20'}`}>
+                      <button onClick={() => togglePlayerEliminated(name)} className={`flex-1 text-left ${isOut ? 'line-through text-red-300/60' : 'text-emerald-100'}`}>
+                        {name}
+                      </button>
+                      <button onClick={() => removePlayer(idx)} className="text-yellow-100/40 hover:text-red-400">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="text-xs text-yellow-100/40 mt-3 font-mono">Tap a name to mark eliminated.</div>
+            </div>
+          )}
+
+          {activePanel === 'settings' && (
+            <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
+              <div className="flex justify-between items-center mb-4">
+                <div className="font-display text-2xl gold-text">SETTINGS</div>
+                <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
+              </div>
+
+              {/* Voice selector */}
+              {voices.length > 0 && (
+                <div className="mb-6 p-4 rounded-xl bg-black/30 border border-yellow-500/10">
+                  <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2">VOICE</div>
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedVoiceURI || ''}
+                      onChange={(e) => setSelectedVoiceURI(e.target.value)}
+                      className="flex-1 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm focus:outline-none focus:border-yellow-500/50"
+                    >
+                      {voices.map((v) => (
+                        <option key={v.voiceURI} value={v.voiceURI} style={{ background: '#0a3d1f' }}>
+                          {v.name} ({v.lang}){v.localService ? '' : ' ★'}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => {
+                        if (typeof window === 'undefined' || !window.speechSynthesis) return;
+                        window.speechSynthesis.cancel();
+                        const u = new SpeechSynthesisUtterance('Blinds are now two hundred and four hundred. Good luck.');
+                        const v = getVoice();
+                        if (v) u.voice = v;
+                        u.rate = 0.95;
+                        window.speechSynthesis.speak(u);
+                      }}
+                      className="px-4 py-2 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-100 font-mono text-xs hover:bg-yellow-500/30"
+                    >
+                      TEST
+                    </button>
+                  </div>
+                  <div className="text-xs font-mono text-yellow-100/40 mt-2">
+                    ★ = network voice (usually higher quality)
+                  </div>
+                </div>
+              )}
+
+              <div className="font-display text-xl gold-text mb-3">BLIND STRUCTURE</div>
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-2">
+                <div className="grid grid-cols-12 gap-2 text-xs font-mono text-yellow-500/60 tracking-widest px-2 pb-1">
+                  <div className="col-span-1">#</div>
+                  <div className="col-span-2">SB</div>
+                  <div className="col-span-2">BB</div>
+                  <div className="col-span-2">ANTE</div>
+                  <div className="col-span-2">MIN</div>
+                  <div className="col-span-2">BREAK</div>
+                  <div className="col-span-1"></div>
+                </div>
+                {levels.map((lvl, idx) => (
+                  <div key={idx} className={`grid grid-cols-12 gap-2 items-center p-2 rounded-lg ${idx === currentLevel ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-black/20'}`}>
+                    <div className="col-span-1 font-mono text-yellow-100/60 text-sm">{idx + 1}</div>
+                    <input type="number" value={lvl.sb} onChange={(e) => updateLevel(idx, 'sb', parseInt(e.target.value) || 0)} disabled={lvl.isBreak} className="col-span-2 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm disabled:opacity-30" />
+                    <input type="number" value={lvl.bb} onChange={(e) => updateLevel(idx, 'bb', parseInt(e.target.value) || 0)} disabled={lvl.isBreak} className="col-span-2 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm disabled:opacity-30" />
+                    <input type="number" value={lvl.ante} onChange={(e) => updateLevel(idx, 'ante', parseInt(e.target.value) || 0)} disabled={lvl.isBreak} className="col-span-2 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm disabled:opacity-30" />
+                    <input type="number" value={lvl.duration} onChange={(e) => updateLevel(idx, 'duration', parseInt(e.target.value) || 1)} className="col-span-2 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm" />
+                    <div className="col-span-2 flex justify-center">
+                      <input type="checkbox" checked={lvl.isBreak} onChange={(e) => updateLevel(idx, 'isBreak', e.target.checked)} className="w-4 h-4 accent-yellow-500" />
+                    </div>
+                    <button onClick={() => removeLevel(idx)} className="col-span-1 text-yellow-100/40 hover:text-red-400">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button onClick={addLevel} className="control-btn mt-3 w-full py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 font-mono text-sm">
+                + ADD LEVEL
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [config, setConfig] = useState(null);
+  return config
+    ? <PokerTimerMain config={config} onReset={() => setConfig(null)} />
+    : <SetupWizard onStart={setConfig} />;
+}
+
+// Mount the app
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+  </script>
+  <script>
+    // Register service worker for offline support
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
