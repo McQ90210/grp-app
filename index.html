@@ -145,191 +145,612 @@ function getAudioCtx() {
   return sharedAudioCtx;
 }
 
-// Helper: create an oscillator with envelope
-function tone(ctx, { type = 'sine', freq = 440, freqEnd = null, start = 0, duration = 0.2, gain = 0.3, attack = 0.01, release = 0.05 }) {
+// --- Audio synthesis helpers ---
+
+// Filtered tone with proper ADSR. Used as a basic voiced-formant building block.
+function tone(ctx, { type = 'sine', freq = 440, freqEnd = null, freqCurve = null,
+                     start = 0, duration = 0.2, gain = 0.3,
+                     attack = 0.01, decay = 0.05, sustain = 0.7, release = 0.05,
+                     filterType = null, filterFreq = 2000, filterQ = 1, dest = null }) {
+  const t0 = ctx.currentTime + start;
   const osc = ctx.createOscillator();
   const g = ctx.createGain();
   osc.type = type;
-  osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
-  if (freqEnd !== null) {
-    osc.frequency.linearRampToValueAtTime(freqEnd, ctx.currentTime + start + duration);
+  osc.frequency.setValueAtTime(freq, t0);
+  if (Array.isArray(freqCurve)) {
+    // freqCurve: [[time, freq], ...] relative to start
+    freqCurve.forEach(([dt, f]) => osc.frequency.linearRampToValueAtTime(f, t0 + dt));
+  } else if (freqEnd !== null) {
+    osc.frequency.linearRampToValueAtTime(freqEnd, t0 + duration);
   }
-  g.gain.setValueAtTime(0, ctx.currentTime + start);
-  g.gain.linearRampToValueAtTime(gain, ctx.currentTime + start + attack);
-  g.gain.linearRampToValueAtTime(gain * 0.7, ctx.currentTime + start + duration - release);
-  g.gain.linearRampToValueAtTime(0, ctx.currentTime + start + duration);
+  // ADSR
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(gain, t0 + attack);
+  g.gain.linearRampToValueAtTime(gain * sustain, t0 + attack + decay);
+  g.gain.setValueAtTime(gain * sustain, t0 + duration - release);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+
+  let last = g;
+  if (filterType) {
+    const filter = ctx.createBiquadFilter();
+    filter.type = filterType;
+    filter.frequency.value = filterFreq;
+    filter.Q.value = filterQ;
+    g.connect(filter);
+    last = filter;
+  }
+  last.connect(dest || ctx.destination);
   osc.connect(g);
-  g.connect(ctx.destination);
-  osc.start(ctx.currentTime + start);
-  osc.stop(ctx.currentTime + start + duration + 0.05);
+  osc.start(t0);
+  osc.stop(t0 + duration + 0.1);
+  return { osc, gain: g };
 }
 
-// Helper: noise burst (for animal-y texture)
-function noise(ctx, { start = 0, duration = 0.1, gain = 0.15, lowpass = 2000 }) {
-  const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
+// Filtered noise burst — for breath, consonants, animal texture
+function noise(ctx, { start = 0, duration = 0.1, gain = 0.15,
+                      filterType = 'lowpass', filterFreq = 2000, filterQ = 1,
+                      attack = 0.005, release = 0.02, dest = null }) {
+  const t0 = ctx.currentTime + start;
+  const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * duration)), ctx.sampleRate);
+  const data = buf.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1);
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
   const filter = ctx.createBiquadFilter();
-  filter.type = 'lowpass';
-  filter.frequency.value = lowpass;
+  filter.type = filterType;
+  filter.frequency.value = filterFreq;
+  filter.Q.value = filterQ;
   const g = ctx.createGain();
-  g.gain.setValueAtTime(0, ctx.currentTime + start);
-  g.gain.linearRampToValueAtTime(gain, ctx.currentTime + start + 0.01);
-  g.gain.linearRampToValueAtTime(0, ctx.currentTime + start + duration);
-  source.connect(filter);
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(gain, t0 + attack);
+  g.gain.setValueAtTime(gain, t0 + duration - release);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+  src.connect(filter);
   filter.connect(g);
-  g.connect(ctx.destination);
-  source.start(ctx.currentTime + start);
-  source.stop(ctx.currentTime + start + duration);
+  g.connect(dest || ctx.destination);
+  src.start(t0);
+  src.stop(t0 + duration);
+  return { source: src, gain: g, filter };
+}
+
+// FM synthesis — modulator changes the carrier frequency, creating rich timbres
+function fmTone(ctx, { carrierFreq = 200, modFreq = 300, modDepth = 100, modDepthCurve = null,
+                       freqCurve = null, start = 0, duration = 0.3, gain = 0.3,
+                       attack = 0.01, release = 0.05, dest = null }) {
+  const t0 = ctx.currentTime + start;
+  const carrier = ctx.createOscillator();
+  const modulator = ctx.createOscillator();
+  const modGain = ctx.createGain();
+  const out = ctx.createGain();
+  carrier.frequency.setValueAtTime(carrierFreq, t0);
+  if (Array.isArray(freqCurve)) {
+    freqCurve.forEach(([dt, f]) => carrier.frequency.linearRampToValueAtTime(f, t0 + dt));
+  }
+  modulator.frequency.setValueAtTime(modFreq, t0);
+  modGain.gain.setValueAtTime(modDepth, t0);
+  if (Array.isArray(modDepthCurve)) {
+    modDepthCurve.forEach(([dt, d]) => modGain.gain.linearRampToValueAtTime(d, t0 + dt));
+  }
+  modulator.connect(modGain);
+  modGain.connect(carrier.frequency);
+  out.gain.setValueAtTime(0, t0);
+  out.gain.linearRampToValueAtTime(gain, t0 + attack);
+  out.gain.setValueAtTime(gain, t0 + duration - release);
+  out.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+  carrier.connect(out);
+  out.connect(dest || ctx.destination);
+  carrier.start(t0);
+  modulator.start(t0);
+  carrier.stop(t0 + duration + 0.1);
+  modulator.stop(t0 + duration + 0.1);
+  return { carrier, modulator, gain: out };
+}
+
+// Formant — vocal-tract resonance, used to give voiced sounds character.
+// Creates a bandpass-filtered noise+tone hybrid.
+function formant(ctx, { fundamental = 200, formantFreqs = [800, 1200], start = 0,
+                        duration = 0.3, gain = 0.2, attack = 0.02, release = 0.05,
+                        pitchCurve = null }) {
+  const t0 = ctx.currentTime + start;
+  // Build harmonic-rich source (sawtooth)
+  const src = ctx.createOscillator();
+  src.type = 'sawtooth';
+  src.frequency.setValueAtTime(fundamental, t0);
+  if (Array.isArray(pitchCurve)) {
+    pitchCurve.forEach(([dt, f]) => src.frequency.linearRampToValueAtTime(f, t0 + dt));
+  }
+  const srcGain = ctx.createGain();
+  srcGain.gain.setValueAtTime(0, t0);
+  srcGain.gain.linearRampToValueAtTime(gain, t0 + attack);
+  srcGain.gain.setValueAtTime(gain, t0 + duration - release);
+  srcGain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+  src.connect(srcGain);
+  // Run through multiple bandpass formants in parallel
+  formantFreqs.forEach((ff) => {
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = ff;
+    filter.Q.value = 8;
+    srcGain.connect(filter);
+    filter.connect(ctx.destination);
+  });
+  src.start(t0);
+  src.stop(t0 + duration + 0.1);
+  return { src, gain: srcGain };
+}
+
+// =========================================================================
+// SOUND LIBRARY
+// Each sound has:
+//   - label: human-readable
+//   - file: optional MP3 path (relative). If file loads, that's used.
+//   - play: synthesised fallback (improved with formants + FM)
+// =========================================================================
+
+// Buffer cache for loaded MP3s
+const audioBufferCache = new Map();
+const audioFailedCache = new Set(); // paths we've already failed to load
+
+async function loadAudioBuffer(path) {
+  if (audioBufferCache.has(path)) return audioBufferCache.get(path);
+  if (audioFailedCache.has(path)) return null;
+  const ctx = getAudioCtx();
+  if (!ctx) return null;
+  try {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error('not ok');
+    const arr = await res.arrayBuffer();
+    const buffer = await ctx.decodeAudioData(arr);
+    audioBufferCache.set(path, buffer);
+    return buffer;
+  } catch (e) {
+    audioFailedCache.add(path);
+    return null;
+  }
 }
 
 const SOUND_LIBRARY = {
   none: { label: 'None', play: () => {} },
+
   quack: {
     label: 'Quack (duck)',
+    file: 'sounds/quack.mp3',
     play: (ctx) => {
-      // Two quacks, descending pitch with sawtooth for nasal quality
+      // Two quacks: nasal formants + descending pitch + small noise burst
       for (let i = 0; i < 2; i++) {
-        tone(ctx, { type: 'sawtooth', freq: 320, freqEnd: 180, start: i * 0.25, duration: 0.18, gain: 0.2 });
-        noise(ctx, { start: i * 0.25, duration: 0.05, gain: 0.08, lowpass: 1500 });
+        const s = i * 0.22;
+        formant(ctx, {
+          fundamental: 320,
+          formantFreqs: [600, 1400, 2200],
+          start: s,
+          duration: 0.18,
+          gain: 0.5,
+          attack: 0.005,
+          release: 0.04,
+          pitchCurve: [[0.04, 280], [0.16, 200]],
+        });
+        noise(ctx, { start: s, duration: 0.04, gain: 0.08,
+                     filterType: 'bandpass', filterFreq: 1500, filterQ: 2 });
       }
     },
   },
+
   cluck: {
     label: 'Cluck (chicken)',
+    file: 'sounds/cluck.mp3',
     play: (ctx) => {
-      // Rapid clucks: 4 short bursts ascending then one longer "buck-aww"
+      // Three short clucks then drawn-out "buck-aaaw"
       for (let i = 0; i < 3; i++) {
-        tone(ctx, { type: 'square', freq: 600 + i * 100, freqEnd: 400, start: i * 0.12, duration: 0.07, gain: 0.12, attack: 0.005 });
+        const s = i * 0.13;
+        formant(ctx, {
+          fundamental: 500 - i * 30,
+          formantFreqs: [900, 1800],
+          start: s,
+          duration: 0.08,
+          gain: 0.4,
+          attack: 0.003,
+          release: 0.02,
+          pitchCurve: [[0.02, 700 - i * 30], [0.07, 350]],
+        });
+        noise(ctx, { start: s, duration: 0.025, gain: 0.06,
+                     filterType: 'bandpass', filterFreq: 2000, filterQ: 3 });
       }
-      tone(ctx, { type: 'sawtooth', freq: 700, freqEnd: 300, start: 0.42, duration: 0.4, gain: 0.18 });
+      // The drawn-out final cluck
+      formant(ctx, {
+        fundamental: 600,
+        formantFreqs: [900, 1600, 2400],
+        start: 0.45,
+        duration: 0.45,
+        gain: 0.5,
+        attack: 0.01,
+        release: 0.1,
+        pitchCurve: [[0.05, 800], [0.15, 600], [0.3, 350], [0.43, 250]],
+      });
     },
   },
+
   neigh: {
     label: 'Neigh (horse)',
+    file: 'sounds/neigh.mp3',
     play: (ctx) => {
-      // Horse whinny: rapid vibrato, descending
       const ctxStart = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(700, ctxStart);
-      // Vibrato by modulating frequency
-      for (let i = 0; i < 10; i++) {
-        const t = ctxStart + i * 0.05;
-        osc.frequency.linearRampToValueAtTime(500 + (i % 2 === 0 ? 200 : -100) - i * 30, t);
-      }
-      osc.frequency.linearRampToValueAtTime(150, ctxStart + 0.8);
-      g.gain.setValueAtTime(0, ctxStart);
-      g.gain.linearRampToValueAtTime(0.2, ctxStart + 0.05);
-      g.gain.linearRampToValueAtTime(0.15, ctxStart + 0.6);
-      g.gain.linearRampToValueAtTime(0, ctxStart + 0.9);
-      osc.connect(g);
-      g.connect(ctx.destination);
-      osc.start(ctxStart);
-      osc.stop(ctxStart + 1.0);
+      // Initial sharp inhale-ish noise
+      noise(ctx, { start: 0, duration: 0.12, gain: 0.18,
+                   filterType: 'bandpass', filterFreq: 600, filterQ: 1.5,
+                   attack: 0.01, release: 0.05 });
+      // The whinny: sawtooth with rapid vibrato + formants for nasal/throat character
+      const carrier = ctx.createOscillator();
+      const carGain = ctx.createGain();
+      carrier.type = 'sawtooth';
+      const f0Start = 600, f0End = 200;
+      carrier.frequency.setValueAtTime(f0Start, ctxStart);
+      // Add vibrato via a low-freq modulator
+      const vib = ctx.createOscillator();
+      const vibGain = ctx.createGain();
+      vib.frequency.setValueAtTime(8, ctxStart);
+      vib.frequency.linearRampToValueAtTime(18, ctxStart + 0.6);
+      vibGain.gain.setValueAtTime(20, ctxStart);
+      vibGain.gain.linearRampToValueAtTime(80, ctxStart + 0.5);
+      vibGain.gain.linearRampToValueAtTime(10, ctxStart + 1.0);
+      vib.connect(vibGain);
+      vibGain.connect(carrier.frequency);
+      // Pitch curve: peak then decay
+      carrier.frequency.linearRampToValueAtTime(750, ctxStart + 0.15);
+      carrier.frequency.linearRampToValueAtTime(500, ctxStart + 0.5);
+      carrier.frequency.linearRampToValueAtTime(f0End, ctxStart + 1.0);
+      // Envelope
+      carGain.gain.setValueAtTime(0, ctxStart);
+      carGain.gain.linearRampToValueAtTime(0.28, ctxStart + 0.08);
+      carGain.gain.setValueAtTime(0.25, ctxStart + 0.7);
+      carGain.gain.exponentialRampToValueAtTime(0.0001, ctxStart + 1.05);
+      // Run through formant filters
+      const formants = [600, 1100, 2400];
+      formants.forEach((ff, idx) => {
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = ff;
+        filter.Q.value = 4 + idx;
+        carGain.connect(filter);
+        const out = ctx.createGain();
+        out.gain.value = idx === 0 ? 1.0 : 0.5;
+        filter.connect(out);
+        out.connect(ctx.destination);
+      });
+      carrier.connect(carGain);
+      carrier.start(ctxStart);
+      carrier.stop(ctxStart + 1.1);
+      vib.start(ctxStart);
+      vib.stop(ctxStart + 1.1);
     },
   },
+
   moo: {
     label: 'Moo (cow)',
+    file: 'sounds/moo.mp3',
     play: (ctx) => {
-      tone(ctx, { type: 'sawtooth', freq: 130, freqEnd: 90, start: 0, duration: 0.8, gain: 0.25, attack: 0.1, release: 0.2 });
-      tone(ctx, { type: 'triangle', freq: 260, freqEnd: 180, start: 0, duration: 0.8, gain: 0.1 });
+      // Long mooo: low fundamental with strong low formants
+      formant(ctx, {
+        fundamental: 130,
+        formantFreqs: [400, 800, 1500],
+        start: 0,
+        duration: 1.0,
+        gain: 0.45,
+        attack: 0.15,
+        release: 0.25,
+        pitchCurve: [[0.2, 140], [0.6, 120], [0.95, 90]],
+      });
+      // Breath/throat noise underneath
+      noise(ctx, { start: 0, duration: 1.0, gain: 0.04,
+                   filterType: 'lowpass', filterFreq: 800,
+                   attack: 0.15, release: 0.3 });
     },
   },
+
   bark: {
     label: 'Bark (dog)',
+    file: 'sounds/bark.mp3',
     play: (ctx) => {
+      // Two short barks with formants for canine voice
       for (let i = 0; i < 2; i++) {
-        tone(ctx, { type: 'square', freq: 250, freqEnd: 180, start: i * 0.3, duration: 0.12, gain: 0.2, attack: 0.005 });
-        noise(ctx, { start: i * 0.3, duration: 0.08, gain: 0.15, lowpass: 1500 });
+        const s = i * 0.32;
+        // Initial transient (noise burst)
+        noise(ctx, { start: s, duration: 0.04, gain: 0.18,
+                     filterType: 'bandpass', filterFreq: 1200, filterQ: 1,
+                     attack: 0.002, release: 0.02 });
+        // Voiced "woof" with formants
+        formant(ctx, {
+          fundamental: 250,
+          formantFreqs: [500, 1200, 2200],
+          start: s + 0.01,
+          duration: 0.18,
+          gain: 0.4,
+          attack: 0.005,
+          release: 0.06,
+          pitchCurve: [[0.03, 280], [0.15, 180]],
+        });
       }
     },
   },
+
   meow: {
     label: 'Meow (cat)',
+    file: 'sounds/meow.mp3',
     play: (ctx) => {
-      tone(ctx, { type: 'sawtooth', freq: 500, freqEnd: 800, start: 0, duration: 0.2, gain: 0.15 });
-      tone(ctx, { type: 'sawtooth', freq: 800, freqEnd: 400, start: 0.2, duration: 0.4, gain: 0.18 });
+      // Two-phase meow: "me" rises, "ow" descends. Cat vocals have strong harmonics.
+      formant(ctx, {
+        fundamental: 500,
+        formantFreqs: [900, 1400, 2800],
+        start: 0,
+        duration: 0.55,
+        gain: 0.35,
+        attack: 0.03,
+        release: 0.1,
+        pitchCurve: [[0.1, 700], [0.2, 800], [0.35, 600], [0.5, 350]],
+      });
     },
   },
+
   hoot: {
     label: 'Hoot (owl)',
+    file: 'sounds/hoot.mp3',
     play: (ctx) => {
-      tone(ctx, { type: 'sine', freq: 300, freqEnd: 280, start: 0, duration: 0.3, gain: 0.3, attack: 0.05, release: 0.1 });
-      tone(ctx, { type: 'sine', freq: 320, freqEnd: 290, start: 0.45, duration: 0.5, gain: 0.3, attack: 0.05, release: 0.15 });
+      // Two soft hoots with sine + slight vibrato + breathy noise
+      for (let i = 0; i < 2; i++) {
+        const s = i * 0.55;
+        const dur = i === 0 ? 0.35 : 0.55;
+        tone(ctx, {
+          type: 'sine', freq: 320, freqEnd: 290, start: s, duration: dur, gain: 0.35,
+          attack: 0.08, decay: 0.05, sustain: 0.9, release: 0.15,
+          filterType: 'lowpass', filterFreq: 1500,
+        });
+        // 3rd harmonic for body
+        tone(ctx, {
+          type: 'sine', freq: 640, freqEnd: 580, start: s, duration: dur, gain: 0.05,
+          attack: 0.08, decay: 0.05, sustain: 0.9, release: 0.15,
+        });
+        // Breath noise
+        noise(ctx, { start: s, duration: dur, gain: 0.012,
+                     filterType: 'bandpass', filterFreq: 600, filterQ: 1,
+                     attack: 0.05, release: 0.2 });
+      }
     },
   },
+
   oink: {
     label: 'Oink (pig)',
+    file: 'sounds/oink.mp3',
     play: (ctx) => {
+      // Three grunts — each has snort noise + low formant tone
       for (let i = 0; i < 3; i++) {
-        tone(ctx, { type: 'sawtooth', freq: 200, freqEnd: 250, start: i * 0.18, duration: 0.12, gain: 0.18 });
-        noise(ctx, { start: i * 0.18, duration: 0.12, gain: 0.12, lowpass: 800 });
+        const s = i * 0.2;
+        noise(ctx, { start: s, duration: 0.12, gain: 0.15,
+                     filterType: 'bandpass', filterFreq: 400, filterQ: 0.8,
+                     attack: 0.005, release: 0.04 });
+        formant(ctx, {
+          fundamental: 180,
+          formantFreqs: [500, 1000],
+          start: s,
+          duration: 0.14,
+          gain: 0.3,
+          attack: 0.01,
+          release: 0.05,
+          pitchCurve: [[0.05, 220], [0.12, 160]],
+        });
       }
     },
   },
+
   baa: {
     label: 'Baa (sheep)',
+    file: 'sounds/baa.mp3',
     play: (ctx) => {
-      // Wobble between two pitches
+      // Wobbling "baaaaaa" — sheep have a characteristic warble
       const ctxStart = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = 'sawtooth';
-      for (let i = 0; i < 12; i++) {
-        osc.frequency.linearRampToValueAtTime(i % 2 === 0 ? 420 : 360, ctxStart + i * 0.04);
-      }
-      g.gain.setValueAtTime(0, ctxStart);
-      g.gain.linearRampToValueAtTime(0.18, ctxStart + 0.05);
-      g.gain.linearRampToValueAtTime(0, ctxStart + 0.5);
-      osc.connect(g);
-      g.connect(ctx.destination);
-      osc.start(ctxStart);
-      osc.stop(ctxStart + 0.6);
+      // Initial "b" plosive
+      noise(ctx, { start: 0, duration: 0.04, gain: 0.1,
+                   filterType: 'lowpass', filterFreq: 800,
+                   attack: 0.001, release: 0.02 });
+      // Sustained baa with vibrato
+      const carrier = ctx.createOscillator();
+      const car = ctx.createGain();
+      carrier.type = 'sawtooth';
+      carrier.frequency.setValueAtTime(380, ctxStart + 0.03);
+      const vib = ctx.createOscillator();
+      const vibG = ctx.createGain();
+      vib.frequency.setValueAtTime(12, ctxStart);
+      vibG.gain.setValueAtTime(30, ctxStart);
+      vib.connect(vibG);
+      vibG.connect(carrier.frequency);
+      car.gain.setValueAtTime(0, ctxStart + 0.03);
+      car.gain.linearRampToValueAtTime(0.3, ctxStart + 0.08);
+      car.gain.setValueAtTime(0.3, ctxStart + 0.5);
+      car.gain.exponentialRampToValueAtTime(0.0001, ctxStart + 0.65);
+      // Formants for caprine vocal tract
+      [700, 1400, 2400].forEach((ff, idx) => {
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = ff;
+        filter.Q.value = 6;
+        car.connect(filter);
+        const og = ctx.createGain();
+        og.gain.value = idx === 0 ? 1.0 : 0.4;
+        filter.connect(og);
+        og.connect(ctx.destination);
+      });
+      carrier.connect(car);
+      carrier.start(ctxStart + 0.03);
+      carrier.stop(ctxStart + 0.7);
+      vib.start(ctxStart + 0.03);
+      vib.stop(ctxStart + 0.7);
     },
   },
+
   crow: {
     label: 'Crow (rooster)',
+    file: 'sounds/crow.mp3',
     play: (ctx) => {
-      // Cock-a-doodle-doo: 4 ascending then descending notes
-      tone(ctx, { type: 'sawtooth', freq: 500, freqEnd: 550, start: 0, duration: 0.2, gain: 0.2 });
-      tone(ctx, { type: 'sawtooth', freq: 600, freqEnd: 700, start: 0.22, duration: 0.18, gain: 0.2 });
-      tone(ctx, { type: 'sawtooth', freq: 750, freqEnd: 720, start: 0.42, duration: 0.25, gain: 0.22 });
-      tone(ctx, { type: 'sawtooth', freq: 600, freqEnd: 300, start: 0.7, duration: 0.5, gain: 0.2 });
+      // Cock-a-doodle-doo — 4 syllables, the last drawn out and descending
+      const notes = [
+        { freq: 500, start: 0, dur: 0.18, pitchEnd: 540 },
+        { freq: 620, start: 0.20, dur: 0.16, pitchEnd: 680 },
+        { freq: 750, start: 0.38, dur: 0.20, pitchEnd: 740 },
+        { freq: 600, start: 0.62, dur: 0.55, pitchEnd: 280 },
+      ];
+      notes.forEach((n) => {
+        formant(ctx, {
+          fundamental: n.freq,
+          formantFreqs: [1100, 2200, 3000],
+          start: n.start,
+          duration: n.dur,
+          gain: 0.32,
+          attack: 0.01,
+          release: 0.05,
+          pitchCurve: [[n.dur * 0.5, (n.freq + n.pitchEnd) / 2], [n.dur, n.pitchEnd]],
+        });
+      });
     },
   },
+
   trumpet: {
-    label: 'Trumpet fanfare',
+    label: 'Sad trombone',
+    file: 'sounds/trumpet.mp3',
     play: (ctx) => {
-      // Sad trombone-ish: descending tones
-      tone(ctx, { type: 'sawtooth', freq: 392, start: 0, duration: 0.2, gain: 0.2 });
-      tone(ctx, { type: 'sawtooth', freq: 370, start: 0.22, duration: 0.2, gain: 0.2 });
-      tone(ctx, { type: 'sawtooth', freq: 349, start: 0.44, duration: 0.2, gain: 0.2 });
-      tone(ctx, { type: 'sawtooth', freq: 330, freqEnd: 250, start: 0.66, duration: 0.6, gain: 0.25 });
+      // Classic "wah-waaaah" — descending tones with brass-like FM character
+      const notes = [
+        { f: 392, start: 0, dur: 0.22 },
+        { f: 370, start: 0.24, dur: 0.22 },
+        { f: 349, start: 0.48, dur: 0.22 },
+        { f: 294, start: 0.72, dur: 0.7 }, // long final note
+      ];
+      notes.forEach((n) => {
+        fmTone(ctx, {
+          carrierFreq: n.f,
+          modFreq: n.f * 2,
+          modDepth: 60,
+          modDepthCurve: [[n.dur * 0.3, 200], [n.dur, 30]],
+          start: n.start,
+          duration: n.dur,
+          gain: 0.22,
+          attack: 0.02,
+          release: 0.08,
+        });
+      });
+      // Wah-wah vibrato on the last note via pitch
+      const t0 = ctx.currentTime + 0.72;
+      const wah = ctx.createOscillator();
+      const wahG = ctx.createGain();
+      wah.type = 'sine';
+      // Just for atmosphere — won't actually modulate the FM above, but adds a swelling tone
+      wah.frequency.setValueAtTime(294, t0);
+      wah.frequency.linearRampToValueAtTime(220, t0 + 0.7);
+      wahG.gain.setValueAtTime(0, t0);
+      wahG.gain.linearRampToValueAtTime(0.05, t0 + 0.1);
+      wahG.gain.linearRampToValueAtTime(0, t0 + 0.7);
+      wah.connect(wahG);
+      wahG.connect(ctx.destination);
+      wah.start(t0);
+      wah.stop(t0 + 0.75);
     },
   },
+
   airhorn: {
     label: 'Air horn',
+    file: 'sounds/airhorn.mp3',
     play: (ctx) => {
-      tone(ctx, { type: 'square', freq: 200, start: 0, duration: 0.4, gain: 0.15 });
-      tone(ctx, { type: 'square', freq: 250, start: 0, duration: 0.4, gain: 0.12 });
-      tone(ctx, { type: 'square', freq: 300, start: 0.5, duration: 0.6, gain: 0.18 });
-      tone(ctx, { type: 'square', freq: 350, start: 0.5, duration: 0.6, gain: 0.12 });
+      // Two-blast airhorn with proper brassy FM character
+      [0, 0.55].forEach((s, i) => {
+        const dur = i === 0 ? 0.4 : 0.7;
+        fmTone(ctx, {
+          carrierFreq: 280,
+          modFreq: 560,
+          modDepth: 150,
+          modDepthCurve: [[0.05, 400], [dur * 0.7, 350], [dur, 100]],
+          start: s,
+          duration: dur,
+          gain: 0.3,
+          attack: 0.005,
+          release: 0.08,
+        });
+        // 5th-harmonic squeal on top
+        fmTone(ctx, {
+          carrierFreq: 700,
+          modFreq: 350,
+          modDepth: 100,
+          start: s,
+          duration: dur,
+          gain: 0.08,
+          attack: 0.005,
+          release: 0.08,
+        });
+      });
+    },
+  },
+
+  fanfare: {
+    label: 'Victory fanfare',
+    file: 'sounds/fanfare.mp3',
+    play: (ctx) => {
+      // Triumphant 4-note rising fanfare on brass
+      const notes = [
+        { f: 392, start: 0, dur: 0.15 },     // G4
+        { f: 523, start: 0.15, dur: 0.15 },  // C5
+        { f: 659, start: 0.30, dur: 0.15 },  // E5
+        { f: 784, start: 0.45, dur: 0.6 },   // G5 (held)
+      ];
+      notes.forEach((n) => {
+        fmTone(ctx, {
+          carrierFreq: n.f,
+          modFreq: n.f,
+          modDepth: 80,
+          modDepthCurve: [[n.dur * 0.1, 200], [n.dur, 50]],
+          start: n.start,
+          duration: n.dur,
+          gain: 0.25,
+          attack: 0.008,
+          release: 0.06,
+        });
+        // Octave below for richness
+        fmTone(ctx, {
+          carrierFreq: n.f / 2,
+          modFreq: n.f,
+          modDepth: 30,
+          start: n.start,
+          duration: n.dur,
+          gain: 0.12,
+          attack: 0.01,
+          release: 0.05,
+        });
+      });
     },
   },
 };
 
-function playSound(soundKey) {
+// Play a sound. Tries to use the MP3 file first; falls back to synthesis.
+async function playSound(soundKey) {
   if (!soundKey || soundKey === 'none') return;
   const ctx = getAudioCtx();
   if (!ctx) return;
-  // Resume context if suspended (browsers sometimes suspend until user gesture)
-  if (ctx.state === 'suspended') ctx.resume();
+  if (ctx.state === 'suspended') {
+    try { await ctx.resume(); } catch (e) {}
+  }
   const sound = SOUND_LIBRARY[soundKey];
-  if (sound) sound.play(ctx);
+  if (!sound) return;
+  // Try to play the bundled MP3 if available
+  if (sound.file) {
+    const buffer = await loadAudioBuffer(sound.file);
+    if (buffer) {
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      const g = ctx.createGain();
+      g.gain.value = 0.9;
+      src.connect(g);
+      g.connect(ctx.destination);
+      src.start();
+      return;
+    }
+  }
+  // Fallback to synthesised version
+  sound.play(ctx);
 }
 
 // ============ PAYOUT LOGIC ============
@@ -802,6 +1223,7 @@ function PokerTimerMain({ config, onReset }) {
   const [selectedVoiceURI, setSelectedVoiceURI] = useState(null);
   const [showHomeConfirm, setShowHomeConfirm] = useState(false);
   const [showEliminate, setShowEliminate] = useState(false);
+  const [winner, setWinner] = useState(null);
 
   const intervalRef = useRef(null);
 
@@ -819,10 +1241,12 @@ function PokerTimerMain({ config, onReset }) {
       });
       setVoices(sorted);
       if (sorted.length > 0 && !selectedVoiceURI) {
-        // Pick the best default: prefer a Google or natural-sounding en-GB or en-US voice
-        const best = sorted.find(v => /google.*(uk|british|english)/i.test(v.name) && v.lang.startsWith('en'))
+        // Default: Google US English. Fall back through other Google voices, then anything en.
+        const best = sorted.find(v => /google.*us english/i.test(v.name))
+          || sorted.find(v => /google/i.test(v.name) && v.lang === 'en-US')
+          || sorted.find(v => /google/i.test(v.name) && v.lang.startsWith('en'))
           || sorted.find(v => /natural|premium|enhanced|neural/i.test(v.name) && v.lang.startsWith('en'))
-          || sorted.find(v => v.lang.startsWith('en-GB'))
+          || sorted.find(v => v.lang === 'en-US')
           || sorted.find(v => v.lang.startsWith('en'))
           || sorted[0];
         setSelectedVoiceURI(best.voiceURI);
@@ -992,18 +1416,47 @@ function PokerTimerMain({ config, onReset }) {
 
   const totalRebuys = Object.values(rebuyCounts).reduce((a, b) => a + b, 0);
 
-  // Eliminate a player: voice "Goodbye <name>", then play their sound
+  // Eliminate a player: voice "Goodbye <name>", then play their sound.
+  // Also triggers "final 3" announcement and winner announcement when appropriate.
   const eliminatePlayer = (player) => {
-    setEliminatedPlayers((prev) => [...prev, player.name]);
     setShowEliminate(false);
-    // Voice line first, then sound after a short delay
+    const remainingAfter = activePlayers.length - 1;
+    setEliminatedPlayers((prev) => [...prev, player.name]);
+
+    // Always: goodbye + their sound
     if (voiceEnabled) {
       speak(`Goodbye, ${player.name}.`);
-      // Estimate ~1.2s for the speech, then play their sound
       setTimeout(() => playSound(player.sound), 1400);
     } else {
-      // Voice off — just play the sound
       playSound(player.sound);
+    }
+
+    // Final 3: announcement (only if we just dropped TO 3, and only when starting field was >3)
+    if (remainingAfter === 3 && players.length > 3) {
+      setTimeout(() => {
+        if (voiceEnabled) speak(`We are down to the final three!`);
+      }, 3000);
+    }
+
+    // Winner: 1 player left
+    if (remainingAfter === 1) {
+      // Stop the timer
+      setIsRunning(false);
+      // Find the winner
+      const winnerObj = activePlayers.find((p) => p.name !== player.name);
+      setTimeout(() => {
+        setWinner(winnerObj);
+        // Fanfare sound, then announce winner
+        playSound('fanfare');
+        setTimeout(() => {
+          if (voiceEnabled && winnerObj) {
+            speakQueue([
+              `And the winner is... ${winnerObj.name}!`,
+              `Congratulations, ${winnerObj.name}!`,
+            ]);
+          }
+        }, 2200);
+      }, 2500);
     }
   };
 
@@ -1041,11 +1494,36 @@ function PokerTimerMain({ config, onReset }) {
   const totalChipsInPlay = config.stackSize * totalEntries;
   const avgStack = activePlayers.length > 0 ? Math.round(totalChipsInPlay / activePlayers.length) : 0;
 
+  // Final 3 dramatic mode: when 3 or fewer remain and the field started larger.
+  const finalThreeMode = activePlayers.length <= 3 && players.length > 3 && !winner;
+
   return (
-    <div className="min-h-screen w-full" style={{
-      background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
+    <div className="min-h-screen w-full relative overflow-hidden" style={{
+      background: finalThreeMode
+        ? 'radial-gradient(ellipse at top, #4a0e1a 0%, #2a0712 40%, #100308 100%)'
+        : 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
       fontFamily: "'Inter', system-ui, sans-serif",
+      transition: 'background 1.2s ease',
     }}>
+      {/* Final-3 floating money symbols */}
+      {finalThreeMode && (
+        <div className="pointer-events-none fixed inset-0 z-0" aria-hidden="true">
+          {Array.from({ length: 18 }).map((_, i) => (
+            <div
+              key={i}
+              className="absolute font-display text-yellow-400/30"
+              style={{
+                left: `${(i * 53) % 100}%`,
+                top: '-10%',
+                fontSize: `${24 + (i % 4) * 12}px`,
+                animation: `floatMoney ${10 + (i % 5) * 2}s linear ${i * 0.7}s infinite`,
+              }}
+            >
+              {['£', '$', '£', '€', '$'][i % 5]}
+            </div>
+          ))}
+        </div>
+      )}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
         .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.02em; }
@@ -1071,6 +1549,25 @@ function PokerTimerMain({ config, onReset }) {
           50% { color: #fca5a5; text-shadow: 0 0 50px rgba(239, 68, 68, 0.9); }
         }
         .warning { animation: pulse-warning 1s infinite; }
+        @keyframes floatMoney {
+          0% { transform: translateY(-10vh) rotate(0deg); opacity: 0; }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          100% { transform: translateY(110vh) rotate(360deg); opacity: 0; }
+        }
+        @keyframes winnerPop {
+          0% { transform: scale(0.5); opacity: 0; }
+          60% { transform: scale(1.1); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes confetti {
+          0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+          100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+        }
+        @keyframes winnerGlow {
+          0%, 100% { text-shadow: 0 0 30px rgba(244, 208, 63, 0.5), 0 0 60px rgba(244, 208, 63, 0.3); }
+          50% { text-shadow: 0 0 50px rgba(244, 208, 63, 0.9), 0 0 100px rgba(244, 208, 63, 0.6); }
+        }
         .control-btn { transition: all 0.2s ease; }
         .control-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(244, 208, 63, 0.2); }
         .control-btn:active { transform: translateY(0); }
@@ -1540,6 +2037,84 @@ function PokerTimerMain({ config, onReset }) {
                 ))
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* WINNER OVERLAY */}
+      {winner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-hidden" style={{
+          background: 'radial-gradient(ellipse at center, rgba(20, 60, 30, 0.95) 0%, rgba(2, 10, 6, 0.98) 100%)',
+        }}>
+          {/* Confetti */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+            {Array.from({ length: 50 }).map((_, i) => (
+              <div
+                key={i}
+                className="absolute"
+                style={{
+                  left: `${(i * 37) % 100}%`,
+                  top: '-5%',
+                  width: '8px',
+                  height: '14px',
+                  background: ['#f4d03f', '#ef4444', '#3b82f6', '#10b981', '#a855f7', '#ec4899'][i % 6],
+                  animation: `confetti ${3 + (i % 4) * 0.8}s linear ${i * 0.08}s infinite`,
+                  transformOrigin: 'center',
+                }}
+              />
+            ))}
+          </div>
+
+          <div
+            className="relative z-10 max-w-2xl w-full text-center"
+            style={{ animation: 'winnerPop 0.8s ease-out' }}
+          >
+            <div className="font-mono text-sm text-yellow-300/80 tracking-[0.3em] mb-4">CHAMPION</div>
+            <div
+              className="font-display gold-text leading-none mb-8"
+              style={{
+                fontSize: 'clamp(4rem, 18vw, 10rem)',
+                animation: 'winnerGlow 2s ease-in-out infinite',
+              }}
+            >
+              {winner.name}
+            </div>
+            <div className="font-mono text-xs text-yellow-300/60 tracking-widest mb-2">PRIZE POOL</div>
+            <div className="font-display text-5xl gold-text mb-8">£{prizePool.toLocaleString()}</div>
+
+            {/* Payout breakdown */}
+            <div className="max-w-md mx-auto space-y-2 mb-8">
+              {PAYOUT_STRUCTURES[payoutKey].splits.map((pct, i) => {
+                const amount = Math.round((prizePool * pct) / 100);
+                const places = ['1st', '2nd', '3rd', '4th', '5th'];
+                const colors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
+                // Look up name from finishing order
+                let placeName;
+                if (i === 0) placeName = winner.name;
+                else {
+                  // eliminatedPlayers is in elimination order; reverse for finishing order
+                  const reversed = [...eliminatedPlayers].reverse();
+                  placeName = reversed[i - 1] || '—';
+                }
+                return (
+                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/40 border border-yellow-500/10">
+                    <div className="flex items-center gap-3">
+                      <div className={`font-display text-2xl ${colors[i]}`}>{places[i]}</div>
+                      <div className="font-mono text-sm text-yellow-100/80">{placeName}</div>
+                    </div>
+                    <div className="font-display text-2xl gold-text">£{amount.toLocaleString()}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => { setWinner(null); onReset(); }}
+              className="control-btn px-8 py-3 rounded-full font-display text-xl text-black"
+              style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
+            >
+              NEW TOURNAMENT
+            </button>
           </div>
         </div>
       )}

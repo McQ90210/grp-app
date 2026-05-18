@@ -2,22 +2,34 @@
 
 You have a fully self-contained Progressive Web App (PWA). Once hosted, it installs to your phone's home screen like a real app, with its own icon and name, and works **offline** at game time.
 
-## What's new in this version (v2)
-- **Home button** with confirmation before ending a tournament
-- **Better blind structure** — proper 2:1 SB:BB ratios, clean jumps (500/1000 → 1000/2000), no awkward trailing-50s at high values
-- **20-minute rounds by default**
-- **Players remaining** prominently shown on the main timer screen alongside avg stack
-- **Rebuys** — track them in the players panel; prize pool and avg stack update automatically
-- **Payouts panel** — auto-calculates prize splits (top 3 by default for ≤10 players, top 4 for 11+), with manual override
-- **Elimination** with goodbye voice + per-player sound effects (quack, neigh, cluck, moo, bark, meow, hoot, oink, baa, crow, fanfare, airhorn)
+## What's new in this version (v3)
+- **Default voice is now Google US English** (falls back through other Google voices if not available)
+- **Final 3 dramatic mode** — when the field drops to 3 players, the background turns red, currency symbols rain from the top, and the voice announces "We are down to the final three!"
+- **Winner announcement** — when the last opponent is eliminated, the timer stops, a fanfare plays, the screen takes over with the winner's name in giant glowing letters, confetti rains, and the full payout breakdown is shown
+- **Much richer sound synthesis** — animal sounds now use formant filters and FM synthesis instead of basic oscillators. They still won't fool anyone into thinking they're real recordings, but they're substantially less "1980s bleepy"
+- **Optional real audio files** — if you upload MP3s into a `sounds/` folder, the app uses those instead. See below.
 
-## How to update from v1
+## Optional: real animal sounds
 
-If you already have v1 installed:
-1. In your GitHub repo, click each updated file and **delete** it, then re-upload the new version (or just overwrite — drag the new file in and commit)
-2. Files to update: `index.html`, `sw.js`, `README.md` (icons + manifest unchanged)
-3. On your phone, open the app and pull-to-refresh, or force-close it and reopen — the new service worker version will pick up the changes
-4. **Important:** existing rosters are auto-migrated from the old "name only" format to the new "name + sound" format. Pick a sound per player in setup → step 3.
+The app first tries to load `sounds/quack.mp3`, `sounds/cluck.mp3`, etc. If they don't exist, it falls back to the synthesised versions. To upgrade:
+
+1. Source royalty-free animal sounds from a site like:
+   - **Mixkit** (https://mixkit.co/free-sound-effects/animals/) — free, no signup
+   - **Freesound.org** (https://freesound.org/) — filter by "CC0" licence
+   - **Zapsplat** (https://www.zapsplat.com/sound-effect-category/animals/) — free with signup
+2. Download MP3s for: quack, cluck, neigh, moo, bark, meow, hoot, oink, baa, crow, trumpet, airhorn, fanfare
+3. Trim each to ~1 second using any audio editor (or use them as-is)
+4. Name them exactly: `quack.mp3`, `cluck.mp3`, `neigh.mp3`, `moo.mp3`, `bark.mp3`, `meow.mp3`, `hoot.mp3`, `oink.mp3`, `baa.mp3`, `crow.mp3`, `trumpet.mp3`, `airhorn.mp3`, `fanfare.mp3`
+5. In your GitHub repo, create a folder called `sounds` and upload them there
+6. Refresh the app — the real sounds take over automatically
+
+You can do all of these at once or one at a time. Missing files just fall back to the synthesised version.
+
+## How to update from v2 (or v1)
+
+1. In your GitHub repo, replace `index.html`, `sw.js`, and `README.md` with the new versions (icons + manifest unchanged)
+2. On your phone, open the app and pull-to-refresh, or force-close it and reopen — the new service worker version (v3) will pick up the changes
+3. Your roster and sound assignments are preserved across versions
 
 ## What's in this folder
 - `index.html` — the entire app in one file
