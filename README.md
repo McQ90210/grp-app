@@ -2,8 +2,24 @@
 
 You have a fully self-contained Progressive Web App (PWA). Once hosted, it installs to your phone's home screen like a real app, with its own icon and name, and works **offline** at game time.
 
-## What's in this folder
+## What's new in this version (v2)
+- **Home button** with confirmation before ending a tournament
+- **Better blind structure** — proper 2:1 SB:BB ratios, clean jumps (500/1000 → 1000/2000), no awkward trailing-50s at high values
+- **20-minute rounds by default**
+- **Players remaining** prominently shown on the main timer screen alongside avg stack
+- **Rebuys** — track them in the players panel; prize pool and avg stack update automatically
+- **Payouts panel** — auto-calculates prize splits (top 3 by default for ≤10 players, top 4 for 11+), with manual override
+- **Elimination** with goodbye voice + per-player sound effects (quack, neigh, cluck, moo, bark, meow, hoot, oink, baa, crow, fanfare, airhorn)
 
+## How to update from v1
+
+If you already have v1 installed:
+1. In your GitHub repo, click each updated file and **delete** it, then re-upload the new version (or just overwrite — drag the new file in and commit)
+2. Files to update: `index.html`, `sw.js`, `README.md` (icons + manifest unchanged)
+3. On your phone, open the app and pull-to-refresh, or force-close it and reopen — the new service worker version will pick up the changes
+4. **Important:** existing rosters are auto-migrated from the old "name only" format to the new "name + sound" format. Pick a sound per player in setup → step 3.
+
+## What's in this folder
 - `index.html` — the entire app in one file
 - `manifest.json` — tells phones how to install it
 - `sw.js` — service worker for offline support

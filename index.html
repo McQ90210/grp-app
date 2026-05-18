@@ -18,7 +18,6 @@
   <style>
     html, body { background: #020a06; margin: 0; padding: 0; min-height: 100vh; }
     #root { min-height: 100vh; }
-    /* Prevent pull-to-refresh and overscroll behaviour */
     body { overscroll-behavior-y: contain; }
   </style>
 </head>
@@ -46,6 +45,12 @@ const X = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" 
 const ChevronRight = (p) => <Icon {...p}><polyline points="9 18 15 12 9 6"/></Icon>;
 const ChevronLeft = (p) => <Icon {...p}><polyline points="15 18 9 12 15 6"/></Icon>;
 const Edit3 = (p) => <Icon {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></Icon>;
+const Home = (p) => <Icon {...p}><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></Icon>;
+const AlertTriangle = (p) => <Icon {...p}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></Icon>;
+const Trophy = (p) => <Icon {...p}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></Icon>;
+const UserMinus = (p) => <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="23" y1="11" x2="17" y2="11"/></Icon>;
+const RotateCcw = (p) => <Icon {...p}><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></Icon>;
+const Music = (p) => <Icon {...p}><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></Icon>;
 
 
 
@@ -54,9 +59,8 @@ function generateBlindStructure(buyIn, stackSize, numPlayers, durationMinutes, i
   const targetFinalBB = Math.max(stackSize / 15, stackSize / 10);
 
   let levelLength;
-  if (durationMinutes <= 90) levelLength = 12;
-  else if (durationMinutes <= 180) levelLength = 15;
-  else if (durationMinutes <= 300) levelLength = 20;
+  if (durationMinutes <= 90) levelLength = 15;
+  else if (durationMinutes <= 240) levelLength = 20;
   else levelLength = 25;
 
   const breakEveryNLevels = Math.max(3, Math.round(90 / levelLength));
@@ -66,23 +70,37 @@ function generateBlindStructure(buyIn, stackSize, numPlayers, durationMinutes, i
   const estimatedBreaks = Math.floor(nPlayLevels / breakEveryNLevels);
   nPlayLevels = Math.max(4, Math.floor((durationMinutes - estimatedBreaks * breakLength) / levelLength));
 
-  const startBB = Math.max(100, roundBlind(stackSize / 100));
-  const endBB = roundBlind(targetFinalBB);
-  const growth = Math.pow(endBB / startBB, 1 / Math.max(1, nPlayLevels - 1));
+  // Natural poker BB schedule — strictly increasing, no awkward jumps,
+  // and once we pass 1000, no trailing 50s (1000/1500/2000/3000/5000/8000...).
+  const BB_SCHEDULE = [
+    100, 200, 300, 400, 500, 600, 800, 1000,
+    1500, 2000, 3000, 4000, 5000, 6000, 8000,
+    10000, 15000, 20000, 30000, 40000, 50000,
+    60000, 80000, 100000, 150000, 200000,
+  ];
+
+  // Pick a start index and end index into the schedule, then sample evenly.
+  const startBB = Math.max(100, BB_SCHEDULE.find((v) => v >= stackSize / 100) || 100);
+  const endBB = BB_SCHEDULE.find((v) => v >= targetFinalBB) || BB_SCHEDULE[BB_SCHEDULE.length - 1];
+
+  const startIdx = BB_SCHEDULE.indexOf(startBB);
+  const endIdx = Math.max(startIdx + 1, BB_SCHEDULE.indexOf(endBB));
 
   const levels = [];
   let playLevelCount = 0;
   let lastBB = 0;
   for (let i = 0; i < nPlayLevels; i++) {
-    let bb = roundBlind(startBB * Math.pow(growth, i));
-    // Ensure strict monotonic increase. If rounding produced same/lower, bump to next step.
+    // Linear interpolation through the schedule, ensuring strict increase.
+    const t = nPlayLevels === 1 ? 0 : i / (nPlayLevels - 1);
+    let idx = Math.round(startIdx + t * (endIdx - startIdx));
+    let bb = BB_SCHEDULE[Math.min(idx, BB_SCHEDULE.length - 1)];
     if (bb <= lastBB) {
-      bb = nextBlindStep(lastBB);
+      // Find the next schedule entry above lastBB
+      bb = BB_SCHEDULE.find((v) => v > lastBB) || lastBB + 1000;
     }
     lastBB = bb;
-    // SB should be exactly half BB, snapped down to a valid chip value
-    const sb = Math.max(roundBlind(bb / 2), 50);
-    const ante = includeAntes && i >= Math.floor(nPlayLevels / 3) ? roundBlind(bb / 4) : 0;
+    const sb = bb / 2;
+    const ante = includeAntes && i >= Math.floor(nPlayLevels / 3) ? bb / 4 : 0;
     levels.push({ sb, bb, ante, duration: levelLength, isBreak: false });
     playLevelCount++;
     if (playLevelCount % breakEveryNLevels === 0 && i < nPlayLevels - 1) {
@@ -92,22 +110,19 @@ function generateBlindStructure(buyIn, stackSize, numPlayers, durationMinutes, i
   return levels;
 }
 
-// Step to the next sensible blind value above the given one
+// Step to the next sensible blind value above the given one (used for manual "add level")
 function nextBlindStep(current) {
-  if (current < 100) return current + 50;
-  if (current < 500) return current + 100;
-  if (current < 1000) return current + 200;
-  if (current < 5000) return current + 500;
-  if (current < 10000) return current + 1000;
-  return current + 2000;
+  const SCHEDULE = [100, 200, 300, 400, 500, 600, 800, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 8000, 10000, 15000, 20000, 30000, 40000, 50000, 60000, 80000, 100000];
+  const next = SCHEDULE.find((v) => v > current);
+  return next || current * 2;
 }
 
+// (Retained for any legacy callers — not used by the generator any more)
 function roundBlind(value) {
-  if (value < 50) return Math.max(50, Math.round(value / 50) * 50);
-  if (value < 500) return Math.round(value / 50) * 50;
+  if (value < 100) return Math.max(100, Math.round(value / 50) * 50);
   if (value < 1000) return Math.round(value / 100) * 100;
   if (value < 5000) return Math.round(value / 500) * 500;
-  if (value < 10000) return Math.round(value / 500) * 500;
+  if (value < 10000) return Math.round(value / 1000) * 1000;
   return Math.round(value / 1000) * 1000;
 }
 
@@ -116,6 +131,221 @@ const formatTime = (seconds) => {
   const s = seconds % 60;
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
+
+// ============ SOUND LIBRARY ============
+// Synthesised animal sounds using Web Audio API. No external files.
+// Each sound is a function that takes an AudioContext and plays.
+
+let sharedAudioCtx = null;
+function getAudioCtx() {
+  if (sharedAudioCtx) return sharedAudioCtx;
+  try {
+    sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  } catch (e) { return null; }
+  return sharedAudioCtx;
+}
+
+// Helper: create an oscillator with envelope
+function tone(ctx, { type = 'sine', freq = 440, freqEnd = null, start = 0, duration = 0.2, gain = 0.3, attack = 0.01, release = 0.05 }) {
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+  if (freqEnd !== null) {
+    osc.frequency.linearRampToValueAtTime(freqEnd, ctx.currentTime + start + duration);
+  }
+  g.gain.setValueAtTime(0, ctx.currentTime + start);
+  g.gain.linearRampToValueAtTime(gain, ctx.currentTime + start + attack);
+  g.gain.linearRampToValueAtTime(gain * 0.7, ctx.currentTime + start + duration - release);
+  g.gain.linearRampToValueAtTime(0, ctx.currentTime + start + duration);
+  osc.connect(g);
+  g.connect(ctx.destination);
+  osc.start(ctx.currentTime + start);
+  osc.stop(ctx.currentTime + start + duration + 0.05);
+}
+
+// Helper: noise burst (for animal-y texture)
+function noise(ctx, { start = 0, duration = 0.1, gain = 0.15, lowpass = 2000 }) {
+  const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1);
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = lowpass;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, ctx.currentTime + start);
+  g.gain.linearRampToValueAtTime(gain, ctx.currentTime + start + 0.01);
+  g.gain.linearRampToValueAtTime(0, ctx.currentTime + start + duration);
+  source.connect(filter);
+  filter.connect(g);
+  g.connect(ctx.destination);
+  source.start(ctx.currentTime + start);
+  source.stop(ctx.currentTime + start + duration);
+}
+
+const SOUND_LIBRARY = {
+  none: { label: 'None', play: () => {} },
+  quack: {
+    label: 'Quack (duck)',
+    play: (ctx) => {
+      // Two quacks, descending pitch with sawtooth for nasal quality
+      for (let i = 0; i < 2; i++) {
+        tone(ctx, { type: 'sawtooth', freq: 320, freqEnd: 180, start: i * 0.25, duration: 0.18, gain: 0.2 });
+        noise(ctx, { start: i * 0.25, duration: 0.05, gain: 0.08, lowpass: 1500 });
+      }
+    },
+  },
+  cluck: {
+    label: 'Cluck (chicken)',
+    play: (ctx) => {
+      // Rapid clucks: 4 short bursts ascending then one longer "buck-aww"
+      for (let i = 0; i < 3; i++) {
+        tone(ctx, { type: 'square', freq: 600 + i * 100, freqEnd: 400, start: i * 0.12, duration: 0.07, gain: 0.12, attack: 0.005 });
+      }
+      tone(ctx, { type: 'sawtooth', freq: 700, freqEnd: 300, start: 0.42, duration: 0.4, gain: 0.18 });
+    },
+  },
+  neigh: {
+    label: 'Neigh (horse)',
+    play: (ctx) => {
+      // Horse whinny: rapid vibrato, descending
+      const ctxStart = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(700, ctxStart);
+      // Vibrato by modulating frequency
+      for (let i = 0; i < 10; i++) {
+        const t = ctxStart + i * 0.05;
+        osc.frequency.linearRampToValueAtTime(500 + (i % 2 === 0 ? 200 : -100) - i * 30, t);
+      }
+      osc.frequency.linearRampToValueAtTime(150, ctxStart + 0.8);
+      g.gain.setValueAtTime(0, ctxStart);
+      g.gain.linearRampToValueAtTime(0.2, ctxStart + 0.05);
+      g.gain.linearRampToValueAtTime(0.15, ctxStart + 0.6);
+      g.gain.linearRampToValueAtTime(0, ctxStart + 0.9);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(ctxStart);
+      osc.stop(ctxStart + 1.0);
+    },
+  },
+  moo: {
+    label: 'Moo (cow)',
+    play: (ctx) => {
+      tone(ctx, { type: 'sawtooth', freq: 130, freqEnd: 90, start: 0, duration: 0.8, gain: 0.25, attack: 0.1, release: 0.2 });
+      tone(ctx, { type: 'triangle', freq: 260, freqEnd: 180, start: 0, duration: 0.8, gain: 0.1 });
+    },
+  },
+  bark: {
+    label: 'Bark (dog)',
+    play: (ctx) => {
+      for (let i = 0; i < 2; i++) {
+        tone(ctx, { type: 'square', freq: 250, freqEnd: 180, start: i * 0.3, duration: 0.12, gain: 0.2, attack: 0.005 });
+        noise(ctx, { start: i * 0.3, duration: 0.08, gain: 0.15, lowpass: 1500 });
+      }
+    },
+  },
+  meow: {
+    label: 'Meow (cat)',
+    play: (ctx) => {
+      tone(ctx, { type: 'sawtooth', freq: 500, freqEnd: 800, start: 0, duration: 0.2, gain: 0.15 });
+      tone(ctx, { type: 'sawtooth', freq: 800, freqEnd: 400, start: 0.2, duration: 0.4, gain: 0.18 });
+    },
+  },
+  hoot: {
+    label: 'Hoot (owl)',
+    play: (ctx) => {
+      tone(ctx, { type: 'sine', freq: 300, freqEnd: 280, start: 0, duration: 0.3, gain: 0.3, attack: 0.05, release: 0.1 });
+      tone(ctx, { type: 'sine', freq: 320, freqEnd: 290, start: 0.45, duration: 0.5, gain: 0.3, attack: 0.05, release: 0.15 });
+    },
+  },
+  oink: {
+    label: 'Oink (pig)',
+    play: (ctx) => {
+      for (let i = 0; i < 3; i++) {
+        tone(ctx, { type: 'sawtooth', freq: 200, freqEnd: 250, start: i * 0.18, duration: 0.12, gain: 0.18 });
+        noise(ctx, { start: i * 0.18, duration: 0.12, gain: 0.12, lowpass: 800 });
+      }
+    },
+  },
+  baa: {
+    label: 'Baa (sheep)',
+    play: (ctx) => {
+      // Wobble between two pitches
+      const ctxStart = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sawtooth';
+      for (let i = 0; i < 12; i++) {
+        osc.frequency.linearRampToValueAtTime(i % 2 === 0 ? 420 : 360, ctxStart + i * 0.04);
+      }
+      g.gain.setValueAtTime(0, ctxStart);
+      g.gain.linearRampToValueAtTime(0.18, ctxStart + 0.05);
+      g.gain.linearRampToValueAtTime(0, ctxStart + 0.5);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(ctxStart);
+      osc.stop(ctxStart + 0.6);
+    },
+  },
+  crow: {
+    label: 'Crow (rooster)',
+    play: (ctx) => {
+      // Cock-a-doodle-doo: 4 ascending then descending notes
+      tone(ctx, { type: 'sawtooth', freq: 500, freqEnd: 550, start: 0, duration: 0.2, gain: 0.2 });
+      tone(ctx, { type: 'sawtooth', freq: 600, freqEnd: 700, start: 0.22, duration: 0.18, gain: 0.2 });
+      tone(ctx, { type: 'sawtooth', freq: 750, freqEnd: 720, start: 0.42, duration: 0.25, gain: 0.22 });
+      tone(ctx, { type: 'sawtooth', freq: 600, freqEnd: 300, start: 0.7, duration: 0.5, gain: 0.2 });
+    },
+  },
+  trumpet: {
+    label: 'Trumpet fanfare',
+    play: (ctx) => {
+      // Sad trombone-ish: descending tones
+      tone(ctx, { type: 'sawtooth', freq: 392, start: 0, duration: 0.2, gain: 0.2 });
+      tone(ctx, { type: 'sawtooth', freq: 370, start: 0.22, duration: 0.2, gain: 0.2 });
+      tone(ctx, { type: 'sawtooth', freq: 349, start: 0.44, duration: 0.2, gain: 0.2 });
+      tone(ctx, { type: 'sawtooth', freq: 330, freqEnd: 250, start: 0.66, duration: 0.6, gain: 0.25 });
+    },
+  },
+  airhorn: {
+    label: 'Air horn',
+    play: (ctx) => {
+      tone(ctx, { type: 'square', freq: 200, start: 0, duration: 0.4, gain: 0.15 });
+      tone(ctx, { type: 'square', freq: 250, start: 0, duration: 0.4, gain: 0.12 });
+      tone(ctx, { type: 'square', freq: 300, start: 0.5, duration: 0.6, gain: 0.18 });
+      tone(ctx, { type: 'square', freq: 350, start: 0.5, duration: 0.6, gain: 0.12 });
+    },
+  },
+};
+
+function playSound(soundKey) {
+  if (!soundKey || soundKey === 'none') return;
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  // Resume context if suspended (browsers sometimes suspend until user gesture)
+  if (ctx.state === 'suspended') ctx.resume();
+  const sound = SOUND_LIBRARY[soundKey];
+  if (sound) sound.play(ctx);
+}
+
+// ============ PAYOUT LOGIC ============
+// Standard small-field payout structures by number of payable places.
+const PAYOUT_STRUCTURES = {
+  '1': { label: 'Winner takes all', splits: [100] },
+  '2': { label: 'Top 2 (60/40)', splits: [60, 40] },
+  '3': { label: 'Top 3 (50/30/20)', splits: [50, 30, 20] },
+  '4': { label: 'Top 4 (45/25/18/12)', splits: [45, 25, 18, 12] },
+  '5': { label: 'Top 5 (40/25/17/12/6)', splits: [40, 25, 17, 12, 6] },
+};
+
+function defaultPayoutKey(numPlayers) {
+  if (numPlayers <= 10) return '3';
+  return '4';
+}
 
 // ============ SETUP WIZARD ============
 function SetupWizard({ onStart }) {
@@ -137,8 +367,12 @@ function SetupWizard({ onStart }) {
         if (saved && saved.value) {
           const parsed = JSON.parse(saved.value);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            setRoster(parsed);
-            setPlayingTonight(new Set(parsed)); // default: everyone playing
+            // Backward compat: if old format (array of strings), convert to objects
+            const migrated = parsed.map((p) =>
+              typeof p === 'string' ? { name: p, sound: 'none' } : { name: p.name, sound: p.sound || 'none' }
+            );
+            setRoster(migrated);
+            setPlayingTonight(new Set(migrated.map((p) => p.name)));
           }
         }
       } catch (e) { /* no saved roster yet */ }
@@ -159,11 +393,12 @@ function SetupWizard({ onStart }) {
   const addPlayer = () => {
     const name = newPlayer.trim();
     if (!name) return;
-    if (roster.includes(name)) {
+    const existing = roster.find((p) => p.name === name);
+    if (existing) {
       // Already in roster — just make sure they're selected
       setPlayingTonight((prev) => new Set([...prev, name]));
     } else {
-      setRoster([...roster, name]);
+      setRoster([...roster, { name, sound: 'none' }]);
       setPlayingTonight((prev) => new Set([...prev, name]));
     }
     setNewPlayer('');
@@ -178,9 +413,13 @@ function SetupWizard({ onStart }) {
     });
   };
 
-  // Remove from roster entirely (long-press / trash icon)
+  const updatePlayerSound = (name, soundKey) => {
+    setRoster(roster.map((p) => (p.name === name ? { ...p, sound: soundKey } : p)));
+  };
+
+  // Remove from roster entirely
   const removeFromRoster = (name) => {
-    setRoster(roster.filter((p) => p !== name));
+    setRoster(roster.filter((p) => p.name !== name));
     setPlayingTonight((prev) => {
       const next = new Set(prev);
       next.delete(name);
@@ -188,10 +427,10 @@ function SetupWizard({ onStart }) {
     });
   };
 
-  const selectAll = () => setPlayingTonight(new Set(roster));
+  const selectAll = () => setPlayingTonight(new Set(roster.map((p) => p.name)));
   const selectNone = () => setPlayingTonight(new Set());
 
-  const playersArray = roster.filter((p) => playingTonight.has(p));
+  const playersArray = roster.filter((p) => playingTonight.has(p.name));
 
   const canAdvance = () => {
     if (step === 0) return parseFloat(buyIn) > 0;
@@ -212,7 +451,7 @@ function SetupWizard({ onStart }) {
     onStart({
       buyIn: parseFloat(buyIn),
       stackSize: parseInt(stackSize),
-      players: playersArray,
+      players: playersArray, // now objects with name + sound
       duration: parseInt(duration),
       levels,
     });
@@ -365,45 +604,70 @@ function SetupWizard({ onStart }) {
                         CLEAR
                       </button>
                     </div>
-                    <div className="max-w-md mx-auto grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto">
-                      {roster.map((name) => {
-                        const playing = playingTonight.has(name);
+                    <div className="max-w-md mx-auto space-y-2 max-h-80 overflow-y-auto pr-1">
+                      {roster.map((player) => {
+                        const playing = playingTonight.has(player.name);
                         return (
                           <div
-                            key={name}
-                            className={`flex items-center gap-2 p-3 rounded-lg border transition-colors ${
+                            key={player.name}
+                            className={`p-3 rounded-lg border transition-colors ${
                               playing
                                 ? 'bg-emerald-950/40 border-emerald-500/40'
                                 : 'bg-black/30 border-yellow-500/10'
                             }`}
                           >
-                            <button
-                              onClick={() => togglePlaying(name)}
-                              className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                                playing
-                                  ? 'bg-emerald-500 border-emerald-400'
-                                  : 'border-yellow-100/30'
-                              }`}
-                            >
-                              {playing && (
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
-                                  <polyline points="20 6 9 17 4 12" />
-                                </svg>
-                              )}
-                            </button>
-                            <button
-                              onClick={() => togglePlaying(name)}
-                              className={`flex-1 text-left ${playing ? 'text-emerald-100' : 'text-yellow-100/50'}`}
-                            >
-                              {name}
-                            </button>
-                            <button
-                              onClick={() => removeFromRoster(name)}
-                              className="text-yellow-100/30 hover:text-red-400"
-                              title="Remove from roster"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => togglePlaying(player.name)}
+                                className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                                  playing
+                                    ? 'bg-emerald-500 border-emerald-400'
+                                    : 'border-yellow-100/30'
+                                }`}
+                              >
+                                {playing && (
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
+                                    <polyline points="20 6 9 17 4 12" />
+                                  </svg>
+                                )}
+                              </button>
+                              <button
+                                onClick={() => togglePlaying(player.name)}
+                                className={`flex-1 text-left ${playing ? 'text-emerald-100' : 'text-yellow-100/50'}`}
+                              >
+                                {player.name}
+                              </button>
+                              <button
+                                onClick={() => removeFromRoster(player.name)}
+                                className="text-yellow-100/30 hover:text-red-400"
+                                title="Remove from roster"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                            {playing && (
+                              <div className="flex gap-2 mt-2 ml-7">
+                                <select
+                                  value={player.sound || 'none'}
+                                  onChange={(e) => updatePlayerSound(player.name, e.target.value)}
+                                  className="flex-1 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-100/80 text-xs focus:outline-none focus:border-yellow-500/50"
+                                >
+                                  {Object.entries(SOUND_LIBRARY).map(([key, s]) => (
+                                    <option key={key} value={key} style={{ background: '#0a3d1f' }}>
+                                      {s.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => playSound(player.sound || 'none')}
+                                  disabled={!player.sound || player.sound === 'none'}
+                                  className="px-3 py-1 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 text-xs disabled:opacity-30"
+                                  title="Preview sound"
+                                >
+                                  <Music size={12} />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -523,17 +787,21 @@ function SetupWizard({ onStart }) {
 // ============ MAIN TIMER ============
 function PokerTimerMain({ config, onReset }) {
   const [levels, setLevels] = useState(config.levels);
-  const [players, setPlayers] = useState(config.players);
+  const [players, setPlayers] = useState(config.players); // [{name, sound}, ...]
   const [currentLevel, setCurrentLevel] = useState(0);
   const [timeLeft, setTimeLeft] = useState(config.levels[0].duration * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [eliminatedPlayers, setEliminatedPlayers] = useState([]);
+  const [eliminatedPlayers, setEliminatedPlayers] = useState([]); // names, in elimination order
+  const [rebuyCounts, setRebuyCounts] = useState({}); // { playerName: number }
+  const [payoutKey, setPayoutKey] = useState(() => defaultPayoutKey(config.players.length));
   const [newPlayerName, setNewPlayerName] = useState('');
   const [activePanel, setActivePanel] = useState(null);
   const [hasStarted, setHasStarted] = useState(false);
   const [voices, setVoices] = useState([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState(null);
+  const [showHomeConfirm, setShowHomeConfirm] = useState(false);
+  const [showEliminate, setShowEliminate] = useState(false);
 
   const intervalRef = useRef(null);
 
@@ -696,7 +964,7 @@ function PokerTimerMain({ config, onReset }) {
 
   const addPlayer = () => {
     if (newPlayerName.trim()) {
-      setPlayers([...players, newPlayerName.trim()]);
+      setPlayers([...players, { name: newPlayerName.trim(), sound: 'none' }]);
       setNewPlayerName('');
     }
   };
@@ -706,6 +974,43 @@ function PokerTimerMain({ config, onReset }) {
   };
 
   const removePlayer = (idx) => setPlayers(players.filter((_, i) => i !== idx));
+
+  // Rebuy: add 1 to rebuy count for this player
+  const addRebuy = (name) => {
+    setRebuyCounts((prev) => ({ ...prev, [name]: (prev[name] || 0) + 1 }));
+  };
+
+  const removeRebuy = (name) => {
+    setRebuyCounts((prev) => {
+      const next = { ...prev };
+      const cur = next[name] || 0;
+      if (cur <= 1) delete next[name];
+      else next[name] = cur - 1;
+      return next;
+    });
+  };
+
+  const totalRebuys = Object.values(rebuyCounts).reduce((a, b) => a + b, 0);
+
+  // Eliminate a player: voice "Goodbye <name>", then play their sound
+  const eliminatePlayer = (player) => {
+    setEliminatedPlayers((prev) => [...prev, player.name]);
+    setShowEliminate(false);
+    // Voice line first, then sound after a short delay
+    if (voiceEnabled) {
+      speak(`Goodbye, ${player.name}.`);
+      // Estimate ~1.2s for the speech, then play their sound
+      setTimeout(() => playSound(player.sound), 1400);
+    } else {
+      // Voice off — just play the sound
+      playSound(player.sound);
+    }
+  };
+
+  // Un-eliminate (in case of misclick)
+  const restorePlayer = (name) => {
+    setEliminatedPlayers((prev) => prev.filter((p) => p !== name));
+  };
 
   const updateLevel = (idx, field, value) => {
     const newLevels = [...levels];
@@ -727,9 +1032,14 @@ function PokerTimerMain({ config, onReset }) {
 
   const level = levels[currentLevel];
   const nextLvl = levels[currentLevel + 1];
-  const activePlayers = players.filter((p) => !eliminatedPlayers.includes(p));
+  const activePlayers = players.filter((p) => !eliminatedPlayers.includes(p.name));
   const progress = 1 - timeLeft / (level.duration * 60);
-  const prizePool = config.buyIn * players.length;
+  // Prize pool includes rebuys
+  const totalEntries = players.length + totalRebuys;
+  const prizePool = config.buyIn * totalEntries;
+  // Avg stack: total chips in play / players still in
+  const totalChipsInPlay = config.stackSize * totalEntries;
+  const avgStack = activePlayers.length > 0 ? Math.round(totalChipsInPlay / activePlayers.length) : 0;
 
   return (
     <div className="min-h-screen w-full" style={{
@@ -776,15 +1086,14 @@ function PokerTimerMain({ config, onReset }) {
               <div className="font-display text-3xl gold-text">HOME GAME</div>
               <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
                 £{prizePool} POOL · {activePlayers.length}/{players.length} LEFT
+                {totalRebuys > 0 && <span className="text-yellow-300/80"> · {totalRebuys} REBUY{totalRebuys === 1 ? '' : 'S'}</span>}
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap justify-end">
               <button
                 onClick={() => {
                   const nextState = !voiceEnabled;
                   setVoiceEnabled(nextState);
-                  // When turning ON, test immediately so the user knows it works.
-                  // This also unlocks the speech engine on iOS via the user gesture.
                   if (nextState && typeof window !== 'undefined' && window.speechSynthesis) {
                     try {
                       window.speechSynthesis.cancel();
@@ -803,20 +1112,23 @@ function PokerTimerMain({ config, onReset }) {
               >
                 {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
               </button>
-              <button onClick={() => setActivePanel(activePanel === 'players' ? null : 'players')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'players' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`}>
+              <button onClick={() => setActivePanel(activePanel === 'players' ? null : 'players')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'players' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Players & rebuys">
                 <Users size={18} />
               </button>
-              <button onClick={() => setActivePanel(activePanel === 'settings' ? null : 'settings')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'settings' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`}>
+              <button onClick={() => setActivePanel(activePanel === 'payouts' ? null : 'payouts')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'payouts' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Payouts">
+                <Trophy size={18} />
+              </button>
+              <button onClick={() => setActivePanel(activePanel === 'settings' ? null : 'settings')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'settings' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Settings & blinds">
                 <Settings size={18} />
               </button>
-              <button onClick={onReset} className="control-btn p-3 rounded-full bg-black/40 border border-red-500/30 text-red-300" title="New tournament">
-                <Edit3 size={18} />
+              <button onClick={() => setShowHomeConfirm(true)} className="control-btn p-3 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100" title="Home (ends current game)">
+                <Home size={18} />
               </button>
             </div>
           </div>
 
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12 mb-6">
-            <div className="flex justify-between items-start mb-6">
+            <div className="flex justify-between items-start mb-6 gap-4">
               <div>
                 <div className="font-mono text-xs text-yellow-500/60 tracking-widest">LEVEL</div>
                 <div className="font-display text-5xl gold-text leading-none">
@@ -824,10 +1136,17 @@ function PokerTimerMain({ config, onReset }) {
                   <span className="text-2xl text-yellow-500/40"> / {levels.length}</span>
                 </div>
               </div>
+              <div className="text-center">
+                <div className="font-mono text-xs text-emerald-300/60 tracking-widest">REMAINING</div>
+                <div className="font-display text-5xl text-emerald-200 leading-none">
+                  {activePlayers.length}
+                </div>
+                <div className="font-mono text-xs text-emerald-300/40 mt-1">of {players.length}</div>
+              </div>
               <div className="text-right">
                 <div className="font-mono text-xs text-emerald-300/60 tracking-widest">AVG STACK</div>
                 <div className="font-display text-5xl text-emerald-200 leading-none">
-                  {activePlayers.length > 0 ? Math.round((config.stackSize * players.length) / activePlayers.length).toLocaleString() : '—'}
+                  {activePlayers.length > 0 ? avgStack.toLocaleString() : '—'}
                 </div>
               </div>
             </div>
@@ -904,7 +1223,7 @@ function PokerTimerMain({ config, onReset }) {
             )}
           </div>
 
-          <div className="flex justify-center gap-3 mb-6">
+          <div className="flex justify-center gap-3 mb-4">
             <button onClick={prevLevel} className="control-btn p-4 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100">
               <SkipBack size={20} />
             </button>
@@ -916,10 +1235,21 @@ function PokerTimerMain({ config, onReset }) {
             </button>
           </div>
 
+          {/* Eliminate button */}
+          <div className="flex justify-center mb-6">
+            <button
+              onClick={() => setShowEliminate(true)}
+              disabled={activePlayers.length === 0}
+              className="control-btn px-6 py-2.5 rounded-full bg-red-900/30 border border-red-500/40 text-red-200 font-mono text-sm flex items-center gap-2 hover:bg-red-900/50 disabled:opacity-30"
+            >
+              <UserMinus size={16} /> ELIMINATE PLAYER
+            </button>
+          </div>
+
           {activePanel === 'players' && (
             <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
               <div className="flex justify-between items-center mb-4">
-                <div className="font-display text-2xl gold-text">PLAYERS</div>
+                <div className="font-display text-2xl gold-text">PLAYERS & REBUYS</div>
                 <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
               </div>
               <div className="flex gap-2 mb-4">
@@ -928,22 +1258,131 @@ function PokerTimerMain({ config, onReset }) {
                   <Plus size={18} />
                 </button>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
-                {players.map((name, idx) => {
-                  const isOut = eliminatedPlayers.includes(name);
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {players.map((player, idx) => {
+                  const isOut = eliminatedPlayers.includes(player.name);
+                  const rebuys = rebuyCounts[player.name] || 0;
                   return (
                     <div key={idx} className={`flex items-center gap-2 p-3 rounded-lg border ${isOut ? 'bg-red-950/30 border-red-500/20' : 'bg-emerald-950/30 border-emerald-500/20'}`}>
-                      <button onClick={() => togglePlayerEliminated(name)} className={`flex-1 text-left ${isOut ? 'line-through text-red-300/60' : 'text-emerald-100'}`}>
-                        {name}
-                      </button>
-                      <button onClick={() => removePlayer(idx)} className="text-yellow-100/40 hover:text-red-400">
+                      <span className={`flex-1 ${isOut ? 'line-through text-red-300/60' : 'text-emerald-100'}`}>
+                        {player.name}
+                      </span>
+                      {/* Rebuy controls */}
+                      <div className="flex items-center gap-1 bg-black/30 rounded-full px-1">
+                        <button
+                          onClick={() => removeRebuy(player.name)}
+                          disabled={rebuys === 0}
+                          className="w-7 h-7 rounded-full text-yellow-100/60 hover:text-yellow-100 disabled:opacity-20 text-sm"
+                          title="Remove rebuy"
+                        >−</button>
+                        <span className="text-xs font-mono text-yellow-100 w-8 text-center">
+                          {rebuys > 0 ? `+${rebuys}` : '—'}
+                        </span>
+                        <button
+                          onClick={() => addRebuy(player.name)}
+                          className="w-7 h-7 rounded-full text-yellow-100/60 hover:text-yellow-100 text-sm"
+                          title="Add rebuy"
+                        >+</button>
+                      </div>
+                      {/* Restore (if eliminated) */}
+                      {isOut && (
+                        <button onClick={() => restorePlayer(player.name)} className="text-emerald-300/60 hover:text-emerald-200" title="Restore">
+                          <RotateCcw size={14} />
+                        </button>
+                      )}
+                      <button onClick={() => removePlayer(idx)} className="text-yellow-100/40 hover:text-red-400" title="Remove from game">
                         <Trash2 size={14} />
                       </button>
                     </div>
                   );
                 })}
               </div>
-              <div className="text-xs text-yellow-100/40 mt-3 font-mono">Tap a name to mark eliminated.</div>
+              <div className="text-xs text-yellow-100/40 mt-3 font-mono">
+                +/− to record rebuys. Pool & avg stack update automatically.
+              </div>
+            </div>
+          )}
+
+          {/* PAYOUTS PANEL */}
+          {activePanel === 'payouts' && (
+            <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
+              <div className="flex justify-between items-center mb-4">
+                <div className="font-display text-2xl gold-text">PAYOUTS</div>
+                <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
+              </div>
+
+              <div className="mb-4 p-4 rounded-xl bg-black/30 border border-yellow-500/10">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest">PRIZE POOL</div>
+                    <div className="font-display text-4xl gold-text">£{prizePool.toLocaleString()}</div>
+                  </div>
+                  <div className="text-right text-xs font-mono text-yellow-100/60">
+                    <div>{players.length} buy-ins</div>
+                    {totalRebuys > 0 && <div>+ {totalRebuys} rebuys</div>}
+                    <div className="text-yellow-100/40">@ £{config.buyIn} each</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2">STRUCTURE</div>
+                <select
+                  value={payoutKey}
+                  onChange={(e) => setPayoutKey(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm focus:outline-none focus:border-yellow-500/50"
+                >
+                  {Object.entries(PAYOUT_STRUCTURES).map(([key, struct]) => (
+                    <option key={key} value={key} style={{ background: '#0a3d1f' }}>
+                      {struct.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="text-xs font-mono text-yellow-100/40 mt-1">
+                  Default for {players.length} players: {PAYOUT_STRUCTURES[defaultPayoutKey(players.length)].label}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {PAYOUT_STRUCTURES[payoutKey].splits.map((pct, i) => {
+                  const amount = Math.round((prizePool * pct) / 100);
+                  const places = ['1st', '2nd', '3rd', '4th', '5th'];
+                  const colors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
+                  return (
+                    <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/30 border border-yellow-500/10">
+                      <div className="flex items-center gap-3">
+                        <div className={`font-display text-3xl ${colors[i]}`}>{places[i]}</div>
+                        <div className="font-mono text-xs text-yellow-100/50">{pct}%</div>
+                      </div>
+                      <div className="font-display text-3xl gold-text">£{amount.toLocaleString()}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Show eliminated order so far */}
+              {eliminatedPlayers.length > 0 && (
+                <div className="mt-5">
+                  <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2">FINISHING ORDER (so far)</div>
+                  <div className="space-y-1">
+                    {/* Active players at the top, in unspecified order; eliminated below in reverse */}
+                    {activePlayers.length > 0 && (
+                      <div className="text-xs font-mono text-emerald-200/70 p-2 rounded bg-emerald-950/30">
+                        Still in: {activePlayers.map(p => p.name).join(', ')}
+                      </div>
+                    )}
+                    {[...eliminatedPlayers].reverse().map((name, i) => {
+                      const place = activePlayers.length + i + 1;
+                      return (
+                        <div key={name} className="flex justify-between text-xs font-mono p-2 rounded bg-black/30">
+                          <span className="text-yellow-100/70">{place}.</span>
+                          <span className="text-yellow-100/70 flex-1 ml-2">{name}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1025,6 +1464,85 @@ function PokerTimerMain({ config, onReset }) {
           )}
         </div>
       </div>
+
+      {/* Home confirmation modal */}
+      {showHomeConfirm && (
+        <div
+          onClick={() => setShowHomeConfirm(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-sm w-full"
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="text-red-400 mt-0.5"><AlertTriangle size={24} /></div>
+              <div>
+                <div className="font-display text-2xl gold-text mb-1">END TOURNAMENT?</div>
+                <div className="text-yellow-100/70 text-sm">
+                  This will end the current game and return to setup. Your blind progress and eliminations will be lost.
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setShowHomeConfirm(false)}
+                className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm hover:border-yellow-500/50"
+              >
+                KEEP PLAYING
+              </button>
+              <button
+                onClick={() => { setShowHomeConfirm(false); onReset(); }}
+                className="flex-1 px-4 py-2.5 rounded-full bg-red-500/20 border border-red-500/50 text-red-200 font-mono text-sm hover:bg-red-500/30"
+              >
+                END GAME
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Eliminate player modal */}
+      {showEliminate && (
+        <div
+          onClick={() => setShowEliminate(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[85vh] flex flex-col"
+          >
+            <div className="flex justify-between items-center mb-4">
+              <div className="font-display text-2xl gold-text">WHO'S OUT?</div>
+              <button onClick={() => setShowEliminate(false)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
+            </div>
+            <div className="text-yellow-100/60 text-sm mb-4">
+              Tap a player to eliminate them. Their goodbye will play.
+            </div>
+            <div className="space-y-2 overflow-y-auto flex-1 pr-1">
+              {activePlayers.length === 0 ? (
+                <div className="text-yellow-100/40 text-sm text-center py-8">No active players left.</div>
+              ) : (
+                activePlayers.map((player) => (
+                  <button
+                    key={player.name}
+                    onClick={() => eliminatePlayer(player)}
+                    className="w-full flex items-center justify-between p-4 rounded-lg bg-emerald-950/40 border border-emerald-500/40 hover:bg-red-900/30 hover:border-red-500/50 transition-colors text-left"
+                  >
+                    <span className="text-emerald-100 text-lg">{player.name}</span>
+                    {player.sound && player.sound !== 'none' && (
+                      <span className="text-xs font-mono text-yellow-300/60 flex items-center gap-1">
+                        <Music size={12} />
+                        {SOUND_LIBRARY[player.sound]?.label.split(' ')[0]}
+                      </span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1036,13 +1554,11 @@ function App() {
     : <SetupWizard onStart={setConfig} />;
 }
 
-// Mount the app
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
 
   </script>
   <script>
-    // Register service worker for offline support
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js').catch(() => {});

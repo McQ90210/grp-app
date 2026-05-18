@@ -1,6 +1,6 @@
 // Poker Timer service worker — caches the app for offline use.
 
-const CACHE_NAME = 'poker-timer-v1';
+const CACHE_NAME = 'poker-timer-v2';
 const ASSETS = [
   './',
   './index.html',
