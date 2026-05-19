@@ -1221,7 +1221,7 @@ function LeagueContextScreen({ onConfirm, onBack }) {
 }
 
 // ============ SETUP WIZARD ============
-function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext = null, onBack }) {
+function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext = null, onBack, fbUser }) {
   const isFinal = leagueContext?.isFinal === true;
   const [step, setStep] = useState(0);
   const [buyIn, setBuyIn] = useState('20');
@@ -1348,6 +1348,13 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
 
   const updatePlayerSound = (name, soundKey) => {
     setRoster(roster.map((p) => (p.name === name ? { ...p, sound: soundKey } : p)));
+    // Persist to Firestore so the choice sticks across sessions and devices.
+    // Writes need auth; if not signed in, the localStorage copy still holds it
+    // for this browser.
+    if (fbUser && window.GRP_DB) {
+      window.GRP_DB.upsertPlayer({ displayName: name, sound: soundKey })
+        .catch(() => { /* swallow — localStorage still has it */ });
+    }
   };
 
   // Remove from roster entirely
@@ -4990,6 +4997,7 @@ function App() {
         leagueContext={leagueContext}
         onStart={setConfig}
         onBack={goHome}
+        fbUser={fbUser}
       />;
 }
 
