@@ -778,6 +778,26 @@ async function playSound(soundKey, customSounds = {}) {
   sound.play(ctx);
 }
 
+// Play a pre-recorded voice clip from sounds/voice/{key}.mp3.
+// Returns a Promise that resolves when playback ends, or rejects if the file
+// doesn't exist / fails to load — callers fall back to Web Speech in that case.
+// Only one voice clip plays at a time; starting a new one cancels the previous.
+let _activeVoiceAudio = null;
+function playVoiceClip(key) {
+  return new Promise((resolve, reject) => {
+    if (_activeVoiceAudio) {
+      try { _activeVoiceAudio.pause(); } catch (e) {}
+      _activeVoiceAudio = null;
+    }
+    const audio = new Audio(`sounds/voice/${key}.mp3`);
+    audio.volume = 1;
+    _activeVoiceAudio = audio;
+    audio.onended = () => { if (_activeVoiceAudio === audio) _activeVoiceAudio = null; resolve(); };
+    audio.onerror = () => { if (_activeVoiceAudio === audio) _activeVoiceAudio = null; reject(new Error('clip missing')); };
+    audio.play().catch((e) => { if (_activeVoiceAudio === audio) _activeVoiceAudio = null; reject(e); });
+  });
+}
+
 // Load the optional sounds.json manifest, which lets users add their own
 // sounds without code changes. Format:
 // {
@@ -1859,6 +1879,30 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     window.speechSynthesis.speak(utterance);
   }, [voiceEnabled, getVoice]);
 
+  // Pre-recorded voice clip with Web Speech fallback.
+  // key = filename (without .mp3) under sounds/voice/, e.g. 'final-3', 'goodbye-cactus'.
+  const speakClip = useCallback(async (key, fallbackText) => {
+    if (!voiceEnabled) return;
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    try { await playVoiceClip(key); }
+    catch (e) { if (fallbackText) speak(fallbackText); }
+  }, [voiceEnabled, speak]);
+
+  // Play a sequence of pre-recorded clips. items: [{ key, fallback }, ...].
+  const speakClipQueue = useCallback(async (items) => {
+    if (!voiceEnabled) return;
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+    for (const item of items) {
+      try { await playVoiceClip(item.key); }
+      catch (e) {
+        if (item.fallback) {
+          speak(item.fallback);
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
+    }
+  }, [voiceEnabled, speak]);
+
   // Queue multiple lines so they play in sequence (longer welcome message)
   const speakQueue = useCallback((lines) => {
     if (!voiceEnabled || typeof window === 'undefined' || !window.speechSynthesis) return;
@@ -1878,7 +1922,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     const level = levels[levelIdx];
     if (!level) return;
     if (level.isBreak) {
-      speak(`Break time. ${level.duration} minute break. Stretch your legs.`);
+      speakClip(`break-${level.duration}`, `Break time. ${level.duration} minute break. Stretch your legs.`);
     } else {
       const anteText = level.ante > 0 ? `, with an ante of ${level.ante}` : '';
       speakQueue([
@@ -1887,7 +1931,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         `This round runs for ${level.duration} minutes.`,
       ]);
     }
-  }, [levels, speak, speakQueue]);
+  }, [levels, speak, speakQueue, speakClip]);
 
   // Welcome message — only when starting from level 1 for the first time
   const speakWelcome = useCallback(() => {
@@ -1917,7 +1961,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               setTimeout(() => setTimeLeft(levels[next].duration * 60), 0);
             } else {
               setIsRunning(false);
-              setTimeout(() => speak('Tournament complete. Well played.'), 100);
+              setTimeout(() => speakClip('complete', 'Tournament complete. Well played.'), 100);
             }
             return next;
           });
@@ -1925,16 +1969,16 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         }
         // Only fire the 5-min warning if the round itself is longer than 5 min
         if (t === 301 && levels[currentLevel].duration > 5 && !levels[currentLevel].isBreak) {
-          speak('Five minutes remaining in this round.');
+          speakClip('five-min', 'Five minutes remaining in this round.');
         }
         if (t === 61 && !levels[currentLevel].isBreak) {
-          speak('One minute remaining.');
+          speakClip('one-min', 'One minute remaining.');
         }
         return t - 1;
       });
     }, 1000);
     return () => clearInterval(intervalRef.current);
-  }, [isRunning, levels, currentLevel, announceLevel, speak]);
+  }, [isRunning, levels, currentLevel, announceLevel, speak, speakClip]);
 
   const togglePlay = () => {
     // iOS / Safari requires the very first speak() call to happen synchronously
@@ -2046,7 +2090,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
 
     // Always: goodbye + their sound
     if (voiceEnabled) {
-      speak(`Goodbye, ${player.name}.`);
+      speakClip(`goodbye-${slugifyName(player.name)}`, `Goodbye, ${player.name}.`);
       setTimeout(() => playSound(player.sound, customSounds), 1400);
     } else {
       playSound(player.sound, customSounds);
@@ -2055,7 +2099,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     // Final 3: announcement (only if we just dropped TO 3, and only when starting field was >3)
     if (remainingAfter === 3 && players.length > 3) {
       setTimeout(() => {
-        if (voiceEnabled) speak(`We are down to the final three!`);
+        if (voiceEnabled) speakClip('final-3', 'We are down to the final three!');
       }, 3000);
     }
 
@@ -2071,9 +2115,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         playSound('fanfare', customSounds);
         setTimeout(() => {
           if (voiceEnabled && winnerObj) {
-            speakQueue([
-              `And the winner is... ${winnerObj.name}!`,
-              `Congratulations, ${winnerObj.name}!`,
+            const slug = slugifyName(winnerObj.name);
+            speakClipQueue([
+              { key: `winner-${slug}`, fallback: `And the winner is... ${winnerObj.name}!` },
+              { key: `congrats-${slug}`, fallback: `Congratulations, ${winnerObj.name}!` },
             ]);
           }
         }, 2200);
