@@ -2033,9 +2033,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
 
   const removePlayer = (idx) => setPlayers(players.filter((_, i) => i !== idx));
 
-  // Rebuy: add 1 to rebuy count for this player
+  // Rebuy: add 1 to rebuy count for this player and announce.
   const addRebuy = (name) => {
     setRebuyCounts((prev) => ({ ...prev, [name]: (prev[name] || 0) + 1 }));
+    if (voiceEnabled) speakClip(`rebuy-${slugifyName(name)}`, `Rebuy for ${name}.`);
   };
 
   const removeRebuy = (name) => {
