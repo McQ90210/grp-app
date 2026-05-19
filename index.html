@@ -734,6 +734,10 @@ const SOUND_LIBRARY = {
 };
 
 // Play a sound. Tries to use the bundled MP3 file first; falls back to synthesis.
+// Play a sound. Resolves when the sound has finished playing (so callers can
+// chain follow-up actions like winner announcements without overlap).
+// Synthesised fallbacks resolve after a 3s heuristic since they don't expose
+// a precise duration.
 async function playSound(soundKey, customSounds = {}) {
   if (!soundKey || soundKey === 'none') return;
   const ctx = getAudioCtx();
@@ -742,20 +746,22 @@ async function playSound(soundKey, customSounds = {}) {
     try { await ctx.resume(); } catch (e) {}
   }
 
+  const playBuffer = (buffer) => new Promise((resolve) => {
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = ctx.createGain();
+    g.gain.value = 0.9;
+    src.connect(g);
+    g.connect(ctx.destination);
+    src.onended = () => resolve();
+    src.start();
+  });
+
   // Look in custom sounds (from sounds.json) first
   const custom = customSounds[soundKey];
   if (custom && custom.file) {
     const buffer = await loadAudioBuffer(custom.file);
-    if (buffer) {
-      const src = ctx.createBufferSource();
-      src.buffer = buffer;
-      const g = ctx.createGain();
-      g.gain.value = 0.9;
-      src.connect(g);
-      g.connect(ctx.destination);
-      src.start();
-      return;
-    }
+    if (buffer) return playBuffer(buffer);
     return; // Custom sound failed — don't fall through to synth
   }
 
@@ -764,18 +770,11 @@ async function playSound(soundKey, customSounds = {}) {
   if (!sound) return;
   if (sound.file) {
     const buffer = await loadAudioBuffer(sound.file);
-    if (buffer) {
-      const src = ctx.createBufferSource();
-      src.buffer = buffer;
-      const g = ctx.createGain();
-      g.gain.value = 0.9;
-      src.connect(g);
-      g.connect(ctx.destination);
-      src.start();
-      return;
-    }
+    if (buffer) return playBuffer(buffer);
   }
   sound.play(ctx);
+  // Synthesised fallback: no precise duration, use a 3s heuristic.
+  await new Promise((r) => setTimeout(r, 3000));
 }
 
 // Play a pre-recorded voice clip from sounds/voice/{key}.mp3.
@@ -1933,21 +1932,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     }
   }, [levels, speak, speakQueue, speakClip]);
 
-  // Welcome message — only when starting from level 1 for the first time
+  // Welcome message — only when starting from level 1 for the first time.
+  // Plays the pre-recorded Adam clip; falls back to Web Speech.
   const speakWelcome = useCallback(() => {
     const level = levels[0];
     if (!level || level.isBreak) return;
-    const anteText = level.ante > 0 ? `, with an ante of ${level.ante}` : '';
-    const playerCount = players.length;
-    const prizePool = config.buyIn * playerCount;
-    speakQueue([
-      `Welcome to the home game, everyone.`,
-      `We've got ${playerCount} players battling for a prize pool of ${prizePool} pounds.`,
-      `Starting blinds are ${level.sb} and ${level.bb}${anteText}.`,
-      `This first round runs for ${level.duration} minutes.`,
-      `Good luck everyone.`,
-    ]);
-  }, [levels, players.length, config.buyIn, speakQueue]);
+    speakClip('welcome', 'Welcome to the home game, everyone. Best of luck.');
+  }, [levels, speakClip]);
 
   useEffect(() => {
     if (!isRunning) return;
@@ -2088,12 +2079,16 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     const remainingAfter = activePlayers.length - 1;
     setEliminatedPlayers((prev) => [...prev, player.name]);
 
-    // Always: goodbye + their sound
+    // Always: goodbye + their sound. Capture the player-sound promise so we
+    // can chain the winner announcement off it on the final elimination.
+    let playerSoundPromise;
     if (voiceEnabled) {
       speakClip(`goodbye-${slugifyName(player.name)}`, `Goodbye, ${player.name}.`);
-      setTimeout(() => playSound(player.sound, customSounds), 1400);
+      playerSoundPromise = new Promise((resolve) => {
+        setTimeout(() => { resolve(playSound(player.sound, customSounds)); }, 1400);
+      });
     } else {
-      playSound(player.sound, customSounds);
+      playerSoundPromise = playSound(player.sound, customSounds);
     }
 
     // Final 3: announcement (only if we just dropped TO 3, and only when starting field was >3)
@@ -2103,26 +2098,27 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       }, 3000);
     }
 
-    // Winner: 1 player left
+    // Winner: 1 player left. Wait for the eliminated player's sound to finish
+    // before triggering the fanfare and winner announcement so they don't overlap.
     if (remainingAfter === 1) {
-      // Stop the timer
       setIsRunning(false);
-      // Find the winner
       const winnerObj = activePlayers.find((p) => p.name !== player.name);
-      setTimeout(() => {
+      (async () => {
+        try { await playerSoundPromise; } catch (e) { /* ignore */ }
+        // Small breath between the player's sound ending and the fanfare
+        await new Promise((r) => setTimeout(r, 400));
         setWinner(winnerObj);
-        // Fanfare sound, then announce winner
         playSound('fanfare', customSounds);
-        setTimeout(() => {
-          if (voiceEnabled && winnerObj) {
-            const slug = slugifyName(winnerObj.name);
-            speakClipQueue([
-              { key: `winner-${slug}`, fallback: `And the winner is... ${winnerObj.name}!` },
-              { key: `congrats-${slug}`, fallback: `Congratulations, ${winnerObj.name}!` },
-            ]);
-          }
-        }, 2200);
-      }, 2500);
+        // Let fanfare lead for ~2.2s before the winner announcement
+        await new Promise((r) => setTimeout(r, 2200));
+        if (voiceEnabled && winnerObj) {
+          const slug = slugifyName(winnerObj.name);
+          speakClipQueue([
+            { key: `winner-${slug}`, fallback: `And the winner is... ${winnerObj.name}!` },
+            { key: `congrats-${slug}`, fallback: `Congratulations, ${winnerObj.name}!` },
+          ]);
+        }
+      })();
     }
   };
 
@@ -2312,8 +2308,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 </div>
               </div>
               <div className="text-center sm:text-right">
-                <div className="font-mono text-[11px] sm:text-xs text-emerald-300/70 tracking-widest mb-1">AVG STACK</div>
-                <div className="font-display text-5xl sm:text-6xl text-emerald-200 leading-none">
+                <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">AVG STACK</div>
+                <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {activePlayers.length > 0 ? avgStack.toLocaleString() : '—'}
                 </div>
               </div>
@@ -4033,13 +4029,14 @@ function SaveGameModal({
     if (count > 0) initialRebuysByPid[resolvePid(name)] = count;
   });
 
-  // Form state
+  // Form state. High Rollers has no league money, no subs, no points.
+  const isLeague = gameType === 'league';
   const [date, setDate] = useState(today);
   const [pot, setPot] = useState(String(initialPot));
   const [leagueMoney, setLeagueMoney] = useState(
-    isFinal ? '0' : String(Math.round(initialPot * 0.1))
+    !isLeague || isFinal ? '0' : String(Math.round(initialPot * 0.1))
   );
-  const [subs, setSubs] = useState(String(initialPlayerCount * 3));
+  const [subs, setSubs] = useState(isLeague ? String(initialPlayerCount * 3) : '0');
   const [pointsAwarded, setPointsAwarded] = useState(initialPoints);
   const [payouts, setPayouts] = useState(initialPayouts);
   const [bountyClaims, setBountyClaims] = useState(() => {
@@ -4101,23 +4098,23 @@ function SaveGameModal({
       const gameDoc = {
         id: gameId,
         type: gameType,
-        seasonId: gameType === 'league' ? leagueContext.seasonId : null,
+        seasonId: isLeague ? leagueContext.seasonId : null,
         date,
-        gameNumber: gameType === 'league' ? leagueContext.gameNumber : null,
+        gameNumber: isLeague ? leagueContext.gameNumber : null,
         isFinal: isFinal,
         buyIn: config.buyIn,
-        attendees: Object.keys(pointsAwarded),
+        attendees: isLeague ? Object.keys(pointsAwarded) : initialAttendees,
         rebuys: initialRebuysByPid,
         totalRebuys,
         finishOrder: initialFinishOrder,
         pot: parseFloat(pot) || 0,
         payouts,
-        leagueMoney: parseFloat(leagueMoney) || 0,
+        leagueMoney: isLeague ? (parseFloat(leagueMoney) || 0) : 0,
         prizePool: parseFloat(pot) || 0,
-        subs: parseFloat(subs) || 0,
-        pointsAwarded,
-        bountyHolders: bountyIds,
-        bountyClaims,
+        subs: isLeague ? (parseFloat(subs) || 0) : 0,
+        pointsAwarded: isLeague ? pointsAwarded : {},
+        bountyHolders: isLeague ? bountyIds : [],
+        bountyClaims: isLeague ? bountyClaims : [],
         notes: 'Saved from live timer.',
       };
 
@@ -4204,40 +4201,44 @@ function SaveGameModal({
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
             />
           </div>
-          <div>
-            <div className="flex justify-between items-baseline mb-1">
-              <span className="font-mono text-xs text-yellow-100/40 tracking-widest">LEAGUE £</span>
-              <button
-                onClick={() => setLeagueMoney(String(Math.round((parseFloat(pot) || 0) * 0.1)))}
-                className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300"
-              >
-                = 10% pot
-              </button>
-            </div>
-            <input
-              type="number"
-              value={leagueMoney}
-              onChange={(e) => setLeagueMoney(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
-            />
-          </div>
-          <div>
-            <div className="flex justify-between items-baseline mb-1">
-              <span className="font-mono text-xs text-yellow-100/40 tracking-widest">SUBS £</span>
-              <button
-                onClick={() => setSubs(String(initialPlayerCount * 3))}
-                className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300"
-              >
-                = £3 × {initialPlayerCount}
-              </button>
-            </div>
-            <input
-              type="number"
-              value={subs}
-              onChange={(e) => setSubs(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
-            />
-          </div>
+          {isLeague && (
+            <>
+              <div>
+                <div className="flex justify-between items-baseline mb-1">
+                  <span className="font-mono text-xs text-yellow-100/40 tracking-widest">LEAGUE £</span>
+                  <button
+                    onClick={() => setLeagueMoney(String(Math.round((parseFloat(pot) || 0) * 0.1)))}
+                    className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300"
+                  >
+                    = 10% pot
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  value={leagueMoney}
+                  onChange={(e) => setLeagueMoney(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between items-baseline mb-1">
+                  <span className="font-mono text-xs text-yellow-100/40 tracking-widest">SUBS £</span>
+                  <button
+                    onClick={() => setSubs(String(initialPlayerCount * 3))}
+                    className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300"
+                  >
+                    = £3 × {initialPlayerCount}
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  value={subs}
+                  onChange={(e) => setSubs(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Payouts */}
@@ -4258,8 +4259,8 @@ function SaveGameModal({
           </div>
         </div>
 
-        {/* Points awarded */}
-        {!isFinal && (
+        {/* Points awarded — league only, never on finals */}
+        {isLeague && !isFinal && (
           <div className="mb-5">
             <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">
               POINTS BY PLAYER
