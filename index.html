@@ -1923,14 +1923,14 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     if (level.isBreak) {
       speakClip(`break-${level.duration}`, `Break time. ${level.duration} minute break. Stretch your legs.`);
     } else {
+      // Pre-recorded blinds clip keyed by BB; ante variant when present.
+      // Level number and round duration are visible on screen, so we don't
+      // announce them verbally (would require dynamic Web Speech mid-Adam).
       const anteText = level.ante > 0 ? `, with an ante of ${level.ante}` : '';
-      speakQueue([
-        `Starting level ${levelIdx + 1}.`,
-        `Blinds are now ${level.sb} and ${level.bb}${anteText}.`,
-        `This round runs for ${level.duration} minutes.`,
-      ]);
+      const key = level.ante > 0 ? `blinds-${level.bb}-ante` : `blinds-${level.bb}`;
+      speakClip(key, `Blinds are now ${level.sb} and ${level.bb}${anteText}.`);
     }
-  }, [levels, speak, speakQueue, speakClip]);
+  }, [levels, speakClip]);
 
   // Welcome message — only when starting from level 1 for the first time.
   // Plays the pre-recorded Adam clip; falls back to Web Speech.
@@ -2300,20 +2300,20 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                   <span className="text-2xl sm:text-3xl text-yellow-500/40"> / {levels.length}</span>
                 </div>
               </div>
-              <div className="text-center">
+              <div>
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">REMAINING</div>
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {activePlayers.length.toString().padStart(2, '0')}
                   <span className="text-2xl sm:text-3xl text-yellow-500/40"> / {players.length}</span>
                 </div>
               </div>
-              <div className="text-center sm:text-right">
+              <div>
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">AVG STACK</div>
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {activePlayers.length > 0 ? avgStack.toLocaleString() : '—'}
                 </div>
               </div>
-              <div className="text-right">
+              <div>
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-300/80 tracking-widest mb-1">POT</div>
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   £{prizePool.toLocaleString()}
