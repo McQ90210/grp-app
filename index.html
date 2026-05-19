@@ -15,7 +15,6 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Firebase loaded as a module; exposes window.GRP_FIREBASE and dispatches 'firebase-ready' -->
   <script type="module" src="firebase-init.js"></script>
   <style>
     html, body { background: #020a06; margin: 0; padding: 0; min-height: 100vh; }
@@ -2311,7 +2310,7 @@ function GameTypePicker({ onPick }) {
         <div className="text-center mb-10">
           {/* GR Poker logo header */}
           <div className="inline-block mb-2">
-            <svg viewBox="0 0 531.2 600" xmlns="http://www.w3.org/2000/svg" className="h-20 w-auto mx-auto">
+            <svg viewBox="0 0 531.2 600" xmlns="http://www.w3.org/2000/svg" className="h-40 w-auto mx-auto">
               <path fill="#14a37b" d="m265.25,88.31c-115.52,0-209.17,93.65-209.17,209.17s93.65,209.17,209.17,209.17,209.17-93.65,209.17-209.17-93.65-209.17-209.17-209.17Zm124.5,52.48c20.25,16.1,36.97,35.66,49.7,58.12l-39.71,22.51c-9.84-17.35-22.79-32.6-38.52-45.11l28.53-35.52Zm-44.69,338.96c-22.84,11.08-48.46,17.31-75.55,17.31s-52.71-6.23-75.55-17.31l20.13-41.24c16.51,8.06,35.05,12.59,54.66,12.59h1.51c19.61,0,38.15-4.53,54.66-12.59l20.13,41.24Zm-149.61-244.62c-21.51,18.29-35.71,44.65-37.86,74.4l-45.78-3.28c2.99-43.06,23.55-81.21,54.66-107.66l28.98,36.55Zm63.36-72.74c8.84-1.41,17.91-2.14,27.13-2.14s18.29.73,27.13,2.14l-7.18,45.27c-6.43-1.02-13.02-1.55-19.74-1.55h-.41c-6.72,0-13.31.54-19.74,1.55l-7.18-45.27Zm-46.06,193.46c0-44.95,36.43-81.38,81.38-81.38s81.38,36.43,81.38,81.38-36.43,81.38-81.38,81.38-81.38-36.43-81.38-81.38Zm-37.96,159.85c-31.11-26.46-51.66-64.6-54.66-107.66l45.78-3.28c2.16,29.75,16.36,56.11,37.86,74.4l-28.98,36.55Zm267.21,0l-28.98-36.55c21.51-18.29,35.71-44.65,37.86-74.4l45.78,3.28c-2.99,43.06-23.55,81.21-54.66,107.66Z"/>
               <text x="265.6" y="595" fontFamily="'Bebas Neue', sans-serif" fontSize="55" fill="#14a37b" textAnchor="middle" letterSpacing="0.1em">GR POKER</text>
             </svg>
@@ -2320,37 +2319,578 @@ function GameTypePicker({ onPick }) {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <button
-            onClick={() => onPick('league')}
-            className="game-card gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 text-left"
-          >
-            <div className="font-display text-4xl gold-text mb-2">LEAGUE</div>
-            <div className="text-yellow-100/70 text-sm mb-4">Official league game</div>
-            <ul className="text-emerald-200/80 text-xs font-mono space-y-1.5">
+          {/* LEAGUE CARD */}
+          <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-6 flex flex-col">
+            <div className="font-display text-4xl gold-text mb-2 leading-none whitespace-nowrap">LEAGUE</div>
+            <div className="text-yellow-100/70 text-sm mb-4 min-h-[20px]">Official league game</div>
+            <ul className="text-emerald-200/80 text-xs font-mono space-y-1.5 mb-5">
               <li>• Points: 2k turn-up + position bonuses</li>
               <li>• Birthday bounties (+2k)</li>
               <li>• Subs (£3/player) & league money (10%)</li>
               <li>• Results saved to season standings</li>
             </ul>
-          </button>
+            <div className="flex flex-col gap-2 mt-auto">
+              <button
+                onClick={() => onPick('league', 'setup')}
+                className="game-card px-4 py-3 rounded-xl font-display text-lg text-black"
+                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+              >
+                SET UP GAME
+              </button>
+              <button
+                onClick={() => onPick('league', 'info')}
+                className="game-card px-4 py-3 rounded-xl font-mono text-sm text-emerald-200 bg-black/40 border border-emerald-500/30 hover:bg-black/60"
+              >
+                LEAGUE & PLAYER INFO
+              </button>
+            </div>
+          </div>
 
-          <button
-            onClick={() => onPick('highrollers')}
-            className="game-card gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 text-left"
-          >
-            <div className="font-display text-4xl gold-text mb-2">HIGH ROLLERS</div>
-            <div className="text-yellow-100/70 text-sm mb-4">Casual side game</div>
-            <ul className="text-emerald-200/80 text-xs font-mono space-y-1.5">
+          {/* HIGH ROLLERS CARD */}
+          <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-6 flex flex-col">
+            <div className="font-display text-4xl gold-text mb-2 leading-none whitespace-nowrap">HIGH ROLLERS</div>
+            <div className="text-yellow-100/70 text-sm mb-4 min-h-[20px]">Casual side game</div>
+            <ul className="text-emerald-200/80 text-xs font-mono space-y-1.5 mb-5">
               <li>• No league points or bounties</li>
               <li>• Smaller group, simpler tracking</li>
               <li>• Just buy-ins and payouts logged</li>
               <li>• Top 3 finish recorded</li>
             </ul>
-          </button>
+            <div className="flex flex-col gap-2 mt-auto">
+              <button
+                onClick={() => onPick('highrollers', 'setup')}
+                className="game-card px-4 py-3 rounded-xl font-display text-lg text-black"
+                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+              >
+                SET UP GAME
+              </button>
+              <button
+                onClick={() => onPick('highrollers', 'info')}
+                className="game-card px-4 py-3 rounded-xl font-mono text-sm text-emerald-200 bg-black/40 border border-emerald-500/30 hover:bg-black/60"
+              >
+                GAME HISTORY
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="text-center mt-8 text-xs font-mono text-yellow-100/30">
-          Tip: this also chooses sensible defaults for the rest of setup.
+          League games count toward season standings · High Rollers are casual
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ LEAGUE DASHBOARD ============
+// Shows the season-by-season standings table — spreadsheet-style view of all games.
+function LeagueDashboard({ onBack, fbUser, gameType }) {
+  const [seasons, setSeasons] = useState([]);
+  const [activeSeasonId, setActiveSeasonId] = useState(null);
+  const [players, setPlayers] = useState([]);
+  const [games, setGames] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedPlayerId, setSelectedPlayerId] = useState(null);
+  const [showImport, setShowImport] = useState(false);
+
+  // Load seasons + players on mount
+  useEffect(() => {
+    (async () => {
+      if (!window.GRP_DB) {
+        setError('Firebase not loaded');
+        setLoading(false);
+        return;
+      }
+      try {
+        const [allSeasons, allPlayers] = await Promise.all([
+          window.GRP_DB.getAllSeasons(),
+          window.GRP_DB.getAllPlayers(),
+        ]);
+        setSeasons(allSeasons);
+        setPlayers(allPlayers);
+        // Pick newest active season (or most recent overall)
+        const active = allSeasons.find(s => s.status === 'active') || allSeasons[0];
+        if (active) setActiveSeasonId(active.id);
+        setLoading(false);
+      } catch (e) {
+        setError(e.message);
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // Load games for the selected season
+  useEffect(() => {
+    if (!activeSeasonId || !window.GRP_DB) return;
+    (async () => {
+      try {
+        const seasonGames = await window.GRP_DB.getGamesForSeason(activeSeasonId);
+        setGames(seasonGames);
+      } catch (e) {
+        setError(e.message);
+      }
+    })();
+  }, [activeSeasonId]);
+
+  // Compute totals per player for the active season
+  const playerTotals = {};
+  const playersById = {};
+  players.forEach(p => { playersById[p.id] = p; });
+  games.forEach(g => {
+    Object.entries(g.pointsAwarded || {}).forEach(([pid, pts]) => {
+      playerTotals[pid] = (playerTotals[pid] || 0) + (pts || 0);
+    });
+  });
+
+  // Sort players by total points (descending), only show those who played at least one game
+  const playerRows = Object.entries(playerTotals)
+    .filter(([_, pts]) => pts > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([pid, total]) => ({
+      player: playersById[pid] || { displayName: pid, id: pid },
+      total,
+      gamePoints: games.map(g => g.pointsAwarded?.[pid] || null),
+    }));
+
+  // Aggregate stats at the bottom (subs, league money, etc.)
+  const aggregates = {
+    playersPerGame: games.map(g => Object.values(g.pointsAwarded || {}).filter(p => p > 0).length),
+    rebuys: games.map(g => g.totalRebuys || 0),
+    pot: games.map(g => g.pot),
+    leagueMoney: games.map(g => g.leagueMoney),
+    prizePool: games.map(g => g.prizePool),
+    subs: games.map(g => g.subs),
+  };
+
+  const activeSeason = seasons.find(s => s.id === activeSeasonId);
+
+  return (
+    <div className="min-h-screen w-full" style={{
+      background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
+      fontFamily: "'Inter', system-ui, sans-serif",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+        .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.02em; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .gold-text {
+          background: linear-gradient(135deg, #14a37b 0%, #1ec890 50%, #0e8c69 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .gold-border {
+          border: 1px solid rgba(20, 163, 123, 0.4);
+          box-shadow: 0 0 40px rgba(20, 163, 123, 0.15), inset 0 0 60px rgba(20, 163, 123, 0.05);
+        }
+        .league-table { border-collapse: collapse; }
+        .league-table th, .league-table td {
+          padding: 6px 8px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          border-right: 1px solid rgba(255, 255, 255, 0.05);
+          white-space: nowrap;
+        }
+        .league-table th {
+          background: rgba(0, 0, 0, 0.5);
+          color: #14a37b;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+        }
+        .league-table th.sticky-col, .league-table td.sticky-col {
+          position: sticky;
+          left: 0;
+          background: rgba(2, 10, 6, 0.95);
+          z-index: 5;
+        }
+        .league-table th.sticky-col { z-index: 11; }
+        .league-table .total-col {
+          background: rgba(20, 163, 123, 0.12);
+          font-weight: 700;
+          color: #1ec890;
+        }
+        .league-table tr:hover td:not(.sticky-col):not(.total-col) {
+          background: rgba(20, 163, 123, 0.06);
+        }
+        .league-table tr.totals-row td {
+          background: rgba(20, 163, 123, 0.08);
+          color: #1ec890;
+          border-top: 1px solid rgba(20, 163, 123, 0.3);
+        }
+        .player-link {
+          color: #d1fae5;
+          cursor: pointer;
+        }
+        .player-link:hover { color: #14a37b; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(20, 163, 123, 0.4); border-radius: 4px; }
+      `}</style>
+
+      <div className="p-4 sm:p-8 max-w-[1400px] mx-auto">
+        {/* Header */}
+        <div className="flex justify-between items-start mb-6 gap-4 flex-wrap">
+          <div>
+            <button onClick={onBack} className="font-mono text-xs text-yellow-100/40 hover:text-yellow-100/80 mb-2">
+              ← back
+            </button>
+            <div className="font-display text-4xl gold-text">
+              {gameType === 'highrollers' ? 'HIGH ROLLERS HISTORY' : 'LEAGUE STANDINGS'}
+            </div>
+            {activeSeason && (
+              <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
+                {activeSeason.name}
+              </div>
+            )}
+          </div>
+
+          {/* Season picker */}
+          {seasons.length > 1 && (
+            <select
+              value={activeSeasonId || ''}
+              onChange={(e) => setActiveSeasonId(e.target.value)}
+              className="px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm focus:outline-none focus:border-yellow-500/50"
+            >
+              {seasons.map(s => (
+                <option key={s.id} value={s.id} style={{ background: '#0a3d1f' }}>
+                  {s.name} {s.status === 'active' ? '(active)' : ''}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* Admin: Import button (only when signed in and no data yet) */}
+          {fbUser && seasons.length === 0 && (
+            <button
+              onClick={() => setShowImport(true)}
+              className="px-4 py-2 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-100 font-mono text-xs hover:bg-yellow-500/30"
+            >
+              IMPORT SPREADSHEET
+            </button>
+          )}
+        </div>
+
+        {loading ? (
+          <div className="text-center py-16 text-emerald-200/60 font-mono">Loading...</div>
+        ) : error ? (
+          <div className="text-center py-16">
+            <div className="text-red-400 font-mono mb-2">Error: {error}</div>
+          </div>
+        ) : seasons.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="text-yellow-100/60 font-mono mb-4">No league data yet.</div>
+            {fbUser ? (
+              <button
+                onClick={() => setShowImport(true)}
+                className="px-6 py-3 rounded-full font-display text-xl text-black"
+                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+              >
+                IMPORT SPREADSHEET
+              </button>
+            ) : (
+              <div className="text-xs font-mono text-yellow-100/40">
+                Sign in to import historical data.
+              </div>
+            )}
+          </div>
+        ) : games.length === 0 ? (
+          <div className="text-center py-16 text-yellow-100/60 font-mono">
+            No games yet in this season.
+          </div>
+        ) : (
+          <div className="gold-border rounded-2xl bg-black/40 backdrop-blur p-4 overflow-x-auto">
+            <table className="league-table">
+              <thead>
+                <tr>
+                  <th className="sticky-col text-left">Player</th>
+                  {games.map(g => (
+                    <th key={g.id} className="text-center" title={g.date}>
+                      G{g.gameNumber}
+                      <div className="text-[9px] text-yellow-100/30 font-normal normal-case tracking-normal">
+                        {g.date?.slice(5)}
+                      </div>
+                    </th>
+                  ))}
+                  <th className="total-col text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {playerRows.map((row, i) => (
+                  <tr key={row.player.id}>
+                    <td className="sticky-col">
+                      <span className="player-link" onClick={() => setSelectedPlayerId(row.player.id)}>
+                        {i === 0 && <span className="text-yellow-300 mr-1 font-bold">1.</span>}
+                        {i === 1 && <span className="text-gray-300 mr-1 font-bold">2.</span>}
+                        {i === 2 && <span className="text-amber-600 mr-1 font-bold">3.</span>}
+                        {i > 2 && <span className="text-yellow-100/40 mr-1">{i + 1}.</span>}
+                        {row.player.displayName}
+                      </span>
+                    </td>
+                    {row.gamePoints.map((pts, gi) => (
+                      <td key={gi} className="text-center text-emerald-100/80">
+                        {pts === null ? '—' : pts >= 10000 ? <span className="text-emerald-300 font-bold">{pts.toLocaleString()}</span> : pts.toLocaleString()}
+                      </td>
+                    ))}
+                    <td className="total-col text-right">{row.total.toLocaleString()}</td>
+                  </tr>
+                ))}
+                {/* Aggregate rows */}
+                <tr className="totals-row">
+                  <td className="sticky-col">Players</td>
+                  {aggregates.playersPerGame.map((v, i) => <td key={i} className="text-center">{v || '—'}</td>)}
+                  <td className="total-col text-right">—</td>
+                </tr>
+                <tr className="totals-row">
+                  <td className="sticky-col">Rebuys</td>
+                  {aggregates.rebuys.map((v, i) => <td key={i} className="text-center">{v || 0}</td>)}
+                  <td className="total-col text-right">{aggregates.rebuys.reduce((a, b) => a + (b || 0), 0)}</td>
+                </tr>
+                <tr className="totals-row">
+                  <td className="sticky-col">Pot (£)</td>
+                  {aggregates.pot.map((v, i) => <td key={i} className="text-center">{v || '—'}</td>)}
+                  <td className="total-col text-right">{aggregates.pot.reduce((a, b) => a + (b || 0), 0)}</td>
+                </tr>
+                <tr className="totals-row">
+                  <td className="sticky-col">League £</td>
+                  {aggregates.leagueMoney.map((v, i) => <td key={i} className="text-center">{v || 0}</td>)}
+                  <td className="total-col text-right">{aggregates.leagueMoney.reduce((a, b) => a + (b || 0), 0)}</td>
+                </tr>
+                <tr className="totals-row">
+                  <td className="sticky-col">Prize £</td>
+                  {aggregates.prizePool.map((v, i) => <td key={i} className="text-center">{v || '—'}</td>)}
+                  <td className="total-col text-right">—</td>
+                </tr>
+                <tr className="totals-row">
+                  <td className="sticky-col">Subs £</td>
+                  {aggregates.subs.map((v, i) => <td key={i} className="text-center">{v == null ? '—' : v}</td>)}
+                  <td className="total-col text-right">{aggregates.subs.reduce((a, b) => a + (b || 0), 0)}</td>
+                </tr>
+                {/* Payouts: 1st-5th */}
+                {[1, 2, 3, 4, 5].map(place => (
+                  <tr key={place} className="totals-row">
+                    <td className="sticky-col">{place === 1 ? '1st £' : place === 2 ? '2nd £' : place === 3 ? '3rd £' : `${place}th £`}</td>
+                    {games.map((g, i) => (
+                      <td key={i} className="text-center">{g.payouts?.[String(place)] || '—'}</td>
+                    ))}
+                    <td className="total-col text-right">—</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="text-center mt-4 text-xs font-mono text-yellow-100/30">
+          Tap a player name for their profile.
+        </div>
+      </div>
+
+      {/* Player profile modal */}
+      {selectedPlayerId && (
+        <PlayerProfile
+          playerId={selectedPlayerId}
+          players={players}
+          games={games}
+          season={activeSeason}
+          onClose={() => setSelectedPlayerId(null)}
+        />
+      )}
+
+      {/* Import modal */}
+      {showImport && (
+        <ImportModal
+          onClose={() => setShowImport(false)}
+          onDone={() => {
+            setShowImport(false);
+            // Reload page to fetch newly imported data
+            window.location.reload();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============ PLAYER PROFILE MODAL ============
+function PlayerProfile({ playerId, players, games, season, onClose }) {
+  const player = players.find(p => p.id === playerId);
+  if (!player) return null;
+
+  // Compute stats
+  const gamesPlayed = games.filter(g => g.pointsAwarded?.[playerId] > 0);
+  const totalPoints = gamesPlayed.reduce((sum, g) => sum + (g.pointsAwarded[playerId] || 0), 0);
+  const wins = gamesPlayed.filter(g => g.finishOrder?.[0] === playerId).length;
+  const podiums = gamesPlayed.filter(g => (g.finishOrder || []).slice(0, 3).includes(playerId)).length;
+  const totalBuyIns = gamesPlayed.length * 30; // £30 buy-in standard; doesn't include rebuys
+  const winnings = gamesPlayed.reduce((sum, g) => {
+    const pos = (g.finishOrder || []).indexOf(playerId);
+    if (pos < 0 || pos > 4) return sum;
+    return sum + (g.payouts?.[String(pos + 1)] || 0);
+  }, 0);
+
+  // Birthday display
+  const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const bdayStr = player.birthday ? `${monthNames[player.birthday.month]} ${player.birthday.day}` : null;
+
+  // Points per game for the chart (max for scaling)
+  const maxPoints = Math.max(1, ...gamesPlayed.map(g => g.pointsAwarded[playerId] || 0));
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="font-display text-4xl gold-text">{player.displayName}</div>
+            {player.realName && player.realName !== player.displayName && (
+              <div className="text-yellow-100/60 font-mono text-sm">{player.realName}</div>
+            )}
+            {bdayStr && (
+              <div className="text-emerald-300/60 font-mono text-xs mt-1">Birthday: {bdayStr}</div>
+            )}
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Stats grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">POINTS</div>
+            <div className="font-display text-2xl gold-text">{totalPoints.toLocaleString()}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">GAMES</div>
+            <div className="font-display text-2xl text-emerald-200">{gamesPlayed.length}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">WINS</div>
+            <div className="font-display text-2xl text-emerald-200">{wins}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">PODIUMS</div>
+            <div className="font-display text-2xl text-emerald-200">{podiums}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">BUY-INS</div>
+            <div className="font-display text-2xl text-yellow-200">£{totalBuyIns}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">WINNINGS</div>
+            <div className="font-display text-2xl text-emerald-300">£{Math.round(winnings)}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">NET</div>
+            <div className={`font-display text-2xl ${winnings - totalBuyIns >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
+              £{Math.round(winnings - totalBuyIns)}
+            </div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">AVG PTS</div>
+            <div className="font-display text-2xl text-emerald-200">
+              {gamesPlayed.length ? Math.round(totalPoints / gamesPlayed.length).toLocaleString() : '0'}
+            </div>
+          </div>
+        </div>
+
+        {/* Points per game bar chart */}
+        <div className="mb-4">
+          <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">POINTS BY GAME</div>
+          <div className="flex items-end gap-1 h-32 p-2 rounded-lg bg-black/40 border border-emerald-500/10">
+            {games.map((g, i) => {
+              const pts = g.pointsAwarded?.[playerId];
+              const heightPct = pts ? (pts / maxPoints) * 100 : 0;
+              return (
+                <div key={g.id} className="flex-1 flex flex-col justify-end items-center relative group">
+                  <div
+                    className="w-full rounded-t transition-all"
+                    style={{
+                      height: `${heightPct}%`,
+                      background: pts === maxPoints ? 'linear-gradient(180deg, #f4d03f, #d4ac0d)' : 'linear-gradient(180deg, #14a37b, #0e8c69)',
+                      minHeight: pts ? '2px' : '0',
+                    }}
+                    title={pts ? `Game ${g.gameNumber}: ${pts.toLocaleString()}` : `Game ${g.gameNumber}: didn't play`}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex justify-between text-[9px] font-mono text-yellow-100/30 mt-1 px-2">
+            <span>G1</span>
+            <span>G{games.length}</span>
+          </div>
+        </div>
+
+        <div className="text-xs font-mono text-yellow-100/40 text-center">
+          {season ? `Stats for ${season.name}` : ''}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ IMPORT MODAL (Admin only) ============
+function ImportModal({ onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [error, setError] = useState(null);
+
+  const runImport = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setProgress('Loading import data...');
+      const res = await fetch('import-data.json');
+      if (!res.ok) throw new Error('Could not load import-data.json');
+      const data = await res.json();
+
+      setProgress(`Importing ${data.players.length} players, ${data.seasons.length} seasons, ${data.games.length} games...`);
+      await window.GRP_DB.bulkImport(data);
+
+      setProgress('Done!');
+      setTimeout(onDone, 800);
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div onClick={busy ? null : onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full">
+        <div className="flex justify-between items-center mb-4">
+          <div className="font-display text-2xl gold-text">IMPORT HISTORY</div>
+          {!busy && <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>}
+        </div>
+        <div className="text-yellow-100/70 text-sm mb-4">
+          This will load the 2025–2026 league history into Firestore: 32 players, 2 seasons (R1 + R2), and 17 games.
+        </div>
+        <div className="text-yellow-100/40 text-xs font-mono mb-4">
+          Note: finish-order positions are best-effort inferred from points. Points themselves are exact.
+        </div>
+        {progress && <div className="text-emerald-300 font-mono text-sm mb-4">{progress}</div>}
+        {error && <div className="text-red-400 font-mono text-sm mb-4">Error: {error}</div>}
+        <div className="flex gap-2 mt-2">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm disabled:opacity-30"
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={runImport}
+            disabled={busy}
+            className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            {busy ? 'Importing...' : 'Import now'}
+          </button>
         </div>
       </div>
     </div>
@@ -2358,7 +2898,9 @@ function GameTypePicker({ onPick }) {
 }
 
 function App() {
-  const [gameType, setGameType] = useState(null); // 'league' | 'highrollers' | null
+  // Route state: 'home' | 'setup' | 'timer' | 'league-info' | 'highrollers-info'
+  const [route, setRoute] = useState('home');
+  const [gameType, setGameType] = useState(null);
   const [config, setConfig] = useState(null);
   const [customSounds, setCustomSounds] = useState({});
   const [showSignIn, setShowSignIn] = useState(false);
@@ -2368,12 +2910,23 @@ function App() {
     loadCustomSounds().then(setCustomSounds);
   }, []);
 
-  // No game type chosen yet → show picker
-  if (!gameType) {
+  const handlePick = (type, action) => {
+    setGameType(type);
+    if (action === 'setup') setRoute('setup');
+    else if (action === 'info') setRoute(type === 'highrollers' ? 'highrollers-info' : 'league-info');
+  };
+
+  const goHome = () => {
+    setRoute('home');
+    setGameType(null);
+    setConfig(null);
+  };
+
+  // Home: show picker + sign in
+  if (route === 'home') {
     return (
       <>
-        <GameTypePicker onPick={setGameType} />
-        {/* Sign-in button bottom-right */}
+        <GameTypePicker onPick={handlePick} />
         <div className="fixed bottom-4 right-4 z-40">
           {fbUser ? (
             <button
@@ -2397,9 +2950,15 @@ function App() {
     );
   }
 
+  // League info or High Rollers info
+  if (route === 'league-info' || route === 'highrollers-info') {
+    return <LeagueDashboard onBack={goHome} fbUser={fbUser} gameType={gameType} />;
+  }
+
+  // Setup or playing
   return config
-    ? <PokerTimerMain config={config} customSounds={customSounds} onReset={() => { setConfig(null); setGameType(null); }} gameType={gameType} fbUser={fbUser} />
-    : <SetupWizard customSounds={customSounds} gameType={gameType} onStart={setConfig} onBack={() => setGameType(null)} />;
+    ? <PokerTimerMain config={config} customSounds={customSounds} onReset={goHome} gameType={gameType} fbUser={fbUser} />
+    : <SetupWizard customSounds={customSounds} gameType={gameType} onStart={setConfig} onBack={goHome} />;
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));

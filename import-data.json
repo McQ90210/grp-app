@@ -1,0 +1,1428 @@
+{
+  "players": [
+    {
+      "id": "cactus",
+      "displayName": "Cactus",
+      "realName": "Mark Bayley",
+      "birthday": {
+        "month": 6,
+        "day": 11
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "chicken",
+      "displayName": "Chicken",
+      "realName": "Alex",
+      "birthday": {
+        "month": 10,
+        "day": 30
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "duck",
+      "displayName": "Duck",
+      "realName": "Nick Hastings",
+      "birthday": {
+        "month": 1,
+        "day": 16
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "ostrich",
+      "displayName": "Ostrich",
+      "realName": "Mark Raistrick",
+      "birthday": {
+        "month": 2,
+        "day": 20
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "river-dan",
+      "displayName": "River Dan",
+      "realName": "Dan Larner",
+      "birthday": {
+        "month": 7,
+        "day": 21
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "quads",
+      "displayName": "Quads",
+      "realName": "Mark McQueen",
+      "birthday": {
+        "month": 5,
+        "day": 29
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "beans",
+      "displayName": "Beans",
+      "realName": "James Deas",
+      "birthday": {
+        "month": 4,
+        "day": 26
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "the-boxer",
+      "displayName": "The Boxer",
+      "realName": "Jake Cuddihy",
+      "birthday": {
+        "month": 11,
+        "day": 18
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "chit-chat",
+      "displayName": "Chit Chat",
+      "realName": "Martin Vallance",
+      "birthday": {
+        "month": 5,
+        "day": 6
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "hair",
+      "displayName": "Hair",
+      "realName": "Ross Rattray",
+      "birthday": {
+        "month": 8,
+        "day": 12
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "shoes",
+      "displayName": "Shoes",
+      "realName": "Matt Buckle",
+      "birthday": {
+        "month": 5,
+        "day": 18
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "moth",
+      "displayName": "Moth",
+      "realName": null,
+      "birthday": {
+        "month": 5,
+        "day": 19
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "toby",
+      "displayName": "Toby",
+      "realName": "Toby Prescott",
+      "birthday": {
+        "month": 10,
+        "day": 6
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "fire-truck-john",
+      "displayName": "Fire Truck John",
+      "realName": "John Stephenson",
+      "birthday": {
+        "month": 8,
+        "day": 29
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "david",
+      "displayName": "David",
+      "realName": null,
+      "birthday": null,
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "graham-barlow",
+      "displayName": "Graham Barlow",
+      "realName": null,
+      "birthday": {
+        "month": 10,
+        "day": 11
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "the-dentist",
+      "displayName": "The Dentist",
+      "realName": "Rishi",
+      "birthday": {
+        "month": 10,
+        "day": 4
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "dom",
+      "displayName": "Dom",
+      "realName": null,
+      "birthday": {
+        "month": 3,
+        "day": 14
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "the-agent",
+      "displayName": "The Agent",
+      "realName": "Olli",
+      "birthday": {
+        "month": 10,
+        "day": 27
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "anthony-boden",
+      "displayName": "Anthony Boden",
+      "realName": null,
+      "birthday": {
+        "month": 11,
+        "day": 2
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "pth",
+      "displayName": "PTH",
+      "realName": "Paul The Horse",
+      "birthday": {
+        "month": 10,
+        "day": 7
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "jay-gohil",
+      "displayName": "Jay Gohil",
+      "realName": null,
+      "birthday": {
+        "month": 12,
+        "day": 4
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "simon-wilkins",
+      "displayName": "Simon Wilkins",
+      "realName": null,
+      "birthday": {
+        "month": 12,
+        "day": 11
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "santa",
+      "displayName": "Santa",
+      "realName": "Sanjay",
+      "birthday": {
+        "month": 12,
+        "day": 30
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "stephen",
+      "displayName": "Stephen",
+      "realName": null,
+      "birthday": null,
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "kelvin-the-detective",
+      "displayName": "Kelvin The Detective",
+      "realName": "Kelvin",
+      "birthday": null,
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "ben-conolly",
+      "displayName": "Ben Conolly",
+      "realName": null,
+      "birthday": null,
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "tinker-bell",
+      "displayName": "Tinker-Bell",
+      "realName": "Nick Bell",
+      "birthday": {
+        "month": 6,
+        "day": 27
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "michael-barnes",
+      "displayName": "Michael Barnes",
+      "realName": null,
+      "birthday": {
+        "month": 4,
+        "day": 22
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "oli-elsaesser",
+      "displayName": "Oli Elsaesser",
+      "realName": null,
+      "birthday": {
+        "month": 7,
+        "day": 15
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "sam-maffia",
+      "displayName": "Sam Maffia",
+      "realName": null,
+      "birthday": {
+        "month": 9,
+        "day": 16
+      },
+      "sound": "none",
+      "active": true
+    },
+    {
+      "id": "jimmy",
+      "displayName": "Jimmy",
+      "realName": null,
+      "birthday": {
+        "month": 1,
+        "day": 24
+      },
+      "sound": "none",
+      "active": true
+    }
+  ],
+  "seasons": [
+    {
+      "id": "2025-r1",
+      "name": "2025 \u2014 Round 1",
+      "startDate": "2025-01-01",
+      "endDate": "2025-12-31",
+      "totalGames": 12,
+      "finalGameIndex": 12,
+      "status": "complete"
+    },
+    {
+      "id": "2026-r2",
+      "name": "2026 \u2014 Round 2",
+      "startDate": "2026-01-01",
+      "endDate": "2026-06-30",
+      "totalGames": 6,
+      "finalGameIndex": 6,
+      "status": "active"
+    }
+  ],
+  "games": [
+    {
+      "id": "2025-r1-g1",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-01-07",
+      "gameNumber": 1,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "chit-chat",
+        "hair",
+        "shoes",
+        "toby",
+        "fire-truck-john",
+        "the-agent"
+      ],
+      "rebuys": {},
+      "totalRebuys": 0,
+      "finishOrder": [
+        "river-dan",
+        "quads",
+        "duck",
+        "the-boxer",
+        "chit-chat"
+      ],
+      "pot": 650,
+      "payouts": {
+        "1": 280,
+        "2": 180,
+        "3": 85,
+        "4": 40
+      },
+      "leagueMoney": 65,
+      "prizePool": 585,
+      "subs": 39,
+      "pointsAwarded": {
+        "cactus": 2000,
+        "duck": 5000,
+        "ostrich": 2000,
+        "river-dan": 12000,
+        "quads": 7000,
+        "beans": 2000,
+        "the-boxer": 3000,
+        "chit-chat": 2500,
+        "hair": 2000,
+        "shoes": 2000,
+        "toby": 2000,
+        "fire-truck-john": 2000,
+        "the-agent": 2000
+      },
+      "bountyHolders": [
+        "duck",
+        "jimmy"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g2",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-02-05",
+      "gameNumber": 2,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "duck",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "chit-chat",
+        "hair",
+        "stephen"
+      ],
+      "rebuys": {},
+      "totalRebuys": 10,
+      "finishOrder": [
+        "cactus",
+        "duck",
+        "quads",
+        "beans",
+        "hair"
+      ],
+      "pot": 570,
+      "payouts": {
+        "1": 250,
+        "2": 140,
+        "3": 90
+      },
+      "leagueMoney": 60,
+      "prizePool": 510,
+      "subs": 27,
+      "pointsAwarded": {
+        "cactus": 10000,
+        "duck": 7000,
+        "river-dan": 2000,
+        "quads": 5000,
+        "beans": 3000,
+        "the-boxer": 2000,
+        "chit-chat": 2000,
+        "hair": 2500,
+        "stephen": 2000
+      },
+      "bountyHolders": [
+        "ostrich"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g3",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-03-05",
+      "gameNumber": 3,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "hair",
+        "shoes",
+        "the-agent",
+        "pth",
+        "santa"
+      ],
+      "rebuys": {},
+      "totalRebuys": 7,
+      "finishOrder": [
+        "santa",
+        "river-dan",
+        "cactus",
+        "quads",
+        "hair"
+      ],
+      "pot": 570,
+      "payouts": {
+        "1": 250,
+        "2": 160,
+        "3": 100
+      },
+      "leagueMoney": 60,
+      "prizePool": 510,
+      "subs": 24,
+      "pointsAwarded": {
+        "cactus": 5000,
+        "duck": 2000,
+        "ostrich": 2000,
+        "river-dan": 7000,
+        "quads": 5000,
+        "beans": 2000,
+        "the-boxer": 2000,
+        "hair": 2500,
+        "shoes": 2000,
+        "the-agent": 2000,
+        "pth": 2000,
+        "santa": 10000
+      },
+      "bountyHolders": [
+        "dom"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g4",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-04-01",
+      "gameNumber": 4,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "hair",
+        "shoes",
+        "toby",
+        "fire-truck-john",
+        "the-agent",
+        "santa"
+      ],
+      "rebuys": {},
+      "totalRebuys": 12,
+      "finishOrder": [
+        "the-agent",
+        "cactus",
+        "quads",
+        "hair",
+        "the-boxer"
+      ],
+      "pot": 750,
+      "payouts": {
+        "1": 270,
+        "2": 200,
+        "3": 100,
+        "4": 50
+      },
+      "leagueMoney": 80,
+      "prizePool": 670,
+      "subs": 18,
+      "pointsAwarded": {
+        "cactus": 7000,
+        "duck": 2000,
+        "ostrich": 2000,
+        "river-dan": 2500,
+        "quads": 5000,
+        "beans": 2000,
+        "the-boxer": 3000,
+        "hair": 4000,
+        "shoes": 3000,
+        "toby": 3000,
+        "fire-truck-john": 2000,
+        "the-agent": 10000,
+        "santa": 2000
+      },
+      "bountyHolders": [
+        "beans",
+        "michael-barnes"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g5",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-05-07",
+      "gameNumber": 5,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "the-boxer",
+        "chit-chat",
+        "kelvin-the-detective"
+      ],
+      "rebuys": {},
+      "totalRebuys": 9,
+      "finishOrder": [
+        "duck",
+        "ostrich",
+        "quads",
+        "the-boxer",
+        "cactus"
+      ],
+      "pot": 360,
+      "payouts": {
+        "1": 200,
+        "2": 100,
+        "3": 40
+      },
+      "leagueMoney": 40,
+      "prizePool": 320,
+      "subs": 0,
+      "pointsAwarded": {
+        "cactus": 2500,
+        "duck": 12000,
+        "ostrich": 9000,
+        "river-dan": 2000,
+        "quads": 5000,
+        "the-boxer": 3000,
+        "chit-chat": 2000,
+        "kelvin-the-detective": 2000
+      },
+      "bountyHolders": [
+        "cactus",
+        "quads",
+        "chit-chat",
+        "shoes",
+        "moth",
+        "tinker-bell"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g6",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-06-03",
+      "gameNumber": 6,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "duck",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "chit-chat",
+        "hair",
+        "shoes",
+        "fire-truck-john",
+        "the-agent",
+        "santa"
+      ],
+      "rebuys": {},
+      "totalRebuys": 0,
+      "finishOrder": [
+        "cactus",
+        "duck",
+        "the-boxer",
+        "chit-chat",
+        "hair"
+      ],
+      "pot": 800,
+      "payouts": {
+        "1": 350,
+        "2": 200,
+        "3": 150,
+        "4": 50
+      },
+      "leagueMoney": 0,
+      "prizePool": 780,
+      "subs": 48,
+      "pointsAwarded": {
+        "cactus": 10000,
+        "duck": 10000,
+        "river-dan": 3000,
+        "quads": 5000,
+        "beans": 7000,
+        "the-boxer": 10000,
+        "chit-chat": 10000,
+        "hair": 10000,
+        "shoes": 10000,
+        "fire-truck-john": 10000,
+        "the-agent": 2500,
+        "santa": 10000
+      },
+      "bountyHolders": [],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g7",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-07-01",
+      "gameNumber": 7,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "shoes",
+        "moth",
+        "fire-truck-john",
+        "dom",
+        "anthony-boden"
+      ],
+      "rebuys": {},
+      "totalRebuys": 10,
+      "finishOrder": [
+        "duck",
+        "ostrich",
+        "chicken",
+        "quads",
+        "cactus"
+      ],
+      "pot": 690,
+      "payouts": {
+        "1": 173.79,
+        "2": 165.52,
+        "3": 144.83,
+        "4": 115.86
+      },
+      "leagueMoney": 70,
+      "prizePool": 620,
+      "subs": 97,
+      "pointsAwarded": {
+        "cactus": 2000,
+        "chicken": 5000,
+        "duck": 12000,
+        "ostrich": 7000,
+        "river-dan": 2000,
+        "quads": 3000,
+        "beans": 2000,
+        "the-boxer": 2000,
+        "shoes": 2000,
+        "moth": 2000,
+        "fire-truck-john": 2000,
+        "dom": 2000,
+        "anthony-boden": 2000
+      },
+      "bountyHolders": [
+        "river-dan",
+        "oli-elsaesser"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g8",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-08-12",
+      "gameNumber": 8,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "shoes",
+        "moth",
+        "fire-truck-john",
+        "anthony-boden",
+        "pth"
+      ],
+      "rebuys": {},
+      "totalRebuys": 13,
+      "finishOrder": [
+        "ostrich",
+        "shoes",
+        "quads",
+        "beans",
+        "anthony-boden"
+      ],
+      "pot": 750,
+      "payouts": {
+        "1": 250,
+        "2": 170,
+        "3": 150,
+        "4": 50
+      },
+      "leagueMoney": 70,
+      "prizePool": 680,
+      "subs": 23,
+      "pointsAwarded": {
+        "cactus": 2000,
+        "chicken": 2000,
+        "duck": 2000,
+        "ostrich": 10000,
+        "river-dan": 2500,
+        "quads": 5000,
+        "beans": 4000,
+        "shoes": 9000,
+        "moth": 2000,
+        "fire-truck-john": 2000,
+        "anthony-boden": 3000,
+        "pth": 2000
+      },
+      "bountyHolders": [
+        "hair",
+        "fire-truck-john"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g9",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-09-03",
+      "gameNumber": 9,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "duck",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "chit-chat",
+        "hair",
+        "shoes",
+        "toby",
+        "the-agent"
+      ],
+      "rebuys": {},
+      "totalRebuys": 49,
+      "finishOrder": [
+        "river-dan",
+        "chit-chat",
+        "cactus",
+        "quads",
+        "beans"
+      ],
+      "pot": 295,
+      "payouts": {
+        "1": 150,
+        "2": 75,
+        "3": 45,
+        "4": 5,
+        "5": 5
+      },
+      "leagueMoney": 15,
+      "prizePool": 280,
+      "subs": null,
+      "pointsAwarded": {
+        "cactus": 5000,
+        "duck": 2000,
+        "river-dan": 10000,
+        "quads": 3000,
+        "beans": 2500,
+        "the-boxer": 2000,
+        "chit-chat": 9000,
+        "hair": 2000,
+        "shoes": 2000,
+        "toby": 2000,
+        "the-agent": 2000
+      },
+      "bountyHolders": [
+        "sam-maffia"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g10",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-10-07",
+      "gameNumber": 10,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "chit-chat",
+        "shoes",
+        "moth",
+        "toby",
+        "jay-gohil"
+      ],
+      "rebuys": {},
+      "totalRebuys": 0,
+      "finishOrder": [
+        "ostrich",
+        "cactus",
+        "duck",
+        "moth",
+        "river-dan"
+      ],
+      "pot": 600,
+      "payouts": {
+        "1": 250,
+        "2": 125,
+        "3": 125,
+        "4": 50
+      },
+      "leagueMoney": 50,
+      "prizePool": 550,
+      "subs": 6,
+      "pointsAwarded": {
+        "cactus": 9000,
+        "chicken": 2000,
+        "duck": 5000,
+        "ostrich": 10000,
+        "river-dan": 3000,
+        "quads": 2000,
+        "beans": 2000,
+        "chit-chat": 2000,
+        "shoes": 2000,
+        "moth": 4000,
+        "toby": 2000,
+        "jay-gohil": 2500
+      },
+      "bountyHolders": [
+        "chicken",
+        "toby",
+        "graham-barlow",
+        "the-dentist",
+        "the-agent",
+        "pth"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g11",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-11-03",
+      "gameNumber": 11,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "chit-chat",
+        "shoes",
+        "moth",
+        "fire-truck-john",
+        "pth",
+        "simon-wilkins"
+      ],
+      "rebuys": {},
+      "totalRebuys": 10,
+      "finishOrder": [
+        "cactus",
+        "shoes",
+        "chit-chat",
+        "river-dan",
+        "quads"
+      ],
+      "pot": 660,
+      "payouts": {
+        "1": 250,
+        "2": 170,
+        "3": 120,
+        "4": 50
+      },
+      "leagueMoney": 70,
+      "prizePool": 590,
+      "subs": null,
+      "pointsAwarded": {
+        "cactus": 10000,
+        "chicken": 2000,
+        "duck": 2000,
+        "ostrich": 2000,
+        "river-dan": 3000,
+        "quads": 2500,
+        "chit-chat": 5000,
+        "shoes": 7000,
+        "moth": 2000,
+        "fire-truck-john": 2000,
+        "pth": 2000,
+        "simon-wilkins": 2000
+      },
+      "bountyHolders": [
+        "the-boxer",
+        "anthony-boden",
+        "jay-gohil",
+        "simon-wilkins",
+        "santa"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2025-r1-g12",
+      "type": "league",
+      "seasonId": "2025-r1",
+      "date": "2025-12-03",
+      "gameNumber": 12,
+      "isFinal": true,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "chit-chat",
+        "shoes",
+        "moth",
+        "toby",
+        "fire-truck-john",
+        "anthony-boden",
+        "pth",
+        "simon-wilkins"
+      ],
+      "rebuys": {},
+      "totalRebuys": 0,
+      "finishOrder": [
+        "cactus",
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan"
+      ],
+      "pot": 825,
+      "payouts": {
+        "1": 300,
+        "2": 200,
+        "3": 150,
+        "4": 100,
+        "5": 75
+      },
+      "leagueMoney": 0,
+      "prizePool": null,
+      "subs": null,
+      "pointsAwarded": {
+        "cactus": 10000,
+        "chicken": 10000,
+        "duck": 10000,
+        "ostrich": 10000,
+        "river-dan": 10000,
+        "quads": 10000,
+        "beans": 10000,
+        "the-boxer": 10000,
+        "chit-chat": 10000,
+        "shoes": 10000,
+        "moth": 10000,
+        "toby": 10000,
+        "fire-truck-john": 10000,
+        "anthony-boden": 10000,
+        "pth": 10000,
+        "simon-wilkins": 10000
+      },
+      "bountyHolders": [],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2026-r2-g1",
+      "type": "league",
+      "seasonId": "2026-r2",
+      "date": "2026-01-06",
+      "gameNumber": 1,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "chicken",
+        "duck",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "chit-chat",
+        "shoes"
+      ],
+      "rebuys": {},
+      "totalRebuys": 0,
+      "finishOrder": [
+        "cactus",
+        "chicken",
+        "quads",
+        "duck",
+        "shoes"
+      ],
+      "pot": 460,
+      "payouts": {
+        "1": 220,
+        "2": 130,
+        "3": 60
+      },
+      "leagueMoney": 50,
+      "prizePool": 410,
+      "subs": 0,
+      "pointsAwarded": {
+        "cactus": 10000,
+        "chicken": 9000,
+        "duck": 3000,
+        "river-dan": 2000,
+        "quads": 5000,
+        "beans": 2000,
+        "the-boxer": 2000,
+        "chit-chat": 2000,
+        "shoes": 2500
+      },
+      "bountyHolders": [
+        "duck",
+        "jimmy"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2026-r2-g2",
+      "type": "league",
+      "seasonId": "2026-r2",
+      "date": "2026-02-06",
+      "gameNumber": 2,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "chit-chat",
+        "hair",
+        "moth",
+        "fire-truck-john",
+        "david"
+      ],
+      "rebuys": {},
+      "totalRebuys": 0,
+      "finishOrder": [
+        "duck",
+        "beans",
+        "river-dan",
+        "moth",
+        "the-boxer"
+      ],
+      "pot": null,
+      "payouts": {
+        "1": 100
+      },
+      "leagueMoney": 0,
+      "prizePool": null,
+      "subs": 0,
+      "pointsAwarded": {
+        "chicken": 2000,
+        "duck": 10000,
+        "ostrich": 2000,
+        "river-dan": 5000,
+        "quads": 2000,
+        "beans": 7000,
+        "the-boxer": 2500,
+        "chit-chat": 2000,
+        "hair": 2000,
+        "moth": 3000,
+        "fire-truck-john": 2000,
+        "david": 2000
+      },
+      "bountyHolders": [
+        "ostrich"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2026-r2-g3",
+      "type": "league",
+      "seasonId": "2026-r2",
+      "date": "2026-03-04",
+      "gameNumber": 3,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "hair",
+        "shoes",
+        "moth",
+        "toby",
+        "graham-barlow",
+        "the-dentist",
+        "dom",
+        "the-agent"
+      ],
+      "rebuys": {},
+      "totalRebuys": 9,
+      "finishOrder": [
+        "ostrich",
+        "chicken",
+        "cactus",
+        "river-dan",
+        "toby"
+      ],
+      "pot": null,
+      "payouts": {
+        "1": 300,
+        "2": 200,
+        "3": 130,
+        "4": 70,
+        "5": 50
+      },
+      "leagueMoney": 0,
+      "prizePool": 750,
+      "subs": 77,
+      "pointsAwarded": {
+        "cactus": 5000,
+        "chicken": 7000,
+        "duck": 2000,
+        "ostrich": 10000,
+        "river-dan": 4500,
+        "quads": 2000,
+        "beans": 2000,
+        "the-boxer": 2000,
+        "hair": 2000,
+        "shoes": 3000,
+        "moth": 2000,
+        "toby": 4000,
+        "graham-barlow": 2000,
+        "the-dentist": 2000,
+        "dom": 2000,
+        "the-agent": 2000
+      },
+      "bountyHolders": [
+        "dom"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2026-r2-g4",
+      "type": "league",
+      "seasonId": "2026-r2",
+      "date": "2026-04-14",
+      "gameNumber": 4,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "the-boxer",
+        "chit-chat"
+      ],
+      "rebuys": {},
+      "totalRebuys": 8,
+      "finishOrder": [
+        "cactus",
+        "river-dan",
+        "duck",
+        "ostrich",
+        "quads"
+      ],
+      "pot": 480,
+      "payouts": {
+        "1": 250,
+        "2": 150,
+        "3": 80
+      },
+      "leagueMoney": 0,
+      "prizePool": 480,
+      "subs": 0,
+      "pointsAwarded": {
+        "cactus": 10000,
+        "chicken": 2000,
+        "duck": 5000,
+        "ostrich": 3000,
+        "river-dan": 7000,
+        "quads": 2500,
+        "the-boxer": 2000,
+        "chit-chat": 2000
+      },
+      "bountyHolders": [
+        "beans",
+        "michael-barnes"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    },
+    {
+      "id": "2026-r2-g5",
+      "type": "league",
+      "seasonId": "2026-r2",
+      "date": "2026-05-12",
+      "gameNumber": 5,
+      "isFinal": false,
+      "buyIn": 30,
+      "attendees": [
+        "cactus",
+        "chicken",
+        "duck",
+        "ostrich",
+        "river-dan",
+        "quads",
+        "beans",
+        "the-boxer",
+        "chit-chat",
+        "hair",
+        "fire-truck-john",
+        "david"
+      ],
+      "rebuys": {},
+      "totalRebuys": 7,
+      "finishOrder": [
+        "chicken",
+        "cactus",
+        "ostrich",
+        "duck",
+        "chit-chat"
+      ],
+      "pot": 570,
+      "payouts": {
+        "1": 240,
+        "2": 160,
+        "3": 90,
+        "4": 30
+      },
+      "leagueMoney": 60,
+      "prizePool": 510,
+      "subs": 9,
+      "pointsAwarded": {
+        "cactus": 10000,
+        "chicken": 11000,
+        "duck": 3000,
+        "ostrich": 7000,
+        "river-dan": 2000,
+        "quads": 2000,
+        "beans": 2000,
+        "the-boxer": 2000,
+        "chit-chat": 2500,
+        "hair": 2000,
+        "fire-truck-john": 2000,
+        "david": 2000
+      },
+      "bountyHolders": [
+        "cactus",
+        "quads",
+        "chit-chat",
+        "shoes",
+        "moth",
+        "tinker-bell"
+      ],
+      "bountyClaims": [],
+      "imported": true,
+      "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
+    }
+  ]
+}
