@@ -1105,26 +1105,85 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   const [includeAntes, setIncludeAntes] = useState(false);
   const [rosterLoaded, setRosterLoaded] = useState(false);
 
-  // Load saved roster on mount
+  // The 9 regulars who play High Rollers games (display names)
+  const HIGH_ROLLERS_REGULARS = [
+    'Cactus', 'Beans', 'Quads', 'Chit Chat', 'Duck',
+    'Ostrich', 'Shoes', 'The Boxer', 'River Dan',
+  ];
+
+  // Load roster on mount: Firestore first (the source of truth), fall back to
+  // localStorage if Firebase isn't ready. Filter to High Rollers regulars when
+  // gameType is 'highrollers'.
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    const finalize = (members) => {
+      if (cancelled) return;
+      const filtered = gameType === 'highrollers'
+        ? members.filter((p) => HIGH_ROLLERS_REGULARS.includes(p.name))
+        : members;
+      setRoster(filtered);
+      // All start unchecked — admin picks who's actually playing tonight
+      setPlayingTonight(new Set());
+      setRosterLoaded(true);
+    };
+
+    const loadFromFirestore = async () => {
+      try {
+        const firestorePlayers = await window.GRP_DB.getAllPlayers();
+        if (firestorePlayers && firestorePlayers.length > 0) {
+          const members = firestorePlayers
+            .filter((p) => p.active !== false)
+            .map((p) => ({ name: p.displayName, sound: p.sound || 'none' }));
+          finalize(members);
+          return true;
+        }
+      } catch (e) { /* fall through to localStorage */ }
+      return false;
+    };
+
+    const loadFromLocalStorage = async () => {
       try {
         const saved = ({ value: localStorage.getItem("poker-roster") });
         if (saved && saved.value) {
           const parsed = JSON.parse(saved.value);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            // Backward compat: if old format (array of strings), convert to objects
             const migrated = parsed.map((p) =>
               typeof p === 'string' ? { name: p, sound: 'none' } : { name: p.name, sound: p.sound || 'none' }
             );
-            setRoster(migrated);
-            setPlayingTonight(new Set(migrated.map((p) => p.name)));
+            finalize(migrated);
+            return;
           }
         }
-      } catch (e) { /* no saved roster yet */ }
-      setRosterLoaded(true);
+      } catch (e) { /* no saved roster */ }
+      finalize([]);
+    };
+
+    (async () => {
+      // If Firebase is already loaded, use it directly
+      if (window.GRP_DB) {
+        const ok = await loadFromFirestore();
+        if (!ok) await loadFromLocalStorage();
+        return;
+      }
+      // Otherwise wait briefly for firebase-ready, then fall back
+      const onReady = async () => {
+        window.removeEventListener('firebase-ready', onReady);
+        const ok = await loadFromFirestore();
+        if (!ok) await loadFromLocalStorage();
+      };
+      window.addEventListener('firebase-ready', onReady);
+      // Timeout: if Firebase hasn't loaded in 3 seconds, use localStorage
+      setTimeout(() => {
+        if (!cancelled && !rosterLoaded) {
+          window.removeEventListener('firebase-ready', onReady);
+          loadFromLocalStorage();
+        }
+      }, 3000);
     })();
-  }, []);
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameType]);
 
   // Persist roster whenever it changes
   useEffect(() => {
