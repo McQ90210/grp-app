@@ -53,7 +53,7 @@ Note: finish-order positions are best-effort inferred from points (since the spr
 6. Tap **IMPORT SPREADSHEET** — runs once, ~5 seconds
 7. The dashboard will populate immediately
 
-After that, the league site works publicly at `https://mcq90210.github.io/poker-timer/` — anyone with the link can view standings without signing in.
+After that, the league site works publicly at `https://mcq90210.github.io/grp-app/` — anyone with the link can view standings without signing in.
 
 ## What's in this folder
 - `index.html` — main app

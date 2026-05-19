@@ -8,8 +8,8 @@ This file is read at the start of every Claude session working on this repo. It 
 
 A Progressive Web App for the **Greene Room Poker** league in Berkhamsted. Owner / sole admin / developer: **Mark Bayley** (display name "Cactus" at the club). Runs in a browser, installable to phone/laptop home screen.
 
-**Live URL**: https://mcq90210.github.io/poker-timer/
-**Repo**: https://github.com/McQ90210/poker-timer
+**Live URL**: https://mcq90210.github.io/grp-app/
+**Repo**: https://github.com/McQ90210/grp-app
 **Hosting**: GitHub Pages (auto-rebuilds on push to `main`)
 **Current version**: v7.7 (see `sw.js` `CACHE_NAME` for what's deployed)
 
@@ -35,7 +35,7 @@ Deliberately simple — no build system on the deployed side.
 - **PWA** — service worker (`sw.js`), web manifest (`manifest.json`), installable
 - **No bundler, no npm install required to run** — everything resolves at runtime via CDN
 
-The single `index.html` is self-contained: the JSX source is inlined inside a `<script type="text/babel">` block. To rebuild it locally we run a sed/python pipeline on `poker-timer.jsx` (see Build pipeline below).
+The single `index.html` is self-contained: the JSX source is inlined inside a `<script type="text/babel">` block. To rebuild it locally we run a sed/python pipeline on `grp-app.jsx` (see Build pipeline below).
 
 Why this architecture: zero-tooling deploys (just push files to GitHub Pages), simple for one-person maintenance, fast to iterate on without a Node build.
 
@@ -44,7 +44,7 @@ Why this architecture: zero-tooling deploys (just push files to GitHub Pages), s
 ## File structure
 
 ```
-poker-timer/                       # repo root
+grp-app/                           # repo root
 ├── index.html                     # the entire deployed app (~3,900 lines of JSX inlined)
 ├── firebase-init.js               # ES module that initialises Firebase + exposes window.GRP_DB
 ├── manifest.json                  # PWA manifest (name, theme, icons)
@@ -59,11 +59,11 @@ poker-timer/                       # repo root
 ```
 
 **Source-of-truth file** (NOT in the deployed repo, lives in build sandbox):
-`/mnt/user-data/outputs/poker-timer.jsx` — the canonical React source. `index.html` is rebuilt from this.
+`/mnt/user-data/outputs/grp-app.jsx` — the canonical React source. `index.html` is rebuilt from this.
 
-**Build sandbox layout** (`/home/claude/poker-app/`):
+**Build sandbox layout** (`/home/claude/grp-app/`):
 ```
-app.jsx              # poker-timer.jsx with imports stripped
+app.jsx              # grp-app.jsx with imports stripped
 combined.jsx         # icons.jsx + app.jsx with hooks destructure prepended
 icons.jsx            # SVG icon components inlined as React fns
 index.html           # final assembled output
@@ -75,9 +75,9 @@ logos/, icon-*.png   # assets
 
 ## Build / deploy pipeline
 
-The deployed `index.html` is *generated* from `poker-timer.jsx`. Steps:
+The deployed `index.html` is *generated* from `grp-app.jsx`. Steps:
 
-1. Edit `poker-timer.jsx` (the master source).
+1. Edit `grp-app.jsx` (the master source).
 2. Strip the top 2 lines (the `import React...` and blank line, which the in-browser Babel can't resolve).
 3. Replace `export default function App` with `function App`.
 4. Swap `window.storage.get/set` calls (legacy from Claude artefacts) with direct `localStorage.getItem/setItem`.
@@ -90,7 +90,7 @@ The deployed `index.html` is *generated* from `poker-timer.jsx`. Steps:
 The build script is roughly:
 
 ```bash
-sed '1,2d' /mnt/user-data/outputs/poker-timer.jsx > app.jsx
+sed '1,2d' /mnt/user-data/outputs/grp-app.jsx > app.jsx
 sed -i 's/export default function App/function App/' app.jsx
 sed -i 's|await window\.storage\.get(.poker-roster.)|({ value: localStorage.getItem("poker-roster") })|' app.jsx
 sed -i 's|await window\.storage\.set(.poker-roster., JSON\.stringify(roster))|localStorage.setItem("poker-roster", JSON.stringify(roster))|' app.jsx
@@ -100,13 +100,13 @@ sed -i 's|await window\.storage\.set(.poker-roster., JSON\.stringify(roster))|lo
 sed -i 's/gr-poker-vX\.X/gr-poker-vY.Y/g' sw.js
 ```
 
-Pre-flight: ALWAYS run a Babel compile check on `poker-timer.jsx` before bundling:
+Pre-flight: ALWAYS run a Babel compile check on `grp-app.jsx` before bundling:
 
 ```bash
 node -e "
 const babel = require('@babel/core');
 const fs = require('fs');
-try { babel.transformSync(fs.readFileSync('/mnt/user-data/outputs/poker-timer.jsx', 'utf8'), { presets: ['@babel/preset-react'] }); console.log('OK'); }
+try { babel.transformSync(fs.readFileSync('/mnt/user-data/outputs/grp-app.jsx', 'utf8'), { presets: ['@babel/preset-react'] }); console.log('OK'); }
 catch (e) { console.error('Line', e.loc?.line, ':', e.message.split('\n')[0]); process.exit(1); }
 "
 ```
@@ -279,7 +279,7 @@ Stored in `import-data.json` and Firestore. Slugs are lowercase, hyphenated.
 
 ## Component architecture
 
-Top-level: `App` (in `poker-timer.jsx`) handles routing via `route` state.
+Top-level: `App` (in `grp-app.jsx`) handles routing via `route` state.
 
 ```
 App (route state: 'home' | 'league-context' | 'setup' | 'timer' | 'league-info' | 'highrollers-info')
@@ -412,7 +412,7 @@ That transcript contains every iteration, including:
 - The Firebase setup walkthrough (project creation, rules, admin account)
 - The AirPlay-to-Mac casting discussion
 - Service worker caching debug cycles
-- The full poker-timer.jsx source at multiple points
+- The full grp-app.jsx source at multiple points
 
 If the user references something we did "before" that isn't covered in this CLAUDE.md, check the transcript.
 
@@ -422,12 +422,12 @@ If the user references something we did "before" that isn't covered in this CLAU
 
 **Babel compile check**:
 ```bash
-node -e "const b=require('@babel/core'); const fs=require('fs'); try{b.transformSync(fs.readFileSync('poker-timer.jsx','utf8'),{presets:['@babel/preset-react']});console.log('OK')}catch(e){console.error('Line',e.loc?.line,':',e.message.split('\\n')[0]);process.exit(1)}"
+node -e "const b=require('@babel/core'); const fs=require('fs'); try{b.transformSync(fs.readFileSync('grp-app.jsx','utf8'),{presets:['@babel/preset-react']});console.log('OK')}catch(e){console.error('Line',e.loc?.line,':',e.message.split('\\n')[0]);process.exit(1)}"
 ```
 
 **Find a function in the source**:
 ```bash
-grep -n "function ComponentName" poker-timer.jsx
+grep -n "function ComponentName" grp-app.jsx
 ```
 
 **Inspect import-data.json structure**:
