@@ -1669,8 +1669,34 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
   const [showHomeConfirm, setShowHomeConfirm] = useState(false);
   const [showEliminate, setShowEliminate] = useState(false);
   const [winner, setWinner] = useState(null);
+  const [fullRoster, setFullRoster] = useState([]); // [{ name, sound }, ...] — for late-entry picker
 
   const intervalRef = useRef(null);
+
+  // Load the full club roster from Firestore so late-entry can suggest existing names
+  useEffect(() => {
+    let cancelled = false;
+    const doLoad = async () => {
+      try {
+        const allPlayers = await window.GRP_DB.getAllPlayers();
+        if (cancelled) return;
+        const active = (allPlayers || [])
+          .filter((p) => p.active !== false)
+          .map((p) => ({ name: p.displayName, sound: p.sound || 'none' }));
+        setFullRoster(active);
+      } catch (e) { /* silent — late-entry falls back to free text */ }
+    };
+    if (window.GRP_DB) doLoad();
+    else {
+      const onReady = () => doLoad();
+      window.addEventListener('firebase-ready', onReady);
+      return () => {
+        cancelled = true;
+        window.removeEventListener('firebase-ready', onReady);
+      };
+    }
+    return () => { cancelled = true; };
+  }, []);
 
   // Load available voices. They load asynchronously in some browsers.
   useEffect(() => {
@@ -1831,11 +1857,25 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
     }
   };
 
-  const addPlayer = () => {
-    if (newPlayerName.trim()) {
-      setPlayers([...players, { name: newPlayerName.trim(), sound: 'none' }]);
-      setNewPlayerName('');
+  // Add a player to the live game. If `pick` is supplied (from the roster typeahead),
+  // use that name + sound. Otherwise use whatever's in the text field as a free-text fallback.
+  const addPlayer = (pick) => {
+    let name, sound;
+    if (pick) {
+      name = pick.name;
+      sound = pick.sound || 'none';
+    } else {
+      name = newPlayerName.trim();
+      sound = 'none';
     }
+    if (!name) return;
+    // Skip if already in this game
+    if (players.find((p) => p.name === name)) {
+      setNewPlayerName('');
+      return;
+    }
+    setPlayers([...players, { name, sound }]);
+    setNewPlayerName('');
   };
 
   const togglePlayerEliminated = (name) => {
@@ -2032,7 +2072,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
                 {config.gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE GAME'}
               </div>
               <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
-                £{prizePool} POOL · {activePlayers.length}/{players.length} LEFT
+                {activePlayers.length}/{players.length} LEFT
                 {totalRebuys > 0 && <span className="text-yellow-300/80"> · {totalRebuys} REBUY{totalRebuys === 1 ? '' : 'S'}</span>}
               </div>
             </div>
@@ -2075,26 +2115,37 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
           </div>
 
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12 mb-6">
-            <div className="flex justify-between items-start mb-6 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
               <div>
                 <div className="font-mono text-xs text-yellow-500/60 tracking-widest">LEVEL</div>
-                <div className="font-display text-5xl gold-text leading-none">
+                <div className="font-display text-4xl sm:text-5xl gold-text leading-none">
                   {(currentLevel + 1).toString().padStart(2, '0')}
-                  <span className="text-2xl text-yellow-500/40"> / {levels.length}</span>
+                  <span className="text-xl sm:text-2xl text-yellow-500/40"> / {levels.length}</span>
                 </div>
               </div>
               <div className="text-center">
                 <div className="font-mono text-xs text-emerald-300/60 tracking-widest">REMAINING</div>
-                <div className="font-display text-5xl text-emerald-200 leading-none">
+                <div className="font-display text-4xl sm:text-5xl text-emerald-200 leading-none">
                   {activePlayers.length}
                 </div>
                 <div className="font-mono text-xs text-emerald-300/40 mt-1">of {players.length}</div>
               </div>
-              <div className="text-right">
+              <div className="text-center sm:text-right">
                 <div className="font-mono text-xs text-emerald-300/60 tracking-widest">AVG STACK</div>
-                <div className="font-display text-5xl text-emerald-200 leading-none">
+                <div className="font-display text-4xl sm:text-5xl text-emerald-200 leading-none">
                   {activePlayers.length > 0 ? avgStack.toLocaleString() : '—'}
                 </div>
+              </div>
+              <div className="text-right">
+                <div className="font-mono text-xs text-yellow-300/70 tracking-widest">POT</div>
+                <div className="font-display text-4xl sm:text-5xl gold-text leading-none">
+                  £{prizePool.toLocaleString()}
+                </div>
+                {totalRebuys > 0 && (
+                  <div className="font-mono text-xs text-yellow-300/40 mt-1">
+                    +{totalRebuys} rebuy{totalRebuys === 1 ? '' : 's'}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2199,12 +2250,66 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
                 <div className="font-display text-2xl gold-text">PLAYERS & REBUYS</div>
                 <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
               </div>
-              <div className="flex gap-2 mb-4">
-                <input type="text" value={newPlayerName} onChange={(e) => setNewPlayerName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addPlayer()} placeholder="Add late entry..." className="flex-1 px-4 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 focus:outline-none focus:border-yellow-500/50" />
-                <button onClick={addPlayer} className="control-btn px-4 py-2 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-100">
-                  <Plus size={18} />
-                </button>
-              </div>
+              {/* Late-entry typeahead — suggests existing roster members */}
+              {(() => {
+                const search = newPlayerName.trim().toLowerCase();
+                const inGameNames = new Set(players.map((p) => p.name));
+                const available = fullRoster.filter((p) => !inGameNames.has(p.name));
+                const suggestions = search
+                  ? available.filter((p) => p.name.toLowerCase().includes(search))
+                  : available;
+                const exactMatch = available.some((p) => p.name.toLowerCase() === search);
+                const showNewFallback = search && !exactMatch;
+                return (
+                  <div className="mb-4">
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        type="text"
+                        value={newPlayerName}
+                        onChange={(e) => setNewPlayerName(e.target.value)}
+                        placeholder="Add late entry — search or pick below..."
+                        className="flex-1 px-4 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 focus:outline-none focus:border-yellow-500/50"
+                      />
+                    </div>
+                    <div className="max-h-44 overflow-y-auto pr-1 space-y-1">
+                      {suggestions.length === 0 && !showNewFallback && (
+                        <div className="text-yellow-100/40 text-xs font-mono italic px-2 py-2">
+                          {available.length === 0
+                            ? 'Everyone in the roster is already in this game.'
+                            : 'No matches — try different spelling.'}
+                        </div>
+                      )}
+                      {suggestions.slice(0, 30).map((p) => (
+                        <button
+                          key={p.name}
+                          onClick={() => addPlayer(p)}
+                          className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-emerald-950/40 border border-emerald-500/20 hover:bg-emerald-900/50 hover:border-emerald-500/50 text-left transition-colors"
+                        >
+                          <span className="text-emerald-100">{p.name}</span>
+                          {p.sound && p.sound !== 'none' && (
+                            <span className="text-xs font-mono text-yellow-300/60 flex items-center gap-1">
+                              <Music size={11} />
+                              {(customSounds[p.sound]?.label || SOUND_LIBRARY[p.sound]?.label || '').split(' ')[0]}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                      {showNewFallback && (
+                        <button
+                          onClick={() => addPlayer()}
+                          className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-yellow-950/30 border border-yellow-500/30 hover:bg-yellow-900/40 text-left"
+                        >
+                          <span className="text-yellow-100">
+                            <span className="text-yellow-100/60 text-xs font-mono mr-2">NEW</span>
+                            Add "{newPlayerName.trim()}" as new player
+                          </span>
+                          <Plus size={14} className="text-yellow-300" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                 {players.map((player, idx) => {
                   const isOut = eliminatedPlayers.includes(player.name);
