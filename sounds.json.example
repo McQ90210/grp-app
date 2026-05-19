@@ -1,0 +1,4 @@
+{
+  "beans": { "label": "Beans", "file": "sounds/beans.mp3" },
+  "chicken": { "label": "Chicken", "file": "sounds/chicken.mp3" }
+}

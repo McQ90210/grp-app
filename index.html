@@ -292,21 +292,28 @@ const audioBufferCache = new Map();
 const audioFailedCache = new Set(); // paths we've already failed to load
 
 async function loadAudioBuffer(path) {
-  if (audioBufferCache.has(path)) return audioBufferCache.get(path);
-  if (audioFailedCache.has(path)) return null;
-  const ctx = getAudioCtx();
-  if (!ctx) return null;
-  try {
-    const res = await fetch(path);
-    if (!res.ok) throw new Error('not ok');
-    const arr = await res.arrayBuffer();
-    const buffer = await ctx.decodeAudioData(arr);
-    audioBufferCache.set(path, buffer);
-    return buffer;
-  } catch (e) {
-    audioFailedCache.add(path);
-    return null;
+  // Try the given path first, then swap mp3<->wav as fallback so users can drop in either format
+  const tryPaths = [path];
+  if (path.endsWith('.mp3')) tryPaths.push(path.replace(/\.mp3$/, '.wav'));
+  else if (path.endsWith('.wav')) tryPaths.push(path.replace(/\.wav$/, '.mp3'));
+
+  for (const p of tryPaths) {
+    if (audioBufferCache.has(p)) return audioBufferCache.get(p);
+    if (audioFailedCache.has(p)) continue;
+    const ctx = getAudioCtx();
+    if (!ctx) return null;
+    try {
+      const res = await fetch(p);
+      if (!res.ok) throw new Error('not ok');
+      const arr = await res.arrayBuffer();
+      const buffer = await ctx.decodeAudioData(arr);
+      audioBufferCache.set(p, buffer);
+      return buffer;
+    } catch (e) {
+      audioFailedCache.add(p);
+    }
   }
+  return null;
 }
 
 const SOUND_LIBRARY = {
@@ -725,17 +732,35 @@ const SOUND_LIBRARY = {
   },
 };
 
-// Play a sound. Tries to use the MP3 file first; falls back to synthesis.
-async function playSound(soundKey) {
+// Play a sound. Tries to use the bundled MP3 file first; falls back to synthesis.
+async function playSound(soundKey, customSounds = {}) {
   if (!soundKey || soundKey === 'none') return;
   const ctx = getAudioCtx();
   if (!ctx) return;
   if (ctx.state === 'suspended') {
     try { await ctx.resume(); } catch (e) {}
   }
+
+  // Look in custom sounds (from sounds.json) first
+  const custom = customSounds[soundKey];
+  if (custom && custom.file) {
+    const buffer = await loadAudioBuffer(custom.file);
+    if (buffer) {
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      const g = ctx.createGain();
+      g.gain.value = 0.9;
+      src.connect(g);
+      g.connect(ctx.destination);
+      src.start();
+      return;
+    }
+    return; // Custom sound failed — don't fall through to synth
+  }
+
+  // Built-in library
   const sound = SOUND_LIBRARY[soundKey];
   if (!sound) return;
-  // Try to play the bundled MP3 if available
   if (sound.file) {
     const buffer = await loadAudioBuffer(sound.file);
     if (buffer) {
@@ -749,8 +774,31 @@ async function playSound(soundKey) {
       return;
     }
   }
-  // Fallback to synthesised version
   sound.play(ctx);
+}
+
+// Load the optional sounds.json manifest, which lets users add their own
+// sounds without code changes. Format:
+// {
+//   "beans": { "label": "Beans", "file": "sounds/beans.mp3" },
+//   "horse-laugh": { "label": "Horse laugh", "file": "sounds/horse-laugh.mp3" }
+// }
+async function loadCustomSounds() {
+  try {
+    const res = await fetch('sounds/sounds.json');
+    if (!res.ok) return {};
+    const data = await res.json();
+    // Validate shape
+    const out = {};
+    for (const [key, val] of Object.entries(data)) {
+      if (val && typeof val.file === 'string') {
+        out[key] = { label: val.label || key, file: val.file };
+      }
+    }
+    return out;
+  } catch (e) {
+    return {};
+  }
 }
 
 // ============ PAYOUT LOGIC ============
@@ -769,7 +817,7 @@ function defaultPayoutKey(numPlayers) {
 }
 
 // ============ SETUP WIZARD ============
-function SetupWizard({ onStart }) {
+function SetupWizard({ onStart, customSounds }) {
   const [step, setStep] = useState(0);
   const [buyIn, setBuyIn] = useState('20');
   const [stackSize, setStackSize] = useState('10000');
@@ -1073,14 +1121,26 @@ function SetupWizard({ onStart }) {
                                   onChange={(e) => updatePlayerSound(player.name, e.target.value)}
                                   className="flex-1 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-100/80 text-xs focus:outline-none focus:border-yellow-500/50"
                                 >
-                                  {Object.entries(SOUND_LIBRARY).map(([key, s]) => (
-                                    <option key={key} value={key} style={{ background: '#0a3d1f' }}>
-                                      {s.label}
-                                    </option>
-                                  ))}
+                                  <option value="none" style={{ background: '#0a3d1f' }}>None</option>
+                                  {Object.keys(customSounds || {}).length > 0 && (
+                                    <optgroup label="Your sounds">
+                                      {Object.entries(customSounds).map(([key, s]) => (
+                                        <option key={`c-${key}`} value={key} style={{ background: '#0a3d1f' }}>
+                                          {s.label}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  )}
+                                  <optgroup label="Built-in (synth or file)">
+                                    {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
+                                      <option key={key} value={key} style={{ background: '#0a3d1f' }}>
+                                        {s.label}
+                                      </option>
+                                    ))}
+                                  </optgroup>
                                 </select>
                                 <button
-                                  onClick={() => playSound(player.sound || 'none')}
+                                  onClick={() => playSound(player.sound || 'none', customSounds)}
                                   disabled={!player.sound || player.sound === 'none'}
                                   className="px-3 py-1 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 text-xs disabled:opacity-30"
                                   title="Preview sound"
@@ -1206,7 +1266,7 @@ function SetupWizard({ onStart }) {
 }
 
 // ============ MAIN TIMER ============
-function PokerTimerMain({ config, onReset }) {
+function PokerTimerMain({ config, onReset, customSounds }) {
   const [levels, setLevels] = useState(config.levels);
   const [players, setPlayers] = useState(config.players); // [{name, sound}, ...]
   const [currentLevel, setCurrentLevel] = useState(0);
@@ -1426,9 +1486,9 @@ function PokerTimerMain({ config, onReset }) {
     // Always: goodbye + their sound
     if (voiceEnabled) {
       speak(`Goodbye, ${player.name}.`);
-      setTimeout(() => playSound(player.sound), 1400);
+      setTimeout(() => playSound(player.sound, customSounds), 1400);
     } else {
-      playSound(player.sound);
+      playSound(player.sound, customSounds);
     }
 
     // Final 3: announcement (only if we just dropped TO 3, and only when starting field was >3)
@@ -1447,7 +1507,7 @@ function PokerTimerMain({ config, onReset }) {
       setTimeout(() => {
         setWinner(winnerObj);
         // Fanfare sound, then announce winner
-        playSound('fanfare');
+        playSound('fanfare', customSounds);
         setTimeout(() => {
           if (voiceEnabled && winnerObj) {
             speakQueue([
@@ -2030,7 +2090,7 @@ function PokerTimerMain({ config, onReset }) {
                     {player.sound && player.sound !== 'none' && (
                       <span className="text-xs font-mono text-yellow-300/60 flex items-center gap-1">
                         <Music size={12} />
-                        {SOUND_LIBRARY[player.sound]?.label.split(' ')[0]}
+                        {(customSounds[player.sound]?.label || SOUND_LIBRARY[player.sound]?.label || '').split(' ')[0]}
                       </span>
                     )}
                   </button>
@@ -2124,9 +2184,13 @@ function PokerTimerMain({ config, onReset }) {
 
 function App() {
   const [config, setConfig] = useState(null);
+  const [customSounds, setCustomSounds] = useState({});
+  useEffect(() => {
+    loadCustomSounds().then(setCustomSounds);
+  }, []);
   return config
-    ? <PokerTimerMain config={config} onReset={() => setConfig(null)} />
-    : <SetupWizard onStart={setConfig} />;
+    ? <PokerTimerMain config={config} customSounds={customSounds} onReset={() => setConfig(null)} />
+    : <SetupWizard customSounds={customSounds} onStart={setConfig} />;
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));

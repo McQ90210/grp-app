@@ -1,41 +1,78 @@
-# Poker Timer — Installation Guide
+# Poker Timer — Installation & Sounds Guide
 
 You have a fully self-contained Progressive Web App (PWA). Once hosted, it installs to your phone's home screen like a real app, with its own icon and name, and works **offline** at game time.
 
-## What's new in this version (v3)
-- **Default voice is now Google US English** (falls back through other Google voices if not available)
-- **Final 3 dramatic mode** — when the field drops to 3 players, the background turns red, currency symbols rain from the top, and the voice announces "We are down to the final three!"
-- **Winner announcement** — when the last opponent is eliminated, the timer stops, a fanfare plays, the screen takes over with the winner's name in giant glowing letters, confetti rains, and the full payout breakdown is shown
-- **Much richer sound synthesis** — animal sounds now use formant filters and FM synthesis instead of basic oscillators. They still won't fool anyone into thinking they're real recordings, but they're substantially less "1980s bleepy"
-- **Optional real audio files** — if you upload MP3s into a `sounds/` folder, the app uses those instead. See below.
+## ⭐ This version (v5): bring-your-own sounds
 
-## Optional: real animal sounds
+The app now reads a `sounds/sounds.json` manifest you control. Add a sound, list it in the JSON, and it appears in the dropdown — no code changes needed. The 12 built-in named sounds (quack, cluck, neigh, etc.) still work as a fallback library.
 
-The app first tries to load `sounds/quack.mp3`, `sounds/cluck.mp3`, etc. If they don't exist, it falls back to the synthesised versions. To upgrade:
+### Adding your own sounds
 
-1. Source royalty-free animal sounds from a site like:
-   - **Mixkit** (https://mixkit.co/free-sound-effects/animals/) — free, no signup
-   - **Freesound.org** (https://freesound.org/) — filter by "CC0" licence
-   - **Zapsplat** (https://www.zapsplat.com/sound-effect-category/animals/) — free with signup
-2. Download MP3s for: quack, cluck, neigh, moo, bark, meow, hoot, oink, baa, crow, trumpet, airhorn, fanfare
-3. Trim each to ~1 second using any audio editor (or use them as-is)
-4. Name them exactly: `quack.mp3`, `cluck.mp3`, `neigh.mp3`, `moo.mp3`, `bark.mp3`, `meow.mp3`, `hoot.mp3`, `oink.mp3`, `baa.mp3`, `crow.mp3`, `trumpet.mp3`, `airhorn.mp3`, `fanfare.mp3`
-5. In your GitHub repo, create a folder called `sounds` and upload them there
-6. Refresh the app — the real sounds take over automatically
+**Step 1 — Get some sounds.** Go to https://mixkit.co/free-sound-effects/ on a laptop, search for what you want, click "Download Free SFX". Most are `.wav` but the app supports both `.mp3` and `.wav`.
 
-You can do all of these at once or one at a time. Missing files just fall back to the synthesised version.
+**Step 2 — Name them whatever you like.** No more renaming to specific filenames. `beans.mp3`, `paul-the-horse.mp3`, `victory-roar.wav` — all fine.
 
-## How to update from v2 (or v1)
+**Step 3 — Upload them to your repo's `sounds/` folder.** Same as before.
 
-1. In your GitHub repo, replace `index.html`, `sw.js`, and `README.md` with the new versions (icons + manifest unchanged)
-2. On your phone, open the app and pull-to-refresh, or force-close it and reopen — the new service worker version (v3) will pick up the changes
-3. Your roster and sound assignments are preserved across versions
+**Step 4 — Add a `sounds.json` file** to the `sounds/` folder, listing your custom sounds. Format:
+
+```json
+{
+  "beans": { "label": "Beans", "file": "sounds/beans.mp3" },
+  "horse-laugh": { "label": "Horse laughing", "file": "sounds/horse-laugh.mp3" },
+  "duck": { "label": "Best duck quack", "file": "sounds/my-duck.wav" }
+}
+```
+
+- The **key** (`"beans"`) is the internal name — keep it short, no spaces
+- The **label** is what appears in the dropdown
+- The **file** is the path to the audio (relative to the app root)
+
+**Step 5 — Refresh the app.** Your sounds appear under a "Your sounds" section in the dropdown, above the built-in ones.
+
+### About the built-in sounds
+
+The 12 built-in sounds (Quack/Cluck/Neigh/Moo/Bark/Meow/Hoot/Oink/Baa/Crow/Trumpet/Airhorn/Fanfare) still look for matching filenames in `sounds/` (e.g. `sounds/cluck.mp3`). If they exist, they play; otherwise the synthesised fallback plays. So:
+
+- **For built-ins**: filename must match the key (e.g. cluck → `cluck.mp3`)
+- **For custom sounds**: any filename works, just list it in `sounds.json`
+
+You can mix both. Many users will only use custom sounds and ignore the built-ins.
+
+### Important: fanfare and trumpet
+
+These two are used by the app's own logic, not just by players:
+- **`fanfare`** plays automatically when the winner is decided
+- **`trumpet`** (sad trombone) is just a sound option, not auto-triggered
+
+To use a custom audio file for the auto-played fanfare, override the built-in by naming your file `fanfare.mp3` and placing it at `sounds/fanfare.mp3`. The built-in loader will find it.
+
+## How to update from v4
+
+1. Replace `index.html`, `sw.js`, and `README.md` in your repo
+2. (Optional) Add `sounds/sounds.json` with your custom entries
+3. On your phone, force-close the app and reopen — service worker v5 picks up the changes
+
+## Quick recap of features
+
+- Setup wizard: buy-in → stack → players → duration → review
+- Auto-generated blind structure (50-multiples, proper 2:1 ratios, sensible jumps at high values)
+- 20-minute rounds by default
+- Persistent roster, per-player sound assignments
+- Voice announcements: welcome, level changes, 5-min/1-min warnings, breaks, eliminations, final-3, winner
+- Rebuy tracking (prize pool and avg stack auto-update)
+- Payouts panel (top 3 for ≤10 players, top 4 for 11+)
+- Final-3 dramatic mode: red background, currency rain, voice announcement
+- Winner overlay: confetti, fanfare, payout breakdown
+- Works offline after first load
+- Bring-your-own custom sounds via `sounds.json`
 
 ## What's in this folder
 - `index.html` — the entire app in one file
 - `manifest.json` — tells phones how to install it
 - `sw.js` — service worker for offline support
 - `icon-192.png` / `icon-512.png` — the poker chip icon
+- `sounds.json.example` — example manifest you can copy into `sounds/sounds.json`
 - `README.md` — this file
 
 ## How to deploy (free, 5 minutes) — GitHub Pages
