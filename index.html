@@ -2017,10 +2017,16 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
 
   // Eliminate a player: voice "Goodbye <name>", then play their sound.
   // Also triggers "final 3" announcement and winner announcement when appropriate.
-  // Step 1: user taps OUT in the eliminate modal. Open the "who knocked them out?" picker.
+  // Step 1: user taps OUT in the eliminate modal. For league games, open the
+  // "who knocked them out?" picker (for bounty credit). High Rollers has no
+  // bounties, so skip straight to elimination.
   const requestEliminate = (player) => {
     setShowEliminate(false);
-    setPendingKnockout(player);
+    if (config.gameType === 'league') {
+      setPendingKnockout(player);
+    } else {
+      doEliminate(player);
+    }
   };
 
   // Step 2: user has chosen a knocker-outer (or skipped). Now actually eliminate.
