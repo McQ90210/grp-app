@@ -804,35 +804,144 @@ async function loadCustomSounds() {
 
 // ============ PAYOUT LOGIC ============
 // Standard small-field payout structures by number of payable places.
+// PAYOUT_STRUCTURES drives the dropdown only. The actual amounts come from
+// computePayouts(pot, buyIn, paidCount). The `splits` field is legacy but kept
+// for back-compat with code that maps over it for rendering rows.
 const PAYOUT_STRUCTURES = {
   '1': { label: 'Winner takes all', splits: [100] },
-  '2': { label: 'Top 2 (60/40)', splits: [60, 40] },
-  '3': { label: 'Top 3 (50/30/20)', splits: [50, 30, 20] },
-  '4': { label: 'Top 4 (45/25/18/12)', splits: [45, 25, 18, 12] },
-  '5': { label: 'Top 5 (40/25/17/12/6)', splits: [40, 25, 17, 12, 6] },
+  '2': { label: 'Top 2 (66/34)', splits: [66, 34] },
+  '3': { label: 'Top 3 (56/31/13)', splits: [56, 31, 13] },
+  '4': { label: 'Top 4 (54/30/16 + buy-in)', splits: [54, 30, 16, 0] },
+  '5': { label: 'Top 5 (50/28/15/7 + buy-in)', splits: [50, 28, 15, 7, 0] },
 };
 
 function defaultPayoutKey(numPlayers) {
-  if (numPlayers <= 10) return '3';
-  return '4';
+  if (numPlayers <= 9) return '3';
+  if (numPlayers <= 13) return '4';
+  return '5';
 }
 
-// Round payout amounts to the nearest £10 while preserving the total prize pool.
-// Strategy: round all positions to nearest 10, then absorb any rounding difference
-// onto 1st place (so the winner gets the leftover, keeps the total honest).
-function roundPayoutsToTens(splits, prizePool) {
-  if (!prizePool || prizePool <= 0) return splits.map(() => 0);
-  // Round prize pool itself to nearest 10 first (anything below isn't paid out cleanly)
-  const targetTotal = Math.round(prizePool / 10) * 10;
-  // Compute raw amounts, then round each to nearest 10
-  const raw = splits.map((pct) => (prizePool * pct) / 100);
+// ============ PAYOUT CALCULATION ============
+// Rule (locked May 2026):
+//
+//   1 paid:  winner takes all
+//   2 paid:  1st = 66% of pot,  2nd = 34% of pot
+//   3 paid:  1st = 56%, 2nd = 31%, 3rd = 13% of pot
+//   4 paid:  1st = 54% rem, 2nd = 30% rem, 3rd = 16% rem; 4th = buy-in
+//   5 paid:  1st = 50% rem, 2nd = 28% rem, 3rd = 15% rem, 4th = 7% rem; 5th = buy-in
+//
+// Where "rem" = pot − buy-in.
+//
+// For 1-3 paid: no buy-in floor (3rd is a real cash spot, deserves a real cut).
+// For 4-5 paid: last place is the bubble — they get only their buy-in back, and
+// everyone above splits the remaining pot.
+//
+// After rounding each amount to nearest £10, the residual is absorbed onto 1st
+// place so the total equals the (rounded) pot.
+
+// For 1-3 paid: percentages of FULL pot (last place still gets a meaningful share)
+const FULL_POT_PERCENTAGES = {
+  1: [1.00],
+  2: [0.66, 0.34],
+  3: [0.56, 0.31, 0.13],
+};
+
+// For 4-5 paid: percentages of REMAINING pot (after subtracting last place's buy-in)
+const REMAINING_PERCENTAGES = {
+  4: [0.54, 0.30, 0.16],          // 4th gets buy-in
+  5: [0.50, 0.28, 0.15, 0.07],    // 5th gets buy-in
+};
+
+function computePayouts(pot, buyIn, paidCount) {
+  if (!pot || pot <= 0 || !paidCount) return Array(paidCount || 0).fill(0);
+
+  // Small-pot safety: if pot won't cover the structure, just split equally
+  if (pot <= buyIn) {
+    return Array(paidCount).fill(Math.round(pot / paidCount / 10) * 10);
+  }
+
+  const targetTotal = Math.round(pot / 10) * 10;
+  let raw;
+
+  if (paidCount <= 3 && FULL_POT_PERCENTAGES[paidCount]) {
+    // Each position gets a percentage of the full pot, no buy-in floor.
+    raw = FULL_POT_PERCENTAGES[paidCount].map((p) => pot * p);
+  } else if (REMAINING_PERCENTAGES[paidCount]) {
+    // Top positions split remaining (pot − buy-in); last place gets buy-in.
+    const remaining = pot - buyIn;
+    raw = REMAINING_PERCENTAGES[paidCount].map((p) => remaining * p).concat([buyIn]);
+  } else {
+    return Array(paidCount).fill(0);
+  }
+
   const rounded = raw.map((v) => Math.round(v / 10) * 10);
-  const sum = rounded.reduce((a, b) => a + b, 0);
-  const diff = targetTotal - sum; // could be negative
-  // Add the difference onto 1st place
-  if (rounded.length > 0) rounded[0] += diff;
-  // Safety: ensure no negative payouts
+  const diff = targetTotal - rounded.reduce((a, b) => a + b, 0);
+  rounded[0] += diff;
   return rounded.map((v) => Math.max(0, v));
+}
+
+// Back-compat wrapper: old code passes (splits[]) but the splits no longer drive
+// the calculation — we now pick the percentage table by paidCount alone.
+function roundPayoutsToTens(splits, prizePool, buyIn = 30) {
+  return computePayouts(prizePool, buyIn, splits.length);
+}
+
+// ============ BOUNTY + SCORING HELPERS ============
+
+// Per the locked league rules:
+// - Bounty is in the player's birth month, EXCEPT:
+// - June birthdays are bountied in May (June = R1 final)
+// - December birthdays are bountied in November (December = R2 final)
+function getBountiedMonthFor(birthMonth) {
+  if (!birthMonth) return null;
+  if (birthMonth === 6) return 5;
+  if (birthMonth === 12) return 11;
+  return birthMonth;
+}
+
+// Given a roster and a game date (YYYY-MM-DD), return the player IDs who should
+// be bountied for a game played that month.
+function computeBountyHolders(playersRoster, gameDate) {
+  if (!gameDate) return [];
+  const month = parseInt(gameDate.slice(5, 7), 10);
+  if (!month) return [];
+  return playersRoster
+    .filter((p) => p.birthday && getBountiedMonthFor(p.birthday.month) === month)
+    .map((p) => p.id);
+}
+
+// Slugify a display name the same way the database does, so we can map between
+// in-game display names and Firestore player IDs.
+function slugifyName(name) {
+  return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// Compute the per-player points for a league game given:
+//   attendees: [{ name, ... }, ...] of players who played
+//   finishOrder: [name, name, ...] in finishing order, 1st first
+//   bountiedNames: Set of names who were bountied at start of game
+//   knockedOutBy: { eliminatedName: knockerOuterName }
+//   isFinal: boolean (finals award no league points)
+// Returns { [name]: pointsTotal }
+function computePointsAwarded({ attendees, finishOrder, bountiedNames, knockedOutBy, isFinal }) {
+  if (isFinal) return {}; // Finals don't award league points
+  const points = {};
+  const POSITION_BONUSES = [8000, 5000, 3000, 1000, 500];
+  // Base 2000 turn-up for everyone who played
+  attendees.forEach((p) => { points[p.name] = 2000; });
+  // Add position bonuses for top 5
+  finishOrder.slice(0, 5).forEach((name, i) => {
+    if (points[name] !== undefined) points[name] += POSITION_BONUSES[i];
+  });
+  // Add bounty +2000 for each bountied player who was knocked out
+  if (knockedOutBy && bountiedNames) {
+    Object.entries(knockedOutBy).forEach(([eliminated, knocker]) => {
+      if (bountiedNames.has(eliminated) && knocker && points[knocker] !== undefined) {
+        points[knocker] += 2000;
+      }
+    });
+  }
+  return points;
 }
 
 // ============ LEAGUE CONTEXT SCREEN ============
@@ -1651,7 +1760,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
 }
 
 // ============ MAIN TIMER ============
-function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
+function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser }) {
   const [levels, setLevels] = useState(config.levels);
   const [players, setPlayers] = useState(config.players); // [{name, sound}, ...]
   const [currentLevel, setCurrentLevel] = useState(0);
@@ -1670,6 +1779,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
   const [showEliminate, setShowEliminate] = useState(false);
   const [winner, setWinner] = useState(null);
   const [fullRoster, setFullRoster] = useState([]); // [{ name, sound }, ...] — for late-entry picker
+  const [knockedOutBy, setKnockedOutBy] = useState({}); // { eliminatedPlayerName: knockerOuterName }
+  const [pendingKnockout, setPendingKnockout] = useState(null); // player being eliminated, awaiting "who knocked them out?"
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [fullRosterFromDB, setFullRosterFromDB] = useState([]); // raw player docs from Firestore — for bounty calc
 
   const intervalRef = useRef(null);
 
@@ -1684,6 +1797,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
           .filter((p) => p.active !== false)
           .map((p) => ({ name: p.displayName, sound: p.sound || 'none' }));
         setFullRoster(active);
+        setFullRosterFromDB(allPlayers || []); // raw, for bounty calc
       } catch (e) { /* silent — late-entry falls back to free text */ }
     };
     if (window.GRP_DB) doLoad();
@@ -1903,8 +2017,24 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
 
   // Eliminate a player: voice "Goodbye <name>", then play their sound.
   // Also triggers "final 3" announcement and winner announcement when appropriate.
-  const eliminatePlayer = (player) => {
+  // Step 1: user taps OUT in the eliminate modal. Open the "who knocked them out?" picker.
+  const requestEliminate = (player) => {
     setShowEliminate(false);
+    setPendingKnockout(player);
+  };
+
+  // Step 2: user has chosen a knocker-outer (or skipped). Now actually eliminate.
+  const confirmEliminate = (knockerOuterName) => {
+    const player = pendingKnockout;
+    if (!player) return;
+    setPendingKnockout(null);
+    if (knockerOuterName) {
+      setKnockedOutBy((prev) => ({ ...prev, [player.name]: knockerOuterName }));
+    }
+    doEliminate(player);
+  };
+
+  const doEliminate = (player) => {
     const remainingAfter = activePlayers.length - 1;
     setEliminatedPlayers((prev) => [...prev, player.name]);
 
@@ -1944,6 +2074,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
       }, 2500);
     }
   };
+
+  // Keep `eliminatePlayer` as a back-compat alias used by some places (e.g. eliminate modal OUT button).
+  // It now goes through the picker flow.
+  const eliminatePlayer = requestEliminate;
 
   // Un-eliminate (in case of misclick)
   const restorePlayer = (name) => {
@@ -2071,10 +2205,6 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
               <div className="font-display text-3xl gold-text">
                 {config.gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE GAME'}
               </div>
-              <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
-                {activePlayers.length}/{players.length} LEFT
-                {totalRebuys > 0 && <span className="text-yellow-300/80"> · {totalRebuys} REBUY{totalRebuys === 1 ? '' : 'S'}</span>}
-              </div>
             </div>
             <div className="flex gap-2 flex-wrap justify-end">
               <button
@@ -2115,34 +2245,34 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
           </div>
 
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12 mb-6">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
               <div>
-                <div className="font-mono text-xs text-yellow-500/60 tracking-widest">LEVEL</div>
-                <div className="font-display text-4xl sm:text-5xl gold-text leading-none">
+                <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">LEVEL</div>
+                <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {(currentLevel + 1).toString().padStart(2, '0')}
-                  <span className="text-xl sm:text-2xl text-yellow-500/40"> / {levels.length}</span>
+                  <span className="text-2xl sm:text-3xl text-yellow-500/40"> / {levels.length}</span>
                 </div>
               </div>
               <div className="text-center">
-                <div className="font-mono text-xs text-emerald-300/60 tracking-widest">REMAINING</div>
-                <div className="font-display text-4xl sm:text-5xl text-emerald-200 leading-none">
+                <div className="font-mono text-[11px] sm:text-xs text-emerald-300/70 tracking-widest mb-1">REMAINING</div>
+                <div className="font-display text-5xl sm:text-6xl text-emerald-200 leading-none">
                   {activePlayers.length}
                 </div>
-                <div className="font-mono text-xs text-emerald-300/40 mt-1">of {players.length}</div>
+                <div className="font-mono text-[11px] text-emerald-300/40 mt-1">of {players.length}</div>
               </div>
               <div className="text-center sm:text-right">
-                <div className="font-mono text-xs text-emerald-300/60 tracking-widest">AVG STACK</div>
-                <div className="font-display text-4xl sm:text-5xl text-emerald-200 leading-none">
+                <div className="font-mono text-[11px] sm:text-xs text-emerald-300/70 tracking-widest mb-1">AVG STACK</div>
+                <div className="font-display text-5xl sm:text-6xl text-emerald-200 leading-none">
                   {activePlayers.length > 0 ? avgStack.toLocaleString() : '—'}
                 </div>
               </div>
               <div className="text-right">
-                <div className="font-mono text-xs text-yellow-300/70 tracking-widest">POT</div>
-                <div className="font-display text-4xl sm:text-5xl gold-text leading-none">
+                <div className="font-mono text-[11px] sm:text-xs text-yellow-300/80 tracking-widest mb-1">POT</div>
+                <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   £{prizePool.toLocaleString()}
                 </div>
                 {totalRebuys > 0 && (
-                  <div className="font-mono text-xs text-yellow-300/40 mt-1">
+                  <div className="font-mono text-[11px] text-yellow-300/50 mt-1">
                     +{totalRebuys} rebuy{totalRebuys === 1 ? '' : 's'}
                   </div>
                 )}
@@ -2398,18 +2528,33 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
               <div className="space-y-2">
                 {(() => {
                   const splits = PAYOUT_STRUCTURES[payoutKey].splits;
-                  const amounts = roundPayoutsToTens(splits, prizePool);
+                  const paidCount = splits.length;
+                  const amounts = computePayouts(prizePool, config.buyIn, paidCount);
                   const places = ['1st', '2nd', '3rd', '4th', '5th'];
                   const colors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
-                  return splits.map((pct, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/30 border border-yellow-500/10">
-                      <div className="flex items-center gap-3">
-                        <div className={`font-display text-3xl ${colors[i]}`}>{places[i]}</div>
-                        <div className="font-mono text-xs text-yellow-100/50">{pct}%</div>
+                  return splits.map((pct, i) => {
+                    const hasBuyInFloor = paidCount >= 4;
+                    const isLastPlace = i === paidCount - 1 && paidCount > 1;
+                    let label;
+                    if (paidCount === 1) {
+                      label = 'winner takes all';
+                    } else if (hasBuyInFloor && isLastPlace) {
+                      label = 'buy-in back';
+                    } else if (hasBuyInFloor) {
+                      label = `${pct}% of rem`;
+                    } else {
+                      label = `${pct}% of pot`;
+                    }
+                    return (
+                      <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/30 border border-yellow-500/10">
+                        <div className="flex items-center gap-3">
+                          <div className={`font-display text-3xl ${colors[i]}`}>{places[i]}</div>
+                          <div className="font-mono text-xs text-yellow-100/50">{label}</div>
+                        </div>
+                        <div className="font-display text-3xl gold-text">£{amounts[i].toLocaleString()}</div>
                       </div>
-                      <div className="font-display text-3xl gold-text">£{amounts[i].toLocaleString()}</div>
-                    </div>
-                  ));
+                    );
+                  });
                 })()}
               </div>
 
@@ -2600,14 +2745,14 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
                       </div>
                       <button
                         onClick={() => addRebuy(player.name)}
-                        className="px-3 py-2 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-100 font-display text-base hover:bg-yellow-500/25"
+                        className="px-5 py-2 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-100 font-display text-base hover:bg-yellow-500/25 min-w-[90px]"
                         title="Rebuy"
                       >
                         REBUY
                       </button>
                       <button
                         onClick={() => eliminatePlayer(player)}
-                        className="px-3 py-2 rounded-lg bg-red-900/30 border border-red-500/40 text-red-100 font-display text-base hover:bg-red-700/40"
+                        className="px-5 py-2 rounded-lg bg-red-900/30 border border-red-500/40 text-red-100 font-display text-base hover:bg-red-700/40 min-w-[80px]"
                         title="Eliminate"
                       >
                         OUT
@@ -2620,6 +2765,57 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
             <div className="text-xs text-yellow-100/40 mt-3 font-mono text-center">
               REBUY puts £{config.buyIn} back in the pot.
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Knocker-outer picker — shown after tapping OUT, before actual elimination */}
+      {pendingKnockout && (
+        <div
+          onClick={() => confirmEliminate(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[85vh] flex flex-col"
+          >
+            <div className="font-display text-2xl gold-text mb-1">WHO KNOCKED OUT</div>
+            <div className="font-display text-3xl text-red-300 mb-4">{pendingKnockout.name}?</div>
+            <div className="text-yellow-100/60 text-sm mb-4 font-mono">
+              For bounty tracking. Tap a player or SKIP if unsure.
+            </div>
+            <div className="space-y-1.5 overflow-y-auto flex-1 pr-1">
+              {(() => {
+                // Bountied set for this game (using game date = today)
+                const today = new Date().toISOString().slice(0, 10);
+                const bountyIds = computeBountyHolders(fullRosterFromDB, today);
+                const bountyNames = new Set(
+                  fullRosterFromDB
+                    .filter((p) => bountyIds.includes(p.id))
+                    .map((p) => p.displayName)
+                );
+                return activePlayers
+                  .filter((p) => p.name !== pendingKnockout.name)
+                  .map((p) => (
+                    <button
+                      key={p.name}
+                      onClick={() => confirmEliminate(p.name)}
+                      className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 hover:bg-emerald-900/50 text-left"
+                    >
+                      <span className="text-emerald-100">{p.name}</span>
+                      {bountyNames.has(p.name) && (
+                        <span className="text-xs font-mono text-yellow-300/80">🎯 BOUNTIED</span>
+                      )}
+                    </button>
+                  ));
+              })()}
+            </div>
+            <button
+              onClick={() => confirmEliminate(null)}
+              className="mt-4 px-4 py-2 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50"
+            >
+              SKIP
+            </button>
           </div>
         </div>
       )}
@@ -2669,7 +2865,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
             <div className="max-w-md mx-auto space-y-2 mb-8">
               {(() => {
                 const splits = PAYOUT_STRUCTURES[payoutKey].splits;
-                const amounts = roundPayoutsToTens(splits, prizePool);
+                const paidCount = splits.length;
+                const amounts = computePayouts(prizePool, config.buyIn, paidCount);
                 const places = ['1st', '2nd', '3rd', '4th', '5th'];
                 const colors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
                 return splits.map((pct, i) => {
@@ -2692,7 +2889,14 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
               })()}
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <div className="flex flex-col sm:flex-row gap-3 justify-center flex-wrap">
+              <button
+                onClick={() => setShowSaveModal(true)}
+                className="control-btn px-8 py-3 rounded-full font-display text-xl text-white"
+                style={{ background: 'linear-gradient(135deg, #1ec890, #14a37b)' }}
+              >
+                SAVE GAME
+              </button>
               {config.gameType === 'league' && onViewLeague && (
                 <button
                   onClick={() => { setWinner(null); onViewLeague(); }}
@@ -2712,6 +2916,33 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Save game modal */}
+      {showSaveModal && winner && (
+        <SaveGameModal
+          gameType={config.gameType}
+          leagueContext={config.leagueContext}
+          config={config}
+          players={players}
+          finishOrder={[winner.name, ...[...eliminatedPlayers].reverse()]}
+          totalRebuys={totalRebuys}
+          rebuyCounts={rebuyCounts}
+          knockedOutBy={knockedOutBy}
+          payoutKey={payoutKey}
+          fbUser={fbUser}
+          fullRosterFromDB={fullRosterFromDB}
+          onClose={() => setShowSaveModal(false)}
+          onSaved={() => {
+            setShowSaveModal(false);
+            setWinner(null);
+            if (config.gameType === 'league' && onViewLeague) {
+              onViewLeague();
+            } else {
+              onReset();
+            }
+          }}
+        />
       )}
     </div>
   );
@@ -3667,6 +3898,380 @@ function ConfirmDialog({ title, message, requireType, onConfirm, onCancel }) {
             className="flex-1 px-4 py-2.5 rounded-full font-display text-base bg-red-600 text-white disabled:opacity-30"
           >
             CONFIRM
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ EDIT GAME MODAL ============
+// ============ SAVE GAME MODAL ============
+// Opens after a tournament finishes (from the winner overlay). Auto-populates
+// all the league/HR fields from the live game state, lets the admin review &
+// tweak, then writes to Firestore. Requires sign-in.
+function SaveGameModal({
+  // Game data from the timer
+  gameType,        // 'league' | 'highrollers'
+  leagueContext,   // { seasonId, gameNumber, isFinal, season } | null
+  config,          // { buyIn, ... }
+  players,         // [{ name, sound }, ...]
+  finishOrder,     // [name, name, ...] in finishing order, 1st first
+  totalRebuys,
+  rebuyCounts,     // { name: count }
+  knockedOutBy,    // { eliminatedName: knockerOuterName }
+  payoutKey,
+  // UI
+  fbUser,
+  fullRosterFromDB,
+  onClose,
+  onSaved,
+}) {
+  const playersById = {};
+  fullRosterFromDB.forEach((p) => { playersById[p.id] = p; });
+  const playersByName = {};
+  fullRosterFromDB.forEach((p) => { playersByName[p.displayName] = p; });
+
+  // Helper: resolve a display name to a Firestore player ID (or slugify as fallback)
+  const resolvePid = (name) => {
+    const exact = playersByName[name];
+    if (exact) return exact.id;
+    return slugifyName(name);
+  };
+
+  const isFinal = leagueContext?.isFinal === true;
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Auto-compute defaults from live game state
+  const initialAttendees = players.map((p) => resolvePid(p.name));
+  const initialFinishOrder = finishOrder.map(resolvePid);
+  const initialPlayerCount = players.length;
+  const initialPot = config.buyIn * (initialPlayerCount + totalRebuys);
+
+  // Bountied for today
+  const bountyIds = computeBountyHolders(fullRosterFromDB, today);
+  const bountyNames = new Set(
+    fullRosterFromDB.filter((p) => bountyIds.includes(p.id)).map((p) => p.displayName)
+  );
+
+  // Compute points
+  const initialPointsByName = computePointsAwarded({
+    attendees: players,
+    finishOrder,
+    bountiedNames: bountyNames,
+    knockedOutBy,
+    isFinal,
+  });
+  // Convert to PIDs
+  const initialPoints = {};
+  Object.entries(initialPointsByName).forEach(([name, pts]) => {
+    initialPoints[resolvePid(name)] = pts;
+  });
+
+  // Payouts (new rule: last paid place gets buy-in, rest split remaining)
+  const splits = PAYOUT_STRUCTURES[payoutKey].splits;
+  const payoutAmounts = computePayouts(initialPot, config.buyIn, splits.length);
+  const initialPayouts = {};
+  payoutAmounts.forEach((amt, i) => {
+    if (amt > 0) initialPayouts[String(i + 1)] = amt;
+  });
+
+  // Per-player rebuys (mapped to PIDs)
+  const initialRebuysByPid = {};
+  Object.entries(rebuyCounts || {}).forEach(([name, count]) => {
+    if (count > 0) initialRebuysByPid[resolvePid(name)] = count;
+  });
+
+  // Form state
+  const [date, setDate] = useState(today);
+  const [pot, setPot] = useState(String(initialPot));
+  const [leagueMoney, setLeagueMoney] = useState(
+    isFinal ? '0' : String(Math.round(initialPot * 0.1))
+  );
+  const [subs, setSubs] = useState(String(initialPlayerCount * 3));
+  const [pointsAwarded, setPointsAwarded] = useState(initialPoints);
+  const [payouts, setPayouts] = useState(initialPayouts);
+  const [bountyClaims, setBountyClaims] = useState(() => {
+    // Auto-credit knockouts of bountied players
+    const claims = [];
+    Object.entries(knockedOutBy || {}).forEach(([eliminated, knocker]) => {
+      if (bountyNames.has(eliminated) && knocker) {
+        claims.push({
+          bountied: resolvePid(eliminated),
+          claimedBy: resolvePid(knocker),
+        });
+      }
+    });
+    return claims;
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [savedOk, setSavedOk] = useState(false);
+
+  // Compute game ID
+  const gameId = gameType === 'league'
+    ? `${leagueContext?.seasonId}-g${leagueContext?.gameNumber}`
+    : `hr-${Date.now()}`;
+
+  const updatePoints = (pid, val) => {
+    const num = parseInt(val);
+    const updated = { ...pointsAwarded };
+    if (isNaN(num) || num === 0) delete updated[pid];
+    else updated[pid] = num;
+    setPointsAwarded(updated);
+  };
+
+  const updatePayout = (place, val) => {
+    const num = parseFloat(val);
+    const updated = { ...payouts };
+    if (isNaN(num) || num === 0) delete updated[place];
+    else updated[place] = num;
+    setPayouts(updated);
+  };
+
+  const save = async () => {
+    if (!fbUser) {
+      setError('You must be signed in to save games.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      // Check for existing game with this ID
+      const existing = await window.GRP_DB.getGameById(gameId);
+      if (existing) {
+        setError(
+          `A game with ID "${gameId}" is already saved. Edit it via the league dashboard, or delete it first.`
+        );
+        setBusy(false);
+        return;
+      }
+
+      const gameDoc = {
+        id: gameId,
+        type: gameType,
+        seasonId: gameType === 'league' ? leagueContext.seasonId : null,
+        date,
+        gameNumber: gameType === 'league' ? leagueContext.gameNumber : null,
+        isFinal: isFinal,
+        buyIn: config.buyIn,
+        attendees: Object.keys(pointsAwarded),
+        rebuys: initialRebuysByPid,
+        totalRebuys,
+        finishOrder: initialFinishOrder,
+        pot: parseFloat(pot) || 0,
+        payouts,
+        leagueMoney: parseFloat(leagueMoney) || 0,
+        prizePool: parseFloat(pot) || 0,
+        subs: parseFloat(subs) || 0,
+        pointsAwarded,
+        bountyHolders: bountyIds,
+        bountyClaims,
+        notes: 'Saved from live timer.',
+      };
+
+      await window.GRP_DB.saveGame(gameDoc);
+      setSavedOk(true);
+      setBusy(false);
+      // Don't auto-close — let user see confirmation and tap done
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
+  if (savedOk) {
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-8 max-w-md w-full text-center">
+          <div className="font-display text-4xl gold-text mb-3">✓ SAVED</div>
+          <div className="text-emerald-100 mb-2">
+            Game <span className="font-mono text-emerald-300">{gameId}</span> recorded.
+          </div>
+          <div className="text-yellow-100/60 text-sm mb-6">
+            {gameType === 'league'
+              ? 'League standings will reflect this game.'
+              : 'High Rollers history updated.'}
+          </div>
+          <button
+            onClick={onSaved}
+            className="w-full px-6 py-3 rounded-full font-display text-xl text-black"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            DONE
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[92vh] overflow-y-auto">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="font-display text-3xl gold-text">
+              SAVE {gameType === 'league' ? 'LEAGUE' : 'HIGH ROLLERS'} GAME
+            </div>
+            <div className="text-yellow-100/40 font-mono text-xs mt-1">
+              Will save as <span className="text-emerald-300">{gameId}</span>
+              {isFinal && <span className="text-yellow-300 ml-2">FINAL — no league points</span>}
+            </div>
+          </div>
+          <button onClick={onClose} disabled={busy} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        </div>
+
+        {!fbUser && (
+          <div className="mb-4 p-3 rounded-lg bg-red-950/30 border border-red-500/30 text-red-200 font-mono text-sm">
+            ⚠ You must be signed in as admin to save games. Sign in from the home page first.
+          </div>
+        )}
+
+        {/* Date + money */}
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">DATE</div>
+            <input
+              type="text"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">REBUYS</div>
+            <div className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/10 text-yellow-100/60 font-mono text-sm">
+              {totalRebuys} <span className="text-yellow-100/30">(read-only, from game)</span>
+            </div>
+          </div>
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">POT £</div>
+            <input
+              type="number"
+              value={pot}
+              onChange={(e) => setPot(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+          <div>
+            <div className="flex justify-between items-baseline mb-1">
+              <span className="font-mono text-xs text-yellow-100/40 tracking-widest">LEAGUE £</span>
+              <button
+                onClick={() => setLeagueMoney(String(Math.round((parseFloat(pot) || 0) * 0.1)))}
+                className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300"
+              >
+                = 10% pot
+              </button>
+            </div>
+            <input
+              type="number"
+              value={leagueMoney}
+              onChange={(e) => setLeagueMoney(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+          <div>
+            <div className="flex justify-between items-baseline mb-1">
+              <span className="font-mono text-xs text-yellow-100/40 tracking-widest">SUBS £</span>
+              <button
+                onClick={() => setSubs(String(initialPlayerCount * 3))}
+                className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300"
+              >
+                = £3 × {initialPlayerCount}
+              </button>
+            </div>
+            <input
+              type="number"
+              value={subs}
+              onChange={(e) => setSubs(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+        </div>
+
+        {/* Payouts */}
+        <div className="mb-5">
+          <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">PAYOUTS (£10 rounded)</div>
+          <div className="grid grid-cols-5 gap-2">
+            {[1, 2, 3, 4, 5].map((place) => (
+              <div key={place}>
+                <div className="font-mono text-xs text-yellow-100/40 mb-1">{place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`} £</div>
+                <input
+                  type="number"
+                  value={payouts[String(place)] || ''}
+                  onChange={(e) => updatePayout(String(place), e.target.value)}
+                  className="w-full px-2 py-1.5 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Points awarded */}
+        {!isFinal && (
+          <div className="mb-5">
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">
+              POINTS BY PLAYER
+            </div>
+            <div className="text-yellow-100/40 text-xs mb-2">
+              Auto-calculated from finish order + bounty awards. Tweak if needed.
+            </div>
+            <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
+              {Object.keys(pointsAwarded).map((pid) => {
+                const p = playersById[pid] || { displayName: pid };
+                const pos = initialFinishOrder.indexOf(pid);
+                const posLabel = pos >= 0 && pos < 5 ? ['1st', '2nd', '3rd', '4th', '5th'][pos] : '';
+                const isBountied = bountyIds.includes(pid);
+                return (
+                  <div key={pid} className="flex items-center gap-2 p-2 rounded bg-black/30">
+                    <span className="flex-1 text-emerald-100 text-sm truncate">
+                      {p.displayName}
+                      {posLabel && <span className="text-yellow-300/60 ml-2 font-mono text-xs">{posLabel}</span>}
+                      {isBountied && <span className="text-yellow-300/80 ml-2">🎯</span>}
+                    </span>
+                    <input
+                      type="number"
+                      value={pointsAwarded[pid] || ''}
+                      onChange={(e) => updatePoints(pid, e.target.value)}
+                      className="w-24 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm text-right focus:outline-none focus:border-yellow-500/50"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {isFinal && (
+          <div className="mb-5 p-3 rounded-lg bg-yellow-950/30 border border-yellow-500/20">
+            <div className="font-mono text-xs text-yellow-300 tracking-widest mb-1">FINAL — NO LEAGUE POINTS</div>
+            <div className="text-yellow-100/60 text-sm">
+              Finals don't award league points. Only the finish order, pot, and payouts will be saved.
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-3 p-3 rounded-lg bg-red-950/40 border border-red-500/40 text-red-200 font-mono text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm disabled:opacity-30"
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={save}
+            disabled={busy || !fbUser}
+            className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            {busy ? 'SAVING...' : 'SAVE GAME'}
           </button>
         </div>
       </div>

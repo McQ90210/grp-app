@@ -99,6 +99,12 @@ async function getAllHighRollerGames() {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+async function getGameById(id) {
+  const snap = await getDoc(doc(db, 'games', id));
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...snap.data() };
+}
+
 async function saveGame(game) {
   // game: full game record
   if (game.id) {
@@ -158,7 +164,7 @@ window.GRP_DB = {
   // Seasons
   getAllSeasons, getActiveSeason, upsertSeason,
   // Games
-  getGamesForSeason, getAllHighRollerGames, saveGame, deleteGame, subscribeToSeasonGames,
+  getGamesForSeason, getAllHighRollerGames, getGameById, saveGame, deleteGame, subscribeToSeasonGames,
   // Admin
   bulkImport,
 };
