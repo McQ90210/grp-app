@@ -1,4 +1,11 @@
 {
   "beans": { "label": "Beans", "file": "sounds/beans.mp3" },
-  "chicken": { "label": "Chicken", "file": "sounds/chicken.mp3" }
+  "boxer": { "label": "Boxer", "file": "sounds/boxer.mp3" },
+  "cactus": { "label": "Cactus", "file": "sounds/cactus.mp3" },
+  "chicken": { "label": "Chicken", "file": "sounds/chicken.mp3" },
+  "duck": { "label": "Duck", "file": "sounds/duck.mp3" },
+  "goat": { "label": "Goat", "file": "sounds/goat.mp3" },
+  "horn": { "label": "Horn", "file": "sounds/horn.mp3" },
+  "horse": { "label": "Horse", "file": "sounds/horse.mp3" },
+  "stfu": { "label": "STFU", "file": "sounds/stfu.mp3" }
 }
