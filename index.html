@@ -835,8 +835,266 @@ function roundPayoutsToTens(splits, prizePool) {
   return rounded.map((v) => Math.max(0, v));
 }
 
+// ============ LEAGUE CONTEXT SCREEN ============
+// Shown before the setup wizard for league games. Auto-detects active season
+// and next game number, lets user confirm or override.
+function LeagueContextScreen({ onConfirm, onBack }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [seasons, setSeasons] = useState([]);
+  const [games, setGames] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [seasonId, setSeasonId] = useState(null);
+  const [gameNumber, setGameNumber] = useState(1);
+  const [editing, setEditing] = useState(false); // false: confirm mode, true: override mode
+
+  useEffect(() => {
+    let cancelled = false;
+    const doLoad = async () => {
+      try {
+        const [allSeasons, allPlayers] = await Promise.all([
+          window.GRP_DB.getAllSeasons(),
+          window.GRP_DB.getAllPlayers(),
+        ]);
+        if (cancelled) return;
+        setSeasons(allSeasons);
+        setPlayers(allPlayers);
+        const active = allSeasons.find(s => s.status === 'active') || allSeasons[0];
+        if (active) {
+          setSeasonId(active.id);
+          const seasonGames = await window.GRP_DB.getGamesForSeason(active.id);
+          if (cancelled) return;
+          setGames(seasonGames);
+          // Next un-played game number
+          const played = new Set(seasonGames.map(g => g.gameNumber));
+          let next = 1;
+          while (played.has(next) && next <= active.totalGames) next++;
+          setGameNumber(Math.min(next, active.totalGames));
+        }
+        setLoading(false);
+      } catch (e) {
+        if (!cancelled) {
+          setError(e.message);
+          setLoading(false);
+        }
+      }
+    };
+    if (window.GRP_DB) doLoad();
+    else {
+      const onReady = () => doLoad();
+      window.addEventListener('firebase-ready', onReady);
+      const t = setTimeout(() => {
+        if (!cancelled && !window.GRP_DB) { setError('Firebase did not load.'); setLoading(false); }
+      }, 8000);
+      return () => {
+        cancelled = true;
+        window.removeEventListener('firebase-ready', onReady);
+        clearTimeout(t);
+      };
+    }
+    return () => { cancelled = true; };
+  }, []);
+
+  // Re-load games when season changes
+  useEffect(() => {
+    if (!seasonId || !window.GRP_DB) return;
+    (async () => {
+      try {
+        const seasonGames = await window.GRP_DB.getGamesForSeason(seasonId);
+        setGames(seasonGames);
+      } catch (e) { setError(e.message); }
+    })();
+  }, [seasonId]);
+
+  const season = seasons.find(s => s.id === seasonId);
+  const isFinal = season && gameNumber === season.finalGameIndex;
+  const playersById = {};
+  players.forEach(p => { playersById[p.id] = p; });
+
+  // For finals: compute round-totals per player, sorted descending
+  const playerRoundTotals = (() => {
+    if (!isFinal) return [];
+    const totals = {};
+    games.forEach(g => {
+      Object.entries(g.pointsAwarded || {}).forEach(([pid, pts]) => {
+        totals[pid] = (totals[pid] || 0) + (pts || 0);
+      });
+    });
+    return Object.entries(totals)
+      .filter(([_, t]) => t > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([pid, total]) => ({ player: playersById[pid] || { displayName: pid, id: pid }, total }));
+  })();
+
+  const handleConfirm = () => {
+    onConfirm({
+      seasonId,
+      gameNumber,
+      isFinal,
+      season,
+      playerRoundTotals: isFinal ? playerRoundTotals : [],
+    });
+  };
+
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center p-4" style={{
+      background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
+      fontFamily: "'Inter', system-ui, sans-serif",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+        .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.02em; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .gold-text {
+          background: linear-gradient(135deg, #14a37b 0%, #1ec890 50%, #0e8c69 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .gold-border {
+          border: 1px solid rgba(20, 163, 123, 0.4);
+          box-shadow: 0 0 40px rgba(20, 163, 123, 0.15), inset 0 0 60px rgba(20, 163, 123, 0.05);
+        }
+      `}</style>
+
+      <div className="w-full max-w-xl">
+        <div className="text-center mb-8">
+          <button onClick={onBack} className="font-mono text-xs text-yellow-100/40 hover:text-yellow-100/80 mb-2">
+            ← change game type
+          </button>
+          <div className="font-display text-5xl gold-text mb-1">LEAGUE GAME</div>
+          <div className="font-mono text-xs text-emerald-200/60 tracking-widest">CONFIRM CONTEXT</div>
+        </div>
+
+        {loading ? (
+          <div className="text-center py-12 text-emerald-200/60 font-mono">Loading...</div>
+        ) : error ? (
+          <div className="text-center py-12 text-red-400 font-mono">{error}</div>
+        ) : seasons.length === 0 ? (
+          <div className="gold-border rounded-2xl p-6 bg-gradient-to-br from-emerald-950 to-black text-center">
+            <div className="text-yellow-100/80 mb-2">No seasons set up yet.</div>
+            <div className="text-yellow-100/40 text-xs font-mono">
+              Sign in as admin and import historical data, or contact the league organiser.
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="gold-border rounded-2xl p-6 bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur mb-6">
+              {!editing ? (
+                <>
+                  <div className="text-center mb-4">
+                    <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">SEASON</div>
+                    <div className="font-display text-3xl gold-text">{season?.name}</div>
+                  </div>
+                  <div className="text-center mb-5">
+                    <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">GAME</div>
+                    <div className="font-display text-5xl text-emerald-200">
+                      G{gameNumber}{isFinal && <span className="text-yellow-300 ml-2">— FINAL</span>}
+                    </div>
+                    <div className="text-yellow-100/40 text-xs font-mono mt-1">
+                      of {season?.totalGames}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <button
+                      onClick={() => setEditing(true)}
+                      className="text-emerald-300/80 hover:text-emerald-200 font-mono text-xs underline"
+                    >
+                      change
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">SEASON</div>
+                    <select
+                      value={seasonId || ''}
+                      onChange={(e) => setSeasonId(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 focus:outline-none focus:border-yellow-500/50"
+                    >
+                      {seasons.map(s => (
+                        <option key={s.id} value={s.id} style={{ background: '#0a3d1f' }}>
+                          {s.name} {s.status === 'active' ? '(active)' : '(complete)'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">
+                      GAME NUMBER (1 to {season?.totalGames})
+                    </div>
+                    <input
+                      type="number"
+                      min="1"
+                      max={season?.totalGames}
+                      value={gameNumber}
+                      onChange={(e) => setGameNumber(parseInt(e.target.value) || 1)}
+                      className="w-full px-3 py-2.5 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 focus:outline-none focus:border-yellow-500/50"
+                    />
+                    {isFinal && (
+                      <div className="text-yellow-300/80 text-xs font-mono mt-2">
+                        This is the FINAL game of {season?.name}.
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setEditing(false)}
+                    className="text-emerald-300/80 hover:text-emerald-200 font-mono text-xs underline"
+                  >
+                    done
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Final game starting stacks preview */}
+            {isFinal && playerRoundTotals.length > 0 && (
+              <div className="gold-border rounded-2xl p-5 bg-gradient-to-br from-yellow-950/40 to-black/80 backdrop-blur mb-6">
+                <div className="font-mono text-xs text-yellow-300/80 tracking-widest mb-3">
+                  FINAL STARTING STACKS · POINTS + 10,000
+                </div>
+                <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                  {playerRoundTotals.map(({ player, total }, i) => (
+                    <div key={player.id} className="flex justify-between items-baseline gap-3 py-1 border-b border-yellow-500/10 last:border-0">
+                      <div className="flex gap-2 items-baseline">
+                        <span className="text-yellow-100/40 text-xs font-mono w-6">{i + 1}.</span>
+                        <span className="text-emerald-100">{player.displayName}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-yellow-100/40 font-mono text-xs mr-2">{total.toLocaleString()} pts</span>
+                        <span className="font-display text-xl text-yellow-300">
+                          {(total + 10000).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-yellow-100/40 text-xs font-mono mt-3">
+                  Each player starts with their round points + 10,000 chips.
+                  The 10,000 base is fixed for finals.
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={handleConfirm}
+              disabled={!seasonId}
+              className="w-full px-6 py-4 rounded-full font-display text-2xl text-black disabled:opacity-30"
+              style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+            >
+              CONTINUE TO SETUP
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============ SETUP WIZARD ============
-function SetupWizard({ onStart, customSounds, gameType = 'league', onBack }) {
+function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext = null, onBack }) {
+  const isFinal = leagueContext?.isFinal === true;
   const [step, setStep] = useState(0);
   const [buyIn, setBuyIn] = useState('20');
   const [stackSize, setStackSize] = useState('10000');
@@ -929,20 +1187,46 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', onBack }) {
   };
 
   const finish = () => {
+    // For finals: base stack is fixed at 10,000 plus each player's round points so far
+    const baseStack = isFinal ? 10000 : parseInt(stackSize);
+
+    // Compute per-player starting stacks
+    const playerStartingStacks = {};
+    if (isFinal && leagueContext?.playerRoundTotals) {
+      // Map round totals by displayName for quick lookup
+      const totalsByName = {};
+      leagueContext.playerRoundTotals.forEach(({ player, total }) => {
+        totalsByName[player.displayName] = total;
+      });
+      playersArray.forEach(p => {
+        const pts = totalsByName[p.name] || 0;
+        playerStartingStacks[p.name] = pts + 10000;
+      });
+    } else {
+      playersArray.forEach(p => { playerStartingStacks[p.name] = baseStack; });
+    }
+
+    // For blind structure: use avg starting stack (for finals it'll be higher than 10k)
+    const avgStartingStack = Math.round(
+      Object.values(playerStartingStacks).reduce((a, b) => a + b, 0) / playersArray.length
+    );
+
     const levels = generateBlindStructure(
       parseFloat(buyIn),
-      parseInt(stackSize),
+      avgStartingStack,
       playersArray.length,
       parseInt(duration),
       includeAntes
     );
     onStart({
-      gameType, // 'league' | 'highrollers'
+      gameType,
       buyIn: parseFloat(buyIn),
-      stackSize: parseInt(stackSize),
-      players: playersArray, // now objects with name + sound
+      stackSize: baseStack,
+      playerStartingStacks,
+      players: playersArray,
       duration: parseInt(duration),
       levels,
+      leagueContext, // pass through so the main timer & save flow know which season/game
     });
   };
 
@@ -1051,21 +1335,33 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', onBack }) {
               <div>
                 <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 text-center">STEP 2 OF 5</div>
                 <div className="font-display text-3xl gold-text text-center mb-2">STARTING STACK?</div>
-                <div className="text-yellow-100/50 text-center mb-8 text-sm">Chips each player starts with</div>
+                <div className="text-yellow-100/50 text-center mb-8 text-sm">
+                  {isFinal
+                    ? <>Base stack for FINAL <span className="text-yellow-300 font-bold">locked at 10,000</span><br/>+ each player's round points</>
+                    : 'Chips each player starts with'}
+                </div>
                 <div className="max-w-xs mx-auto">
                   <input
                     type="number"
-                    value={stackSize}
-                    onChange={(e) => setStackSize(e.target.value)}
+                    value={isFinal ? '10000' : stackSize}
+                    onChange={(e) => !isFinal && setStackSize(e.target.value)}
+                    disabled={isFinal}
                     autoFocus
-                    className="input-large text-5xl"
+                    className={`input-large text-5xl ${isFinal ? 'opacity-60' : ''}`}
                   />
                 </div>
-                <div className="flex gap-2 justify-center mt-4 flex-wrap">
-                  {['5000', '10000', '20000', '50000'].map((v) => (
-                    <button key={v} onClick={() => setStackSize(v)} className="px-4 py-1.5 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50">{parseInt(v).toLocaleString()}</button>
-                  ))}
-                </div>
+                {!isFinal && (
+                  <div className="flex gap-2 justify-center mt-4 flex-wrap">
+                    {['5000', '10000', '20000', '50000'].map((v) => (
+                      <button key={v} onClick={() => setStackSize(v)} className="px-4 py-1.5 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50">{parseInt(v).toLocaleString()}</button>
+                    ))}
+                  </div>
+                )}
+                {isFinal && (
+                  <div className="text-center mt-4 text-yellow-300/60 font-mono text-xs">
+                    Per-player starting stacks set on the previous screen.
+                  </div>
+                )}
               </div>
             )}
 
@@ -1580,8 +1876,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
   // Prize pool includes rebuys
   const totalEntries = players.length + totalRebuys;
   const prizePool = config.buyIn * totalEntries;
-  // Avg stack: total chips in play / players still in
-  const totalChipsInPlay = config.stackSize * totalEntries;
+  // Avg stack: sum of all starting stacks (per-player if set, else config.stackSize) + rebuy chips, ÷ active players
+  const baseChipsFromStarting = config.playerStartingStacks
+    ? Object.values(config.playerStartingStacks).reduce((a, b) => a + b, 0)
+    : config.stackSize * players.length;
+  const totalChipsInPlay = baseChipsFromStarting + (config.stackSize * totalRebuys);
   const avgStack = activePlayers.length > 0 ? Math.round(totalChipsInPlay / activePlayers.length) : 0;
 
   // Final 3 dramatic mode: when 3 or fewer remain and the field started larger.
@@ -2107,28 +2406,55 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
               <button onClick={() => setShowEliminate(false)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
             </div>
             <div className="text-yellow-100/60 text-sm mb-4">
-              Tap a player to eliminate them. Their goodbye will play.
+              Tap <span className="text-emerald-300 font-bold">REBUY</span> to put them back in,
+              or <span className="text-red-300 font-bold">OUT</span> to eliminate.
             </div>
             <div className="space-y-2 overflow-y-auto flex-1 pr-1">
               {activePlayers.length === 0 ? (
                 <div className="text-yellow-100/40 text-sm text-center py-8">No active players left.</div>
               ) : (
-                activePlayers.map((player) => (
-                  <button
-                    key={player.name}
-                    onClick={() => eliminatePlayer(player)}
-                    className="w-full flex items-center justify-between p-4 rounded-lg bg-emerald-950/40 border border-emerald-500/40 hover:bg-red-900/30 hover:border-red-500/50 transition-colors text-left"
-                  >
-                    <span className="text-emerald-100 text-lg">{player.name}</span>
-                    {player.sound && player.sound !== 'none' && (
-                      <span className="text-xs font-mono text-yellow-300/60 flex items-center gap-1">
-                        <Music size={12} />
-                        {(customSounds[player.sound]?.label || SOUND_LIBRARY[player.sound]?.label || '').split(' ')[0]}
-                      </span>
-                    )}
-                  </button>
-                ))
+                activePlayers.map((player) => {
+                  const rebuys = rebuyCounts[player.name] || 0;
+                  return (
+                    <div
+                      key={player.name}
+                      className="flex items-center gap-2 p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/40"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-emerald-100 text-lg truncate">{player.name}</div>
+                        <div className="flex items-center gap-2 text-xs font-mono">
+                          {rebuys > 0 && (
+                            <span className="text-yellow-300/80">+{rebuys} rebuy{rebuys > 1 ? 's' : ''}</span>
+                          )}
+                          {player.sound && player.sound !== 'none' && (
+                            <span className="text-yellow-300/60 flex items-center gap-1">
+                              <Music size={11} />
+                              {(customSounds[player.sound]?.label || SOUND_LIBRARY[player.sound]?.label || '').split(' ')[0]}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => addRebuy(player.name)}
+                        className="px-3 py-2 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-100 font-display text-base hover:bg-yellow-500/25"
+                        title="Rebuy"
+                      >
+                        REBUY
+                      </button>
+                      <button
+                        onClick={() => eliminatePlayer(player)}
+                        className="px-3 py-2 rounded-lg bg-red-900/30 border border-red-500/40 text-red-100 font-display text-base hover:bg-red-700/40"
+                        title="Eliminate"
+                      >
+                        OUT
+                      </button>
+                    </div>
+                  );
+                })
               )}
+            </div>
+            <div className="text-xs text-yellow-100/40 mt-3 font-mono text-center">
+              REBUY puts £{buyIn} back in the pot.
             </div>
           </div>
         </div>
@@ -2413,9 +2739,180 @@ function GameTypePicker({ onPick }) {
   );
 }
 
+// ============ HIGH ROLLERS HISTORY ============
+// Simpler view: just buy-in, position, winnings per player across all High Rollers games.
+function HighRollersHistory({ onBack, fbUser }) {
+  const [games, setGames] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const doLoad = async () => {
+      try {
+        const [allGames, allPlayers] = await Promise.all([
+          window.GRP_DB.getAllHighRollerGames(),
+          window.GRP_DB.getAllPlayers(),
+        ]);
+        if (cancelled) return;
+        setGames(allGames);
+        setPlayers(allPlayers);
+        setLoading(false);
+      } catch (e) {
+        if (!cancelled) {
+          setError(e.message);
+          setLoading(false);
+        }
+      }
+    };
+    if (window.GRP_DB) doLoad();
+    else {
+      const onReady = () => doLoad();
+      window.addEventListener('firebase-ready', onReady);
+      const t = setTimeout(() => {
+        if (!cancelled && !window.GRP_DB) {
+          setError('Firebase did not load.');
+          setLoading(false);
+        }
+      }, 8000);
+      return () => {
+        cancelled = true;
+        window.removeEventListener('firebase-ready', onReady);
+        clearTimeout(t);
+      };
+    }
+    return () => { cancelled = true; };
+  }, []);
+
+  const playersById = {};
+  players.forEach((p) => { playersById[p.id] = p; });
+
+  // Compute per-player stats across all HR games
+  const playerStats = {};
+  games.forEach((g) => {
+    (g.attendees || []).forEach((pid) => {
+      if (!playerStats[pid]) playerStats[pid] = { gamesPlayed: 0, buyIns: 0, winnings: 0, wins: 0 };
+      playerStats[pid].gamesPlayed += 1;
+      playerStats[pid].buyIns += (g.buyIn || 30) * (1 + (g.rebuys?.[pid] || 0));
+    });
+    Object.entries(g.payouts || {}).forEach(([place, amount]) => {
+      const pos = parseInt(place);
+      const pid = (g.finishOrder || [])[pos - 1];
+      if (pid && playerStats[pid]) {
+        playerStats[pid].winnings += amount || 0;
+        if (pos === 1) playerStats[pid].wins += 1;
+      }
+    });
+  });
+
+  const playerRows = Object.entries(playerStats)
+    .map(([pid, stats]) => ({
+      player: playersById[pid] || { displayName: pid, id: pid },
+      ...stats,
+      net: stats.winnings - stats.buyIns,
+    }))
+    .sort((a, b) => b.net - a.net);
+
+  return (
+    <div className="min-h-screen w-full" style={{
+      background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
+      fontFamily: "'Inter', system-ui, sans-serif",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+        .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.02em; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .gold-text {
+          background: linear-gradient(135deg, #14a37b 0%, #1ec890 50%, #0e8c69 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .gold-border {
+          border: 1px solid rgba(20, 163, 123, 0.4);
+          box-shadow: 0 0 40px rgba(20, 163, 123, 0.15);
+        }
+      `}</style>
+      <div className="p-4 sm:p-8 max-w-[1200px] mx-auto">
+        <div className="mb-6">
+          <button onClick={onBack} className="font-mono text-xs text-yellow-100/40 hover:text-yellow-100/80 mb-2">
+            ← back
+          </button>
+          <div className="font-display text-4xl gold-text">HIGH ROLLERS</div>
+          <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
+            CASUAL SIDE GAMES · {games.length} GAME{games.length === 1 ? '' : 'S'}
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="text-center py-16 text-emerald-200/60 font-mono">Loading...</div>
+        ) : error ? (
+          <div className="text-center py-16 text-red-400 font-mono">Error: {error}</div>
+        ) : games.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="font-display text-3xl text-yellow-100/40 mb-3">NO GAMES YET</div>
+            <div className="text-yellow-100/60 font-mono text-sm max-w-md mx-auto">
+              High Rollers games will appear here once you've played some.
+              Run a tournament from the home screen with "High Rollers" selected.
+            </div>
+          </div>
+        ) : (
+          <div className="gold-border rounded-2xl bg-black/40 backdrop-blur p-6">
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-4">PLAYER STANDINGS BY NET PROFIT</div>
+            <div className="overflow-x-auto">
+              <table className="w-full" style={{ borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr className="text-left font-mono text-xs text-emerald-300 uppercase tracking-widest">
+                    <th className="py-3 px-4">Player</th>
+                    <th className="py-3 px-4 text-right">Games</th>
+                    <th className="py-3 px-4 text-right">Wins</th>
+                    <th className="py-3 px-4 text-right">Buy-ins</th>
+                    <th className="py-3 px-4 text-right">Winnings</th>
+                    <th className="py-3 px-4 text-right">Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {playerRows.map((r) => (
+                    <tr key={r.player.id} className="border-t border-emerald-500/10 font-mono text-sm">
+                      <td className="py-3 px-4 text-emerald-100">{r.player.displayName}</td>
+                      <td className="py-3 px-4 text-right text-yellow-100/80">{r.gamesPlayed}</td>
+                      <td className="py-3 px-4 text-right text-yellow-100/80">{r.wins}</td>
+                      <td className="py-3 px-4 text-right text-yellow-100/80">£{r.buyIns}</td>
+                      <td className="py-3 px-4 text-right text-emerald-300">£{Math.round(r.winnings)}</td>
+                      <td className={`py-3 px-4 text-right font-bold ${r.net >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
+                        {r.net >= 0 ? '+' : ''}£{Math.round(r.net)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-emerald-500/10">
+              <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">RECENT GAMES</div>
+              <div className="space-y-2">
+                {games.slice(0, 10).map((g) => (
+                  <div key={g.id} className="flex justify-between items-center p-3 rounded-lg bg-black/40 border border-emerald-500/10 font-mono text-sm">
+                    <div className="text-yellow-100/80">{g.date || 'unknown date'}</div>
+                    <div className="text-emerald-100">{g.attendees?.length || 0} players · £{g.pot || 0} pot</div>
+                    <div className="text-emerald-300">
+                      Winner: {(playersById[g.finishOrder?.[0]]?.displayName) || '—'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============ LEAGUE DASHBOARD ============
 // Shows the season-by-season standings table — spreadsheet-style view of all games.
-function LeagueDashboard({ onBack, fbUser, gameType }) {
+function LeagueDashboard({ onBack, fbUser }) {
   const [seasons, setSeasons] = useState([]);
   const [activeSeasonId, setActiveSeasonId] = useState(null);
   const [players, setPlayers] = useState([]);
@@ -2424,6 +2921,8 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
   const [error, setError] = useState(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   const [showImport, setShowImport] = useState(false);
+  const [editingGame, setEditingGame] = useState(null);
+  const [showDeleteSeasonConfirm, setShowDeleteSeasonConfirm] = useState(false);
 
   // Load seasons + players on mount — wait for Firebase if it hasn't loaded yet
   useEffect(() => {
@@ -2535,11 +3034,11 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
           border: 1px solid rgba(20, 163, 123, 0.4);
           box-shadow: 0 0 40px rgba(20, 163, 123, 0.15), inset 0 0 60px rgba(20, 163, 123, 0.05);
         }
-        .league-table { border-collapse: collapse; }
+        .league-table { border-collapse: collapse; width: 100%; }
         .league-table th, .league-table td {
-          padding: 6px 8px;
+          padding: 10px 14px;
           font-family: 'JetBrains Mono', monospace;
-          font-size: 11px;
+          font-size: 14px;
           border-right: 1px solid rgba(255, 255, 255, 0.05);
           white-space: nowrap;
         }
@@ -2547,6 +3046,7 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
           background: rgba(0, 0, 0, 0.5);
           color: #14a37b;
           font-weight: 700;
+          font-size: 13px;
           text-transform: uppercase;
           letter-spacing: 0.1em;
           position: sticky;
@@ -2564,6 +3064,7 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
           background: rgba(20, 163, 123, 0.12);
           font-weight: 700;
           color: #1ec890;
+          font-size: 15px;
         }
         .league-table tr:hover td:not(.sticky-col):not(.total-col) {
           background: rgba(20, 163, 123, 0.06);
@@ -2572,18 +3073,44 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
           background: rgba(20, 163, 123, 0.08);
           color: #1ec890;
           border-top: 1px solid rgba(20, 163, 123, 0.3);
+          font-size: 12px;
         }
+        /* Position-coloured rows for top 5 */
+        .league-table tr.pos-1 td.sticky-col {
+          background: linear-gradient(90deg, rgba(244, 208, 63, 0.18), rgba(2, 10, 6, 0.95) 70%);
+          color: #f4d03f;
+        }
+        .league-table tr.pos-2 td.sticky-col {
+          background: linear-gradient(90deg, rgba(192, 192, 192, 0.15), rgba(2, 10, 6, 0.95) 70%);
+          color: #d4d4d4;
+        }
+        .league-table tr.pos-3 td.sticky-col {
+          background: linear-gradient(90deg, rgba(205, 127, 50, 0.18), rgba(2, 10, 6, 0.95) 70%);
+          color: #d4924a;
+        }
+        .league-table tr.pos-4 td.sticky-col {
+          background: linear-gradient(90deg, rgba(20, 163, 123, 0.12), rgba(2, 10, 6, 0.95) 70%);
+          color: #5eead4;
+        }
+        .league-table tr.pos-5 td.sticky-col {
+          background: linear-gradient(90deg, rgba(96, 165, 250, 0.10), rgba(2, 10, 6, 0.95) 70%);
+          color: #93c5fd;
+        }
+        .pos-num-1 { color: #f4d03f; font-weight: 700; }
+        .pos-num-2 { color: #d4d4d4; font-weight: 700; }
+        .pos-num-3 { color: #d4924a; font-weight: 700; }
+        .pos-num-4 { color: #5eead4; font-weight: 700; }
+        .pos-num-5 { color: #93c5fd; font-weight: 700; }
         .player-link {
-          color: #d1fae5;
           cursor: pointer;
         }
-        .player-link:hover { color: #14a37b; }
+        .player-link:hover { color: #1ec890 !important; }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
         ::-webkit-scrollbar-thumb { background: rgba(20, 163, 123, 0.4); border-radius: 4px; }
       `}</style>
 
-      <div className="p-4 sm:p-8 max-w-[1400px] mx-auto">
+      <div className="p-3 sm:p-6 max-w-[1800px] mx-auto">
         {/* Header */}
         <div className="flex justify-between items-start mb-6 gap-4 flex-wrap">
           <div>
@@ -2591,7 +3118,7 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
               ← back
             </button>
             <div className="font-display text-4xl gold-text">
-              {gameType === 'highrollers' ? 'HIGH ROLLERS HISTORY' : 'LEAGUE STANDINGS'}
+              LEAGUE STANDINGS
             </div>
             {activeSeason && (
               <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
@@ -2622,6 +3149,17 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
               className="px-4 py-2 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-100 font-mono text-xs hover:bg-yellow-500/30"
             >
               IMPORT SPREADSHEET
+            </button>
+          )}
+
+          {/* Admin: Delete season */}
+          {fbUser && activeSeasonId && games.length > 0 && (
+            <button
+              onClick={() => setShowDeleteSeasonConfirm(true)}
+              className="px-3 py-2 rounded-lg bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-900/60"
+              title="Delete this entire season"
+            >
+              DELETE SEASON
             </button>
           )}
         </div>
@@ -2660,36 +3198,50 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
                 <tr>
                   <th className="sticky-col text-left">Player</th>
                   {games.map(g => (
-                    <th key={g.id} className="text-center" title={g.date}>
+                    <th
+                      key={g.id}
+                      className="text-center"
+                      title={fbUser ? `Edit game ${g.gameNumber}` : g.date}
+                      style={fbUser ? { cursor: 'pointer' } : {}}
+                      onClick={fbUser ? () => setEditingGame(g) : null}
+                    >
                       G{g.gameNumber}
                       <div className="text-[9px] text-yellow-100/30 font-normal normal-case tracking-normal">
                         {g.date?.slice(5)}
                       </div>
+                      {fbUser && (
+                        <div className="text-[9px] text-emerald-400/60 font-normal normal-case tracking-normal mt-0.5">
+                          edit
+                        </div>
+                      )}
                     </th>
                   ))}
                   <th className="total-col text-right">Total</th>
                 </tr>
               </thead>
               <tbody>
-                {playerRows.map((row, i) => (
-                  <tr key={row.player.id}>
-                    <td className="sticky-col">
-                      <span className="player-link" onClick={() => setSelectedPlayerId(row.player.id)}>
-                        {i === 0 && <span className="text-yellow-300 mr-1 font-bold">1.</span>}
-                        {i === 1 && <span className="text-gray-300 mr-1 font-bold">2.</span>}
-                        {i === 2 && <span className="text-amber-600 mr-1 font-bold">3.</span>}
-                        {i > 2 && <span className="text-yellow-100/40 mr-1">{i + 1}.</span>}
-                        {row.player.displayName}
-                      </span>
-                    </td>
-                    {row.gamePoints.map((pts, gi) => (
-                      <td key={gi} className="text-center text-emerald-100/80">
-                        {pts === null ? '—' : pts >= 10000 ? <span className="text-emerald-300 font-bold">{pts.toLocaleString()}</span> : pts.toLocaleString()}
+                {playerRows.map((row, i) => {
+                  const pos = i + 1;
+                  const rowClass = pos <= 5 ? `pos-${pos}` : '';
+                  return (
+                    <tr key={row.player.id} className={rowClass}>
+                      <td className="sticky-col">
+                        <span className="player-link" onClick={() => setSelectedPlayerId(row.player.id)}>
+                          <span className={pos <= 5 ? `pos-num-${pos} mr-2` : 'text-yellow-100/40 mr-2'}>
+                            {pos}.
+                          </span>
+                          {row.player.displayName}
+                        </span>
                       </td>
-                    ))}
-                    <td className="total-col text-right">{row.total.toLocaleString()}</td>
-                  </tr>
-                ))}
+                      {row.gamePoints.map((pts, gi) => (
+                        <td key={gi} className="text-center text-emerald-100/80">
+                          {pts === null ? '—' : pts >= 10000 ? <span className="text-emerald-300 font-bold">{pts.toLocaleString()}</span> : pts.toLocaleString()}
+                        </td>
+                      ))}
+                      <td className="total-col text-right">{row.total.toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
                 {/* Aggregate rows */}
                 <tr className="totals-row">
                   <td className="sticky-col">Players</td>
@@ -2749,6 +3301,47 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
           games={games}
           season={activeSeason}
           onClose={() => setSelectedPlayerId(null)}
+        />
+      )}
+
+      {/* Edit game modal */}
+      {editingGame && (
+        <EditGameModal
+          game={editingGame}
+          players={players}
+          onClose={() => setEditingGame(null)}
+          onSaved={() => {
+            setEditingGame(null);
+            // Refresh games for the active season
+            if (activeSeasonId && window.GRP_DB) {
+              window.GRP_DB.getGamesForSeason(activeSeasonId).then(setGames);
+            }
+          }}
+        />
+      )}
+
+      {/* Delete season confirm */}
+      {showDeleteSeasonConfirm && activeSeason && (
+        <ConfirmDialog
+          title={`Delete ${activeSeason.name}?`}
+          message={`This will permanently delete the season and all ${games.length} games in it. Player records will not be deleted, but all points and game history for this season will be lost.`}
+          requireType="DELETE"
+          onConfirm={async () => {
+            try {
+              // Delete each game, then the season doc
+              const fb = window.GRP_FIREBASE;
+              for (const g of games) {
+                await window.GRP_DB.deleteGame(g.id);
+              }
+              await fb.deleteDoc(fb.doc(fb.db, 'seasons', activeSeason.id));
+              setShowDeleteSeasonConfirm(false);
+              window.location.reload();
+            } catch (e) {
+              setError(e.message);
+              setShowDeleteSeasonConfirm(false);
+            }
+          }}
+          onCancel={() => setShowDeleteSeasonConfirm(false)}
         />
       )}
 
@@ -2852,34 +3445,298 @@ function PlayerProfile({ playerId, players, games, season, onClose }) {
         {/* Points per game bar chart */}
         <div className="mb-4">
           <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">POINTS BY GAME</div>
-          <div className="flex items-end gap-1 h-32 p-2 rounded-lg bg-black/40 border border-emerald-500/10">
-            {games.map((g, i) => {
-              const pts = g.pointsAwarded?.[playerId];
-              const heightPct = pts ? (pts / maxPoints) * 100 : 0;
-              return (
-                <div key={g.id} className="flex-1 flex flex-col justify-end items-center relative group">
+          <div className="relative h-40 p-3 rounded-lg bg-black/40 border border-emerald-500/10">
+            <div className="flex items-end gap-1.5 h-full">
+              {games.map((g) => {
+                const pts = g.pointsAwarded?.[playerId];
+                const heightPct = pts ? Math.max(2, (pts / maxPoints) * 100) : 0;
+                return (
                   <div
-                    className="w-full rounded-t transition-all"
+                    key={g.id}
+                    className="flex-1 rounded-t transition-all relative group"
                     style={{
                       height: `${heightPct}%`,
-                      background: pts === maxPoints ? 'linear-gradient(180deg, #f4d03f, #d4ac0d)' : 'linear-gradient(180deg, #14a37b, #0e8c69)',
-                      minHeight: pts ? '2px' : '0',
+                      minHeight: pts ? '3px' : '0',
+                      background: pts === maxPoints
+                        ? 'linear-gradient(180deg, #f4d03f, #d4ac0d)'
+                        : pts && pts >= 10000
+                          ? 'linear-gradient(180deg, #1ec890, #0e8c69)'
+                          : 'linear-gradient(180deg, #14a37b, #0a6e52)',
                     }}
-                    title={pts ? `Game ${g.gameNumber}: ${pts.toLocaleString()}` : `Game ${g.gameNumber}: didn't play`}
+                    title={pts ? `G${g.gameNumber}: ${pts.toLocaleString()} pts` : `G${g.gameNumber}: did not play`}
                   />
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-          <div className="flex justify-between text-[9px] font-mono text-yellow-100/30 mt-1 px-2">
-            <span>G1</span>
-            <span>G{games.length}</span>
+          <div className="flex justify-between text-[10px] font-mono text-yellow-100/30 mt-1 px-2">
+            {games.map((g) => (
+              <span key={g.id}>G{g.gameNumber}</span>
+            ))}
           </div>
         </div>
 
         <div className="text-xs font-mono text-yellow-100/40 text-center">
           {season ? `Stats for ${season.name}` : ''}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ CONFIRM DIALOG (shared) ============
+// For destructive ops: requires typing "DELETE" to confirm.
+function ConfirmDialog({ title, message, requireType, onConfirm, onCancel }) {
+  const [typed, setTyped] = useState('');
+  const ok = requireType ? typed === requireType : true;
+  return (
+    <div onClick={onCancel} className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="rounded-2xl bg-gradient-to-br from-red-950/40 to-black p-6 max-w-sm w-full" style={{ border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+        <div className="font-display text-2xl text-red-300 mb-2">{title}</div>
+        <div className="text-yellow-100/80 text-sm mb-4">{message}</div>
+        {requireType && (
+          <>
+            <div className="text-yellow-100/40 text-xs font-mono mb-2">
+              Type <span className="text-red-300 font-bold">{requireType}</span> to confirm:
+            </div>
+            <input
+              type="text"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoFocus
+              className="w-full px-3 py-2 mb-4 rounded-lg bg-black/40 border border-red-500/30 text-red-100 font-mono focus:outline-none focus:border-red-400"
+            />
+          </>
+        )}
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm"
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!ok}
+            className="flex-1 px-4 py-2.5 rounded-full font-display text-base bg-red-600 text-white disabled:opacity-30"
+          >
+            CONFIRM
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ EDIT GAME MODAL ============
+function EditGameModal({ game, players, onClose, onSaved }) {
+  const playersById = {};
+  players.forEach(p => { playersById[p.id] = p; });
+
+  const [date, setDate] = useState(game.date || '');
+  const [pot, setPot] = useState(game.pot || 0);
+  const [leagueMoney, setLeagueMoney] = useState(game.leagueMoney || 0);
+  const [subs, setSubs] = useState(game.subs || 0);
+  const [totalRebuys, setTotalRebuys] = useState(game.totalRebuys || 0);
+  const [payouts, setPayouts] = useState({ ...(game.payouts || {}) });
+  const [pointsAwarded, setPointsAwarded] = useState({ ...(game.pointsAwarded || {}) });
+  const [finishOrder, setFinishOrder] = useState([...(game.finishOrder || [])]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const attendees = Object.keys(pointsAwarded);
+
+  const updatePoints = (pid, val) => {
+    const num = parseInt(val);
+    const updated = { ...pointsAwarded };
+    if (isNaN(num) || num === 0) delete updated[pid];
+    else updated[pid] = num;
+    setPointsAwarded(updated);
+  };
+  const updatePayout = (place, val) => {
+    const num = parseFloat(val);
+    const updated = { ...payouts };
+    if (isNaN(num) || num === 0) delete updated[place];
+    else updated[place] = num;
+    setPayouts(updated);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const updates = {
+        ...game,
+        date,
+        pot: parseFloat(pot) || 0,
+        leagueMoney: parseFloat(leagueMoney) || 0,
+        subs: parseFloat(subs) || 0,
+        totalRebuys: parseInt(totalRebuys) || 0,
+        payouts,
+        pointsAwarded,
+        finishOrder,
+        attendees: Object.keys(pointsAwarded),
+      };
+      await window.GRP_DB.saveGame(updates);
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
+  const doDelete = async () => {
+    setBusy(true);
+    try {
+      await window.GRP_DB.deleteGame(game.id);
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div onClick={busy ? null : onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="font-display text-3xl gold-text">
+              EDIT GAME {game.gameNumber}{game.isFinal && <span className="text-yellow-300 ml-2 text-xl">— FINAL</span>}
+            </div>
+            <div className="text-yellow-100/40 font-mono text-xs mt-1">{game.id}</div>
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        </div>
+
+        {/* Date + money */}
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">DATE</div>
+            <input
+              type="text"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              placeholder="2026-05-12"
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">REBUYS</div>
+            <input
+              type="number"
+              value={totalRebuys}
+              onChange={(e) => setTotalRebuys(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">POT £</div>
+            <input
+              type="number"
+              value={pot}
+              onChange={(e) => setPot(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">LEAGUE £</div>
+            <input
+              type="number"
+              value={leagueMoney}
+              onChange={(e) => setLeagueMoney(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">SUBS £</div>
+            <input
+              type="number"
+              value={subs}
+              onChange={(e) => setSubs(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+        </div>
+
+        {/* Payouts */}
+        <div className="mb-5">
+          <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">PAYOUTS</div>
+          <div className="grid grid-cols-5 gap-2">
+            {[1, 2, 3, 4, 5].map((place) => (
+              <div key={place}>
+                <div className="font-mono text-xs text-yellow-100/40 mb-1">{place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`} £</div>
+                <input
+                  type="number"
+                  value={payouts[String(place)] || ''}
+                  onChange={(e) => updatePayout(String(place), e.target.value)}
+                  className="w-full px-2 py-1.5 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Points awarded (per-player) */}
+        <div className="mb-5">
+          <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">POINTS BY PLAYER</div>
+          <div className="text-yellow-100/40 text-xs mb-2">Set 0 or blank to remove the player from this game.</div>
+          <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
+            {attendees.map((pid) => {
+              const p = playersById[pid] || { displayName: pid };
+              return (
+                <div key={pid} className="flex items-center gap-2 p-2 rounded bg-black/30">
+                  <span className="flex-1 text-emerald-100 text-sm truncate">{p.displayName}</span>
+                  <input
+                    type="number"
+                    value={pointsAwarded[pid] || ''}
+                    onChange={(e) => updatePoints(pid, e.target.value)}
+                    className="w-24 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm text-right focus:outline-none focus:border-yellow-500/50"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {error && <div className="text-red-400 font-mono text-sm mb-3">Error: {error}</div>}
+
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm disabled:opacity-30"
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={save}
+            disabled={busy}
+            className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            {busy ? 'Saving...' : 'SAVE CHANGES'}
+          </button>
+        </div>
+
+        <button
+          onClick={() => setShowDeleteConfirm(true)}
+          disabled={busy}
+          className="w-full px-4 py-2 rounded-full bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-900/60 disabled:opacity-30"
+        >
+          DELETE THIS GAME
+        </button>
+
+        {showDeleteConfirm && (
+          <ConfirmDialog
+            title="Delete game?"
+            message={`This will permanently remove Game ${game.gameNumber} from ${game.seasonId}. Player points and history for this game will be lost.`}
+            requireType="DELETE"
+            onConfirm={doDelete}
+            onCancel={() => setShowDeleteConfirm(false)}
+          />
+        )}
       </div>
     </div>
   );
@@ -2949,9 +3806,10 @@ function ImportModal({ onClose, onDone }) {
 }
 
 function App() {
-  // Route state: 'home' | 'setup' | 'timer' | 'league-info' | 'highrollers-info'
+  // Route state: 'home' | 'league-context' | 'setup' | 'timer' | 'league-info' | 'highrollers-info'
   const [route, setRoute] = useState('home');
   const [gameType, setGameType] = useState(null);
+  const [leagueContext, setLeagueContext] = useState(null);
   const [config, setConfig] = useState(null);
   const [customSounds, setCustomSounds] = useState({});
   const [showSignIn, setShowSignIn] = useState(false);
@@ -2963,14 +3821,19 @@ function App() {
 
   const handlePick = (type, action) => {
     setGameType(type);
-    if (action === 'setup') setRoute('setup');
-    else if (action === 'info') setRoute(type === 'highrollers' ? 'highrollers-info' : 'league-info');
+    if (action === 'setup') {
+      // League games go through context confirmation first
+      setRoute(type === 'league' ? 'league-context' : 'setup');
+    } else if (action === 'info') {
+      setRoute(type === 'highrollers' ? 'highrollers-info' : 'league-info');
+    }
   };
 
   const goHome = () => {
     setRoute('home');
     setGameType(null);
     setConfig(null);
+    setLeagueContext(null);
   };
 
   // Home: show picker + sign in
@@ -3001,9 +3864,25 @@ function App() {
     );
   }
 
-  // League info or High Rollers info
-  if (route === 'league-info' || route === 'highrollers-info') {
-    return <LeagueDashboard onBack={goHome} fbUser={fbUser} gameType={gameType} />;
+  // League info or High Rollers info — different components for each
+  if (route === 'league-info') {
+    return <LeagueDashboard onBack={goHome} fbUser={fbUser} />;
+  }
+  if (route === 'highrollers-info') {
+    return <HighRollersHistory onBack={goHome} fbUser={fbUser} />;
+  }
+
+  // League context confirmation (before setup wizard, for league games only)
+  if (route === 'league-context') {
+    return (
+      <LeagueContextScreen
+        onConfirm={(ctx) => {
+          setLeagueContext(ctx);
+          setRoute('setup');
+        }}
+        onBack={goHome}
+      />
+    );
   }
 
   // Setup or playing
@@ -3016,7 +3895,13 @@ function App() {
         gameType={gameType}
         fbUser={fbUser}
       />
-    : <SetupWizard customSounds={customSounds} gameType={gameType} onStart={setConfig} onBack={goHome} />;
+    : <SetupWizard
+        customSounds={customSounds}
+        gameType={gameType}
+        leagueContext={leagueContext}
+        onStart={setConfig}
+        onBack={goHome}
+      />;
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
