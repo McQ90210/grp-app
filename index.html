@@ -817,6 +817,24 @@ function defaultPayoutKey(numPlayers) {
   return '4';
 }
 
+// Round payout amounts to the nearest £10 while preserving the total prize pool.
+// Strategy: round all positions to nearest 10, then absorb any rounding difference
+// onto 1st place (so the winner gets the leftover, keeps the total honest).
+function roundPayoutsToTens(splits, prizePool) {
+  if (!prizePool || prizePool <= 0) return splits.map(() => 0);
+  // Round prize pool itself to nearest 10 first (anything below isn't paid out cleanly)
+  const targetTotal = Math.round(prizePool / 10) * 10;
+  // Compute raw amounts, then round each to nearest 10
+  const raw = splits.map((pct) => (prizePool * pct) / 100);
+  const rounded = raw.map((v) => Math.round(v / 10) * 10);
+  const sum = rounded.reduce((a, b) => a + b, 0);
+  const diff = targetTotal - sum; // could be negative
+  // Add the difference onto 1st place
+  if (rounded.length > 0) rounded[0] += diff;
+  // Safety: ensure no negative payouts
+  return rounded.map((v) => Math.max(0, v));
+}
+
 // ============ SETUP WIZARD ============
 function SetupWizard({ onStart, customSounds, gameType = 'league', onBack }) {
   const [step, setStep] = useState(0);
@@ -1278,7 +1296,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', onBack }) {
 }
 
 // ============ MAIN TIMER ============
-function PokerTimerMain({ config, onReset, customSounds }) {
+function PokerTimerMain({ config, onReset, customSounds, onViewLeague }) {
   const [levels, setLevels] = useState(config.levels);
   const [players, setPlayers] = useState(config.players); // [{name, sound}, ...]
   const [currentLevel, setCurrentLevel] = useState(0);
@@ -1915,20 +1933,21 @@ function PokerTimerMain({ config, onReset, customSounds }) {
               </div>
 
               <div className="space-y-2">
-                {PAYOUT_STRUCTURES[payoutKey].splits.map((pct, i) => {
-                  const amount = Math.round((prizePool * pct) / 100);
+                {(() => {
+                  const splits = PAYOUT_STRUCTURES[payoutKey].splits;
+                  const amounts = roundPayoutsToTens(splits, prizePool);
                   const places = ['1st', '2nd', '3rd', '4th', '5th'];
                   const colors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
-                  return (
+                  return splits.map((pct, i) => (
                     <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/30 border border-yellow-500/10">
                       <div className="flex items-center gap-3">
                         <div className={`font-display text-3xl ${colors[i]}`}>{places[i]}</div>
                         <div className="font-mono text-xs text-yellow-100/50">{pct}%</div>
                       </div>
-                      <div className="font-display text-3xl gold-text">£{amount.toLocaleString()}</div>
+                      <div className="font-display text-3xl gold-text">£{amounts[i].toLocaleString()}</div>
                     </div>
-                  );
-                })}
+                  ));
+                })()}
               </div>
 
               {/* Show eliminated order so far */}
@@ -2158,37 +2177,49 @@ function PokerTimerMain({ config, onReset, customSounds }) {
 
             {/* Payout breakdown */}
             <div className="max-w-md mx-auto space-y-2 mb-8">
-              {PAYOUT_STRUCTURES[payoutKey].splits.map((pct, i) => {
-                const amount = Math.round((prizePool * pct) / 100);
+              {(() => {
+                const splits = PAYOUT_STRUCTURES[payoutKey].splits;
+                const amounts = roundPayoutsToTens(splits, prizePool);
                 const places = ['1st', '2nd', '3rd', '4th', '5th'];
                 const colors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
-                // Look up name from finishing order
-                let placeName;
-                if (i === 0) placeName = winner.name;
-                else {
-                  // eliminatedPlayers is in elimination order; reverse for finishing order
-                  const reversed = [...eliminatedPlayers].reverse();
-                  placeName = reversed[i - 1] || '—';
-                }
-                return (
-                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/40 border border-yellow-500/10">
-                    <div className="flex items-center gap-3">
-                      <div className={`font-display text-2xl ${colors[i]}`}>{places[i]}</div>
-                      <div className="font-mono text-sm text-yellow-100/80">{placeName}</div>
+                return splits.map((pct, i) => {
+                  let placeName;
+                  if (i === 0) placeName = winner.name;
+                  else {
+                    const reversed = [...eliminatedPlayers].reverse();
+                    placeName = reversed[i - 1] || '—';
+                  }
+                  return (
+                    <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/40 border border-yellow-500/10">
+                      <div className="flex items-center gap-3">
+                        <div className={`font-display text-2xl ${colors[i]}`}>{places[i]}</div>
+                        <div className="font-mono text-sm text-yellow-100/80">{placeName}</div>
+                      </div>
+                      <div className="font-display text-2xl gold-text">£{amounts[i].toLocaleString()}</div>
                     </div>
-                    <div className="font-display text-2xl gold-text">£{amount.toLocaleString()}</div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
 
-            <button
-              onClick={() => { setWinner(null); onReset(); }}
-              className="control-btn px-8 py-3 rounded-full font-display text-xl text-black"
-              style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
-            >
-              NEW TOURNAMENT
-            </button>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              {config.gameType === 'league' && onViewLeague && (
+                <button
+                  onClick={() => { setWinner(null); onViewLeague(); }}
+                  className="control-btn px-8 py-3 rounded-full font-display text-xl text-black"
+                  style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+                >
+                  VIEW THE LEAGUE
+                </button>
+              )}
+              <button
+                onClick={() => { setWinner(null); onReset(); }}
+                className="control-btn px-8 py-3 rounded-full font-display text-xl text-black"
+                style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
+              >
+                NEW TOURNAMENT
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2394,30 +2425,50 @@ function LeagueDashboard({ onBack, fbUser, gameType }) {
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   const [showImport, setShowImport] = useState(false);
 
-  // Load seasons + players on mount
+  // Load seasons + players on mount — wait for Firebase if it hasn't loaded yet
   useEffect(() => {
-    (async () => {
-      if (!window.GRP_DB) {
-        setError('Firebase not loaded');
-        setLoading(false);
-        return;
-      }
+    let cancelled = false;
+
+    const doLoad = async () => {
       try {
         const [allSeasons, allPlayers] = await Promise.all([
           window.GRP_DB.getAllSeasons(),
           window.GRP_DB.getAllPlayers(),
         ]);
+        if (cancelled) return;
         setSeasons(allSeasons);
         setPlayers(allPlayers);
-        // Pick newest active season (or most recent overall)
         const active = allSeasons.find(s => s.status === 'active') || allSeasons[0];
         if (active) setActiveSeasonId(active.id);
         setLoading(false);
       } catch (e) {
-        setError(e.message);
-        setLoading(false);
+        if (!cancelled) {
+          setError(e.message);
+          setLoading(false);
+        }
       }
-    })();
+    };
+
+    if (window.GRP_DB) {
+      doLoad();
+    } else {
+      // Firebase still loading — wait for the ready event
+      const onReady = () => doLoad();
+      window.addEventListener('firebase-ready', onReady);
+      // Safety: if no Firebase after 8 seconds, show error
+      const timeout = setTimeout(() => {
+        if (!cancelled && !window.GRP_DB) {
+          setError('Firebase did not load. Check your internet connection.');
+          setLoading(false);
+        }
+      }, 8000);
+      return () => {
+        cancelled = true;
+        window.removeEventListener('firebase-ready', onReady);
+        clearTimeout(timeout);
+      };
+    }
+    return () => { cancelled = true; };
   }, []);
 
   // Load games for the selected season
@@ -2957,7 +3008,14 @@ function App() {
 
   // Setup or playing
   return config
-    ? <PokerTimerMain config={config} customSounds={customSounds} onReset={goHome} gameType={gameType} fbUser={fbUser} />
+    ? <PokerTimerMain
+        config={config}
+        customSounds={customSounds}
+        onReset={goHome}
+        onViewLeague={() => { setConfig(null); setRoute('league-info'); }}
+        gameType={gameType}
+        fbUser={fbUser}
+      />
     : <SetupWizard customSounds={customSounds} gameType={gameType} onStart={setConfig} onBack={goHome} />;
 }
 
