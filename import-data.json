@@ -346,14 +346,23 @@
       "id": "2025-r1",
       "name": "2025 \u2014 Round 1",
       "startDate": "2025-01-01",
-      "endDate": "2025-12-31",
-      "totalGames": 12,
-      "finalGameIndex": 12,
+      "endDate": "2025-06-30",
+      "totalGames": 6,
+      "finalGameIndex": 6,
       "status": "complete"
     },
     {
-      "id": "2026-r2",
-      "name": "2026 \u2014 Round 2",
+      "id": "2025-r2",
+      "name": "2025 \u2014 Round 2",
+      "startDate": "2025-07-01",
+      "endDate": "2025-12-31",
+      "totalGames": 6,
+      "finalGameIndex": 6,
+      "status": "complete"
+    },
+    {
+      "id": "2026-r1",
+      "name": "2026 \u2014 Round 1",
       "startDate": "2026-01-01",
       "endDate": "2026-06-30",
       "totalGames": 6,
@@ -672,7 +681,7 @@
       "seasonId": "2025-r1",
       "date": "2025-06-03",
       "gameNumber": 6,
-      "isFinal": false,
+      "isFinal": true,
       "buyIn": 30,
       "attendees": [
         "cactus",
@@ -727,11 +736,11 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2025-r1-g7",
+      "id": "2025-r2-g1",
       "type": "league",
-      "seasonId": "2025-r1",
+      "seasonId": "2025-r2",
       "date": "2025-07-01",
-      "gameNumber": 7,
+      "gameNumber": 1,
       "isFinal": false,
       "buyIn": 30,
       "attendees": [
@@ -792,11 +801,11 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2025-r1-g8",
+      "id": "2025-r2-g2",
       "type": "league",
-      "seasonId": "2025-r1",
+      "seasonId": "2025-r2",
       "date": "2025-08-12",
-      "gameNumber": 8,
+      "gameNumber": 2,
       "isFinal": false,
       "buyIn": 30,
       "attendees": [
@@ -855,11 +864,11 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2025-r1-g9",
+      "id": "2025-r2-g3",
       "type": "league",
-      "seasonId": "2025-r1",
+      "seasonId": "2025-r2",
       "date": "2025-09-03",
-      "gameNumber": 9,
+      "gameNumber": 3,
       "isFinal": false,
       "buyIn": 30,
       "attendees": [
@@ -916,11 +925,11 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2025-r1-g10",
+      "id": "2025-r2-g4",
       "type": "league",
-      "seasonId": "2025-r1",
+      "seasonId": "2025-r2",
       "date": "2025-10-07",
-      "gameNumber": 10,
+      "gameNumber": 4,
       "isFinal": false,
       "buyIn": 30,
       "attendees": [
@@ -983,11 +992,11 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2025-r1-g11",
+      "id": "2025-r2-g5",
       "type": "league",
-      "seasonId": "2025-r1",
+      "seasonId": "2025-r2",
       "date": "2025-11-03",
-      "gameNumber": 11,
+      "gameNumber": 5,
       "isFinal": false,
       "buyIn": 30,
       "attendees": [
@@ -1049,11 +1058,11 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2025-r1-g12",
+      "id": "2025-r2-g6",
       "type": "league",
-      "seasonId": "2025-r1",
+      "seasonId": "2025-r2",
       "date": "2025-12-03",
-      "gameNumber": 12,
+      "gameNumber": 6,
       "isFinal": true,
       "buyIn": 30,
       "attendees": [
@@ -1118,9 +1127,9 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2026-r2-g1",
+      "id": "2026-r1-g1",
       "type": "league",
-      "seasonId": "2026-r2",
+      "seasonId": "2026-r1",
       "date": "2026-01-06",
       "gameNumber": 1,
       "isFinal": false,
@@ -1174,9 +1183,9 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2026-r2-g2",
+      "id": "2026-r1-g2",
       "type": "league",
-      "seasonId": "2026-r2",
+      "seasonId": "2026-r1",
       "date": "2026-02-06",
       "gameNumber": 2,
       "isFinal": false,
@@ -1233,9 +1242,9 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2026-r2-g3",
+      "id": "2026-r1-g3",
       "type": "league",
-      "seasonId": "2026-r2",
+      "seasonId": "2026-r1",
       "date": "2026-03-04",
       "gameNumber": 3,
       "isFinal": false,
@@ -1304,9 +1313,9 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2026-r2-g4",
+      "id": "2026-r1-g4",
       "type": "league",
-      "seasonId": "2026-r2",
+      "seasonId": "2026-r1",
       "date": "2026-04-14",
       "gameNumber": 4,
       "isFinal": false,
@@ -1358,9 +1367,9 @@
       "notes": "Imported from spreadsheet. Finish order is best-effort inferred from points and may not match exact bust order."
     },
     {
-      "id": "2026-r2-g5",
+      "id": "2026-r1-g5",
       "type": "league",
-      "seasonId": "2026-r2",
+      "seasonId": "2026-r1",
       "date": "2026-05-12",
       "gameNumber": 5,
       "isFinal": false,

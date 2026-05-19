@@ -3075,32 +3075,16 @@ function LeagueDashboard({ onBack, fbUser }) {
           border-top: 1px solid rgba(20, 163, 123, 0.3);
           font-size: 12px;
         }
-        /* Position-coloured rows for top 5 */
-        .league-table tr.pos-1 td.sticky-col {
-          background: linear-gradient(90deg, rgba(244, 208, 63, 0.18), rgba(2, 10, 6, 0.95) 70%);
-          color: #f4d03f;
-        }
-        .league-table tr.pos-2 td.sticky-col {
-          background: linear-gradient(90deg, rgba(192, 192, 192, 0.15), rgba(2, 10, 6, 0.95) 70%);
-          color: #d4d4d4;
-        }
-        .league-table tr.pos-3 td.sticky-col {
-          background: linear-gradient(90deg, rgba(205, 127, 50, 0.18), rgba(2, 10, 6, 0.95) 70%);
-          color: #d4924a;
-        }
-        .league-table tr.pos-4 td.sticky-col {
-          background: linear-gradient(90deg, rgba(20, 163, 123, 0.12), rgba(2, 10, 6, 0.95) 70%);
-          color: #5eead4;
-        }
-        .league-table tr.pos-5 td.sticky-col {
-          background: linear-gradient(90deg, rgba(96, 165, 250, 0.10), rgba(2, 10, 6, 0.95) 70%);
-          color: #93c5fd;
-        }
+        /* Per-cell finishing-position colours (1st-5th in each individual game) */
+        .league-table td.place-1 { color: #f4d03f; font-weight: 700; }
+        .league-table td.place-2 { color: #d4d4d4; font-weight: 700; }
+        .league-table td.place-3 { color: #d4924a; font-weight: 700; }
+        .league-table td.place-4 { color: #5eead4; font-weight: 600; }
+        .league-table td.place-5 { color: #93c5fd; font-weight: 600; }
+        /* Coloured leaderboard rank numbers (top 3 only) */
         .pos-num-1 { color: #f4d03f; font-weight: 700; }
         .pos-num-2 { color: #d4d4d4; font-weight: 700; }
         .pos-num-3 { color: #d4924a; font-weight: 700; }
-        .pos-num-4 { color: #5eead4; font-weight: 700; }
-        .pos-num-5 { color: #93c5fd; font-weight: 700; }
         .player-link {
           cursor: pointer;
         }
@@ -3149,17 +3133,6 @@ function LeagueDashboard({ onBack, fbUser }) {
               className="px-4 py-2 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-100 font-mono text-xs hover:bg-yellow-500/30"
             >
               IMPORT SPREADSHEET
-            </button>
-          )}
-
-          {/* Admin: Delete season */}
-          {fbUser && activeSeasonId && games.length > 0 && (
-            <button
-              onClick={() => setShowDeleteSeasonConfirm(true)}
-              className="px-3 py-2 rounded-lg bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-900/60"
-              title="Delete this entire season"
-            >
-              DELETE SEASON
             </button>
           )}
         </div>
@@ -3222,22 +3195,30 @@ function LeagueDashboard({ onBack, fbUser }) {
               <tbody>
                 {playerRows.map((row, i) => {
                   const pos = i + 1;
-                  const rowClass = pos <= 5 ? `pos-${pos}` : '';
                   return (
-                    <tr key={row.player.id} className={rowClass}>
+                    <tr key={row.player.id}>
                       <td className="sticky-col">
-                        <span className="player-link" onClick={() => setSelectedPlayerId(row.player.id)}>
-                          <span className={pos <= 5 ? `pos-num-${pos} mr-2` : 'text-yellow-100/40 mr-2'}>
+                        <span className="player-link text-emerald-100" onClick={() => setSelectedPlayerId(row.player.id)}>
+                          <span className={pos <= 3 ? `pos-num-${pos} mr-2` : 'text-yellow-100/40 mr-2'}>
                             {pos}.
                           </span>
                           {row.player.displayName}
                         </span>
                       </td>
-                      {row.gamePoints.map((pts, gi) => (
-                        <td key={gi} className="text-center text-emerald-100/80">
-                          {pts === null ? '—' : pts >= 10000 ? <span className="text-emerald-300 font-bold">{pts.toLocaleString()}</span> : pts.toLocaleString()}
-                        </td>
-                      ))}
+                      {row.gamePoints.map((pts, gi) => {
+                        if (pts === null) {
+                          return <td key={gi} className="text-center text-yellow-100/30">—</td>;
+                        }
+                        // Find this player's finishing position in this game (from finishOrder)
+                        const g = games[gi];
+                        const finishPos = (g.finishOrder || []).indexOf(row.player.id);
+                        const posClass = finishPos >= 0 && finishPos < 5 ? `place-${finishPos + 1}` : '';
+                        return (
+                          <td key={gi} className={`text-center ${posClass || 'text-emerald-100/80'}`}>
+                            {pts.toLocaleString()}
+                          </td>
+                        );
+                      })}
                       <td className="total-col text-right">{row.total.toLocaleString()}</td>
                     </tr>
                   );
@@ -3317,6 +3298,7 @@ function LeagueDashboard({ onBack, fbUser }) {
               window.GRP_DB.getGamesForSeason(activeSeasonId).then(setGames);
             }
           }}
+          onRequestDeleteSeason={() => setShowDeleteSeasonConfirm(true)}
         />
       )}
 
@@ -3529,15 +3511,16 @@ function ConfirmDialog({ title, message, requireType, onConfirm, onCancel }) {
 }
 
 // ============ EDIT GAME MODAL ============
-function EditGameModal({ game, players, onClose, onSaved }) {
+function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason }) {
   const playersById = {};
   players.forEach(p => { playersById[p.id] = p; });
 
   const [date, setDate] = useState(game.date || '');
-  const [pot, setPot] = useState(game.pot || 0);
-  const [leagueMoney, setLeagueMoney] = useState(game.leagueMoney || 0);
-  const [subs, setSubs] = useState(game.subs || 0);
-  const [totalRebuys, setTotalRebuys] = useState(game.totalRebuys || 0);
+  // Preserve null/undefined as empty string so admin sees blank not 0 when data is missing
+  const [pot, setPot] = useState(game.pot == null ? '' : String(game.pot));
+  const [leagueMoney, setLeagueMoney] = useState(game.leagueMoney == null ? '' : String(game.leagueMoney));
+  const [subs, setSubs] = useState(game.subs == null ? '' : String(game.subs));
+  const [totalRebuys, setTotalRebuys] = useState(game.totalRebuys == null ? '' : String(game.totalRebuys));
   const [payouts, setPayouts] = useState({ ...(game.payouts || {}) });
   const [pointsAwarded, setPointsAwarded] = useState({ ...(game.pointsAwarded || {}) });
   const [finishOrder, setFinishOrder] = useState([...(game.finishOrder || [])]);
@@ -3546,6 +3529,16 @@ function EditGameModal({ game, players, onClose, onSaved }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const attendees = Object.keys(pointsAwarded);
+  const playerCount = attendees.length;
+
+  // Quick-fill helpers
+  const fillLeagueFromPot = () => {
+    const p = parseFloat(pot);
+    if (!isNaN(p)) setLeagueMoney(String(Math.round(p * 0.1)));
+  };
+  const fillSubsFromPlayers = () => {
+    setSubs(String(playerCount * 3));
+  };
 
   const updatePoints = (pid, val) => {
     const num = parseInt(val);
@@ -3636,24 +3629,47 @@ function EditGameModal({ game, players, onClose, onSaved }) {
             <input
               type="number"
               value={pot}
+              placeholder="—"
               onChange={(e) => setPot(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
             />
           </div>
           <div>
-            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">LEAGUE £</div>
+            <div className="flex justify-between items-baseline mb-1">
+              <span className="font-mono text-xs text-yellow-100/40 tracking-widest">LEAGUE £</span>
+              <button
+                onClick={fillLeagueFromPot}
+                disabled={!pot}
+                className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Set to 10% of pot"
+              >
+                = 10% pot
+              </button>
+            </div>
             <input
               type="number"
               value={leagueMoney}
+              placeholder="—"
               onChange={(e) => setLeagueMoney(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
             />
           </div>
           <div>
-            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">SUBS £</div>
+            <div className="flex justify-between items-baseline mb-1">
+              <span className="font-mono text-xs text-yellow-100/40 tracking-widest">SUBS £</span>
+              <button
+                onClick={fillSubsFromPlayers}
+                disabled={!playerCount}
+                className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                title={`Set to £3 × ${playerCount} players`}
+              >
+                = £3 × {playerCount}
+              </button>
+            </div>
             <input
               type="number"
               value={subs}
+              placeholder="—"
               onChange={(e) => setSubs(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
             />
@@ -3720,13 +3736,25 @@ function EditGameModal({ game, players, onClose, onSaved }) {
           </button>
         </div>
 
-        <button
-          onClick={() => setShowDeleteConfirm(true)}
-          disabled={busy}
-          className="w-full px-4 py-2 rounded-full bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-900/60 disabled:opacity-30"
-        >
-          DELETE THIS GAME
-        </button>
+        <div className="border-t border-red-500/10 mt-4 pt-4 space-y-2">
+          <div className="text-yellow-100/30 text-xs font-mono tracking-widest mb-1">DESTRUCTIVE</div>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            disabled={busy}
+            className="w-full px-4 py-2 rounded-full bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-900/60 disabled:opacity-30"
+          >
+            DELETE THIS GAME
+          </button>
+          {onRequestDeleteSeason && (
+            <button
+              onClick={() => { onClose(); onRequestDeleteSeason(); }}
+              disabled={busy}
+              className="w-full px-4 py-2 rounded-full bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-900/60 disabled:opacity-30"
+            >
+              DELETE ENTIRE SEASON
+            </button>
+          )}
+        </div>
 
         {showDeleteConfirm && (
           <ConfirmDialog
