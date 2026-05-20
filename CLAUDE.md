@@ -6,12 +6,24 @@ This file is read at the start of every Claude session working on this repo. It 
 
 ## What this is
 
-A Progressive Web App for the **Greene Room Poker** league in Berkhamsted. Owner / sole admin / developer: **Mark Bayley** (display name "Cactus" at the club). Runs in a browser, installable to phone/laptop home screen.
+A Progressive Web App for the **Greene Room Poker** league in Berkhamsted. Public-facing brand is now **"GRP Berkhamsted"** (email subject lines, browser tab, home-screen icon). Owner / sole admin / developer: **Mark Bayley** (display name "Cactus" at the club). Runs in a browser, installable to phone/laptop home screen.
 
 **Live URL**: https://mcq90210.github.io/grp-app/
 **Repo**: https://github.com/McQ90210/grp-app
 **Hosting**: GitHub Pages (auto-rebuilds on push to `main`)
-**Current version**: v7.7 (see `sw.js` `CACHE_NAME` for what's deployed)
+**Current version**: v7.28 (see `sw.js` `CACHE_NAME` for what's deployed)
+**Cloud Functions**: deployed in `europe-west2` — `dailyResultsEmail` (cron 09:00 UK), `resendLatestResults` (callable), `migrateSeason` (callable, break-glass — no UI)
+
+### State as of last session (2026-05-20)
+
+- ✅ Cloud Functions deployed, scheduled cron live (next fire: 09:00 UK after the next league game)
+- ✅ Gmail (`grpberkhamsted@gmail.com`) created with 2FA + App Password set as Firebase secret
+- ✅ Gemini API key stored as secret (free-tier project, separate from gr-poker)
+- ✅ Firebase Blaze plan active on gr-poker with £5/month budget cap + email alerts
+- ✅ Firestore data is correct as of v7.28: one active season `2026-r1` (= "2026 — Round 1"), 5 games played (G1–G5), final game is G6 in June 2026
+- ✅ Player emails: only Cactus (Mark) has one (`djmarky@gmail.com`) on file; the other 31 players need their emails collected
+- ✅ End-to-end tested: manual RESEND RESULTS button + email arrived in djmarky inbox correctly formatted with AI recap
+- ⏳ Next league game (Round 1 Game 6, the final) is in June 2026. The cron will auto-email the next morning.
 
 ### Two game modes
 - **League** — the formal monthly league with seasons, points, bounties, finals
@@ -362,33 +374,39 @@ Each player has an assigned `sound` key. When eliminated, that sound plays. Soun
 
 ## Email pipeline (results email to league members)
 
-Added in v7.24. League members on the active roster who have an `email` field
-get an HTML email the morning after a league game, summarising the result and
-showing updated standings.
+Added v7.24, polished through v7.28. League members on the active roster who have an `email` field get an HTML email the morning after a league game, summarising the result, an AI-written narrative recap, and updated standings. **Status: deployed and live.**
 
 ### Components
 
 - **Email collection UI** — admin opens a player's profile (LeagueDashboard → click a player name), edits the `EMAIL (results delivery)` field, taps SAVE. Stored on the `players/{slug}` document.
-- **Scheduled Cloud Function** `dailyResultsEmail` — runs daily at **09:00 Europe/London** via Cloud Scheduler. Queries Firestore for any game with `date == yesterday`. If a league game is found, computes standings + renders HTML + sends via Gmail SMTP (BCC'd to all active players with an email).
+- **Scheduled Cloud Function** `dailyResultsEmail` — runs daily at **09:00 Europe/London** via Cloud Scheduler. Queries Firestore for any game with `date == yesterday`. If a league game is found, computes standings + generates a Gemini recap + renders HTML + sends via Gmail SMTP (BCC'd to all active players with an email).
 - **Callable Cloud Function** `resendLatestResults` — admin-only HTTPS callable triggered by the **✉ RESEND RESULTS** button on the LeagueDashboard. Re-sends the most recent league game's email. Useful if the cron failed or you spot a typo.
-- **Audit log** — every send writes a `emailLog/{auto-id}` doc with timestamp, gameId, subject, and recipient IDs.
+- **Callable Cloud Function** `migrateSeason` — admin-only HTTPS callable that renames a season's id + name and cascades the change to every attached game (re-IDs each game doc, updates `seasonId` field). One-shot tool: deployed but UI was removed in v7.28. To invoke if needed: `firebase functions:shell` then `migrateSeason({oldSeasonId, newSeasonId, newName}, {auth:{uid:'admin'}})`. Or temporarily restore the MigrateSeasonModal from git history.
+- **AI narrative recap** — `generateRecap()` calls Gemini (`gemini-2.5-flash`, free tier) with the game + standings as context. Returns a 3-4 sentence British dry-witty paragraph that's rendered at the top of the email above the podium. If Gemini fails for any reason (quota, network), the email still sends without the recap (graceful degradation).
+- **Audit log** — every send writes an `emailLog/{auto-id}` doc with timestamp, gameId, subject, and recipient IDs.
 
 ### Region + runtime
 
-Both functions deployed to **europe-west2** (matches the Firestore region). Runtime: Node.js 20.
+All functions deployed to **europe-west2** (matches the Firestore region). Runtime: **Node.js 20** (deprecated April 2026, will be decommissioned **Oct 2026** — upgrade `functions/package.json` engines to `"22"` before then).
 
 ### Secrets
 
 Stored via Firebase Functions Secrets (NOT in code, NOT in env files):
 
-- `GMAIL_USER` — full Gmail address (e.g. `grpoker.berkhamsted@gmail.com`)
-- `GMAIL_APP_PASSWORD` — 16-char App Password generated from the Gmail account's Security settings (requires 2FA enabled on that Gmail)
+| Secret | Value | Notes |
+|---|---|---|
+| `GMAIL_USER` | `grpberkhamsted@gmail.com` | Dedicated club Gmail account, separate from Mark's personal one |
+| `GMAIL_APP_PASSWORD` | 16-char App Password | Generated from the club Gmail's Security → App Passwords. Requires 2FA on that Gmail (it is enabled). |
+| `GEMINI_API_KEY` | Personal Google AI Studio key (`AIza...`) | **Important**: created in a separate "Default Gemini Project" (Mark's personal Google account), NOT in the gr-poker Firebase project. The gr-poker project is on Blaze billing which disqualifies it from Gemini's free tier — a separate billing-free project is required. |
 
-Set via:
+Set/update via:
 ```bash
-firebase functions:secrets:set GMAIL_USER
-firebase functions:secrets:set GMAIL_APP_PASSWORD
+firebase functions:secrets:set GMAIL_USER          # paste address
+firebase functions:secrets:set GMAIL_APP_PASSWORD  # paste 16-char password
+firebase functions:secrets:set GEMINI_API_KEY      # paste AIza... key
 ```
+
+Updating a secret creates a new version. **Functions must be redeployed** to pin to the new version — Firebase will prompt to redeploy automatically when you set a secret.
 
 ### Deploy
 
@@ -399,25 +417,51 @@ cd ..
 firebase deploy --only functions
 ```
 
+Claude can and should run `firebase deploy --only functions` directly during sessions — Mark has confirmed he prefers this over being asked each time. The local `firebase login` token is cached and valid.
+
+### Email design (v7.28 — current)
+
+- **Layout**: single solid panel-green canvas (`#062815`), no nested cards. 520px max-width content centred.
+- **Sections**: small uppercase emerald labels ("LAST NIGHT'S PODIUM", "UPDATED STANDINGS"); thin row dividers (`rgba(20,163,123,0.12)`) instead of darker container backgrounds.
+- **Recap quote**: left-edge accent bar only (no background fill), 60-100 word AI prose.
+- **Podium table**: 3 rows max, medal emoji + name + payout in monospace.
+- **Standings table**: rank (gold/silver/bronze for top 3), player, points (right-aligned mono), played (left-aligned mono with 24px left padding so it sits clear of points).
+- **Footer**: hairline divider + "Greene Room Poker, Berkhamsted · View full standings" link.
+- **Gradient experiments don't work**: Gmail strips `background-image: radial-gradient(...)` in many cases. The current design is solid colour only.
+
+### Gemini prompt (v7.27 + v7.28)
+
+Lives in `generateRecap()` in `functions/index.js`. Key constraints baked in:
+- 3-4 sentences, 60-100 words
+- Tone: warm, dry-witty, British pub energy
+- Reference at least TWO player nicknames and AT LEAST ONE specific number
+- **Forbidden**: exclamation marks, hyphens (-), em-dashes (—), "epic", "showdown", "thrilling", "battle", "duel", "clash"
+- **Cadence**: explicit "ONE league game per month (not weekly)" so the model doesn't suggest "next week"
+- When mentioning the next game, say "next month" or "the next game"
+- `thinkingConfig.thinkingBudget = 0` (disables Gemini 2.5's internal reasoning tokens, which would otherwise eat into the response budget and truncate output)
+- `temperature: 0.8`, `maxOutputTokens: 400`
+
 ### Cost
 
-Both functions are inside the Blaze free tier for this use case:
-- Scheduled: 30 invocations/month (free tier covers 2M).
-- Callable: a few clicks/year.
-- Gmail SMTP: free; 500 emails/day limit (way under our 32-member-ish ceiling).
+All inside Blaze + Gemini free tiers for this use case:
+- Scheduled function: 30 invocations/month (free tier: 2M)
+- Callable: a few clicks/year
+- Gmail SMTP: free; 500 emails/day limit
+- Gemini 2.5 Flash: 250 requests/day free; we use ~12/year
 
-A Cloud Billing budget cap (£5/month) is set on the project as a safety net.
+A Cloud Billing budget cap (**£5/month**) is set on the gr-poker project as a safety net. Mark realistically pays £0.
 
 ### Limitations
 
 - One sender Gmail address — replies come back to it.
-- 500/day Gmail SMTP cap (irrelevant at current scale but worth noting if the club ever grows beyond ~300 active members).
-- BCC strategy means recipients can't see each other (good for privacy) and can't easily "reply all" (which is also good — most replies should go to the league organiser, not the whole roster).
+- 500/day Gmail SMTP cap (irrelevant at current scale).
+- BCC strategy means recipients can't see each other or "reply all" (intentional — privacy + keeps replies to organiser).
 - No unsubscribe link yet — players ask Mark to remove their email manually.
+- Gemini key lives in a separate Google project, which is fine but means a quota issue there doesn't show up in gr-poker's Firebase dashboard.
 
 ---
 
-## Pending work (planned for v7.8+)
+## Pending work
 
 In rough priority order:
 
@@ -425,12 +469,21 @@ In rough priority order:
 2. **In-game bounty badge** — small indicator on the timer screen showing who's currently bountied
 3. **Bounty visible in eliminate modal** — bountied players show a marker next to their name
 4. **Bounty-claimed sound** — distinct from winner fanfare, plays when a bountied player is eliminated
-5. **End-of-game save flow** — after winner overlay, auto-populated summary with edit fields, single "Save to League" button writes to Firestore (currently must be manually entered via EditGameModal)
-6. **Per-player rebuy tracking** — currently only `totalRebuys` is stored; per-player would unlock fairer cost-tracking in HR history
-7. ~~Roster sync — load players from Firestore into SetupWizard "Who's playing?" step~~ **Done in v7.8** — loads from Firestore (with localStorage fallback). High Rollers filtered to 9 regulars: Cactus, Beans, Quads, Chit Chat, Duck, Ostrich, Shoes, The Boxer, River Dan.
-8. **Charts on player profile** — more than the current points-per-game bar chart (e.g. running total over time, position distribution)
-9. **Season management screen** — create new seasons, archive completed ones, configure dates/game counts via UI rather than import data
-10. **Real-time multi-device sync (deferred)** — phone-as-controller + laptop/TV-as-display via Firebase Realtime Database (Mark wants this "one day", not yet)
+5. **Per-player rebuy tracking** — currently only `totalRebuys` is stored; per-player would unlock fairer cost-tracking in HR history
+6. **Charts on player profile** — more than the current points-per-game bar chart (e.g. running total over time, position distribution)
+7. **Season management screen** — create new seasons, archive completed ones, configure dates/game counts via UI rather than import data. (Note: `migrateSeason` Cloud Function exists as a backend primitive — could power this screen's rename action.)
+8. **Real-time multi-device sync (deferred)** — phone-as-controller + laptop/TV-as-display via Firebase Realtime Database (Mark wants this "one day", not yet)
+9. **Node.js 22 runtime upgrade** — Node 20 deprecated April 2026, decommissioned **Oct 2026**. Need to bump `functions/package.json` `"engines": {"node": "22"}` and redeploy before then.
+10. **`firebase-functions` package upgrade** — current version warns it's outdated. Low risk; check breaking-changes notes before bumping.
+
+### Done in previous sessions
+- ~~Roster sync from Firestore into SetupWizard~~ — v7.8
+- ~~End-of-game save flow~~ — SaveGameModal auto-populates from game state, single "Save to League" button. v7.4 (basic) + v7.21 (inline sign-in fix)
+- ~~Results email + AI recap~~ — v7.24 through v7.28
+- ~~GRP Berkhamsted rebrand~~ — v7.26
+
+### Out-of-scope thought experiments (not actively planned)
+- **Multi-tenant SaaS** — Mark asked about productising this for other clubs (~£15/mo per league). Bull case ~£15k MRR at 1k leagues. Not started; would need ~3-4 weeks of de-hardcoding + auth tiers + Stripe + onboarding before it could be sold. See conversation history for full bull/bear breakdown.
 
 ---
 
@@ -452,6 +505,10 @@ In rough priority order:
 - For destructive operations (deletes), always prefer multiple confirmation steps and "type DELETE" gates
 - When re-posting files or snippets earlier in a session, send them directly rather than telling Mark to scroll back
 - **Don't commit eagerly** — Mark usually has follow-up changes and prefers to batch them into a single version bump + commit (keeps the commit log clean). After making a change, bump `sw.js` cache if relevant, then *wait*. Ask "ready to commit as vX.Y?" rather than committing right away. Only commit when Mark explicitly says so.
+- **Do run deploys directly** — `firebase deploy --only functions` doesn't require asking. Mark has the CLI installed, his auth token is cached, and the deploy is reversible. Same for any read-only Firebase / git diagnostic commands. The deferral pattern is just for git commits.
+- **Cache-bumping awareness**: when changes touch `index.html`, `firebase-init.js`, `manifest.json`, `sw.js` itself, or `logos/*`, bump `CACHE_NAME` in `sw.js`. Pure `functions/` changes don't need it. After pushing, expect the user to need to force-refresh (Cmd+Shift+R, or unregister SW + Clear site data via DevTools, or Incognito) — Chrome on Mac keeps stale module-script copies across cache bumps in stubborn ways.
+- **Gradient experiments don't work in Gmail** — Gmail strips `background-image: radial-gradient(...)` declarations in many contexts. We tried, it failed, we reverted to solid colours. Don't propose gradients for the email template again unless using a generated image.
+- **Git author identity** — Mark hasn't set `user.email` globally. Commits show as `Mark McQueen <mark.mcqueen@mark-mcqueen.lan>` (his Mac's hostname). Not blocking but worth flagging once per session at most. The fix is `git config --global user.email "the-email-his-github-uses"` (Mark's choice when ready).
 
 ---
 
@@ -475,6 +532,9 @@ Each version is summarised here so a new session can pick up at the right point.
 - **v7.22** — buy-in defaults: League £30, High Rollers £40; preset chips £30 / £40 / £50.
 - **v7.23** — mobile fixes for league standings (opaque background on totals sticky-col, edge mask, iOS overscroll containment); HR previous-winners cell shrink-fix.
 - **v7.24** — **Results email pipeline**: `email` field on player schema + edit UI in PlayerProfile; Cloud Function `dailyResultsEmail` (cron 09:00 UK) sends HTML email to league members after a game; `resendLatestResults` callable + admin "✉ RESEND RESULTS" button on LeagueDashboard. Sends via Gmail SMTP using Nodemailer; secrets stored in Firebase Secret Manager. Firestore-region functions in `europe-west2`. **Deploy required**: see "Email pipeline" section above for one-off Gmail/Blaze/secrets setup.
+- **v7.26** — **Rebrand**: "GR Poker" → "GRP Berkhamsted" across email subject/from/header + PWA manifest name + browser tab title (`<title>`, `apple-mobile-web-app-title`). Manifest `short_name` = "GRP". Formal "Greene Room Poker" left intact in the email footer and Gemini prompt context (it's still the real club name).  Also added `migrateSeason` callable Cloud Function + temporary admin UI (button + modal) to rename a season's id and cascade the change to all attached games. Used once to migrate `2026-r2` (wrongly named "Round 2") → `2026-r1` ("Round 1") in production Firestore.
+- **v7.27** — Gemini recap prompt clarifies the league plays **monthly** (one game/month, not weekly) so the AI stops writing "see you next week". Added "next month" / "the next game" as preferred phrasing.
+- **v7.28** — **Email design polish**: dropped nested-card backgrounds, tightened max-width to 520px, switched section headings to compact uppercase labels, thin row dividers, left-aligned PLAYED column with 24px padding so it doesn't crowd POINTS. Also: added `thinkingConfig.thinkingBudget = 0` to the Gemini call (2.5-flash was truncating output before it started — internal reasoning tokens were eating the budget). Added "no hyphens / em-dashes" to the prompt constraints. **Retired the SEASON TOOLS UI** (button + MigrateSeasonModal removed). The `migrateSeason` Cloud Function and `window.GRP_DB.migrateSeason` helper stay deployed as a break-glass tool — callable via Firebase Functions Shell if a future season needs renaming.
 
 ---
 
