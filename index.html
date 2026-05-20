@@ -3443,6 +3443,7 @@ function HighRollersHistory({ onBack, fbUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
+  const [timeRange, setTimeRange] = useState('all'); // 'all' | '12m' | '6m'
 
   useEffect(() => {
     let cancelled = false;
@@ -3485,9 +3486,21 @@ function HighRollersHistory({ onBack, fbUser }) {
   const playersById = {};
   players.forEach((p) => { playersById[p.id] = p; });
 
-  // Compute per-player stats across all HR games
+  // Filter games for the standings table by the selected time range.
+  // Game dates are stored as ISO date strings ("YYYY-MM-DD") so they sort
+  // lexicographically — comparing strings is equivalent to comparing dates.
+  const filteredGames = (() => {
+    if (timeRange === 'all') return games;
+    const cutoff = new Date();
+    if (timeRange === '6m') cutoff.setMonth(cutoff.getMonth() - 6);
+    else if (timeRange === '12m') cutoff.setMonth(cutoff.getMonth() - 12);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    return games.filter((g) => g.date && g.date >= cutoffStr);
+  })();
+
+  // Compute per-player stats across the filtered set of HR games
   const playerStats = {};
-  games.forEach((g) => {
+  filteredGames.forEach((g) => {
     (g.attendees || []).forEach((pid) => {
       if (!playerStats[pid]) playerStats[pid] = { gamesPlayed: 0, buyIns: 0, winnings: 0, wins: 0 };
       playerStats[pid].gamesPlayed += 1;
@@ -3559,7 +3572,33 @@ function HighRollersHistory({ onBack, fbUser }) {
           </div>
         ) : (
           <div className="gold-border rounded-2xl bg-black/40 backdrop-blur p-6">
-            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-4">PLAYER STANDINGS BY NET PROFIT</div>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div className="font-mono text-xs text-yellow-100/40 tracking-widest">PLAYER STANDINGS BY NET PROFIT</div>
+              <div className="flex gap-1.5">
+                {[
+                  { key: 'all', label: 'All time' },
+                  { key: '12m', label: 'Last 12 mo' },
+                  { key: '6m', label: 'Last 6 mo' },
+                ].map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setTimeRange(key)}
+                    className={`px-3 py-1 rounded-full font-mono text-xs tracking-widest transition-colors ${
+                      timeRange === key
+                        ? 'bg-emerald-500/30 border border-emerald-400/60 text-emerald-100'
+                        : 'bg-black/30 border border-yellow-500/20 text-yellow-100/60 hover:border-yellow-500/40'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {filteredGames.length < games.length && (
+              <div className="font-mono text-[11px] text-emerald-200/60 mb-3">
+                Showing {filteredGames.length} of {games.length} game{games.length === 1 ? '' : 's'} in this range
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full" style={{ borderCollapse: 'collapse' }}>
                 <thead>
