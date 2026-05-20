@@ -9,6 +9,9 @@ import {
 import {
   getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+import {
+  getFunctions, httpsCallable,
+} from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBMaR3kHYp1zqLyYE4Pra6jnKtRQkPxH9Y",
@@ -22,12 +25,15 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+// Cloud Functions live in europe-west2 (same region as Firestore — see CLAUDE.md).
+const functions = getFunctions(app, 'europe-west2');
 
 window.GRP_FIREBASE = {
-  app, db, auth,
+  app, db, auth, functions,
   collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
   query, where, orderBy, limit, onSnapshot, serverTimestamp, writeBatch,
   signInWithEmailAndPassword, signOut, onAuthStateChanged,
+  httpsCallable,
 };
 
 // ================== DATA LAYER ==================
@@ -158,6 +164,15 @@ async function bulkImport({ players, seasons, games }) {
   await batch.commit();
 }
 
+// ------ EMAIL / CLOUD FUNCTIONS ------
+// Calls the `resendLatestResults` Cloud Function. Returns { ok, gameId, sent }
+// or throws. Requires the caller to be authenticated.
+async function resendLatestResults() {
+  const fn = httpsCallable(functions, 'resendLatestResults');
+  const res = await fn({});
+  return res.data;
+}
+
 window.GRP_DB = {
   // Players
   getAllPlayers, getPlayer, upsertPlayer, subscribeToPlayers,
@@ -165,6 +180,8 @@ window.GRP_DB = {
   getAllSeasons, getActiveSeason, upsertSeason,
   // Games
   getGamesForSeason, getAllHighRollerGames, getGameById, saveGame, deleteGame, subscribeToSeasonGames,
+  // Email
+  resendLatestResults,
   // Admin
   bulkImport,
 };

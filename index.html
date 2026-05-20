@@ -1267,7 +1267,7 @@ function LeagueContextScreen({ onConfirm, onBack }) {
 function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext = null, onBack, fbUser }) {
   const isFinal = leagueContext?.isFinal === true;
   const [step, setStep] = useState(0);
-  const [buyIn, setBuyIn] = useState('20');
+  const [buyIn, setBuyIn] = useState(gameType === 'highrollers' ? '40' : '30');
   const [stackSize, setStackSize] = useState('10000');
   const [roster, setRoster] = useState([]); // currently displayed list
   const [allGrpPlayers, setAllGrpPlayers] = useState([]); // full GRP roster — picker source
@@ -1636,7 +1636,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                   />
                 </div>
                 <div className="flex gap-2 justify-center mt-4">
-                  {['10', '20', '50', '100'].map((v) => (
+                  {['30', '40', '50'].map((v) => (
                     <button key={v} onClick={() => setBuyIn(v)} className="px-4 py-1.5 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50">£{v}</button>
                   ))}
                 </div>
@@ -3681,14 +3681,14 @@ function HighRollersHistory({ onBack, fbUser }) {
                           <div
                             key={p.place}
                             onClick={() => p.pid && setSelectedPlayerId(p.pid)}
-                            className={`flex items-center justify-between px-2 py-1.5 rounded bg-black/30 ${p.pid ? 'cursor-pointer hover:bg-emerald-500/10' : ''}`}
+                            className={`flex items-center justify-between gap-1.5 min-w-0 px-2 py-1.5 rounded bg-black/30 ${p.pid ? 'cursor-pointer hover:bg-emerald-500/10' : ''}`}
                           >
-                            <span className="flex items-center gap-1.5 text-emerald-100">
-                              <span>{medal[p.place - 1]}</span>
-                              <span className="truncate">{p.name || '—'}</span>
+                            <span className="flex items-center gap-1.5 min-w-0 flex-1 text-emerald-100">
+                              <span className="flex-shrink-0">{medal[p.place - 1]}</span>
+                              <span className="truncate min-w-0">{p.name || '—'}</span>
                             </span>
                             {p.payout > 0 && (
-                              <span className="text-emerald-300/80 text-xs">£{p.payout}</span>
+                              <span className="flex-shrink-0 text-emerald-300/80 text-xs">£{p.payout}</span>
                             )}
                           </div>
                         ))}
@@ -3922,6 +3922,32 @@ function LeagueDashboard({ onBack, fbUser }) {
   const [showImport, setShowImport] = useState(false);
   const [editingGame, setEditingGame] = useState(null);
   const [showDeleteSeasonConfirm, setShowDeleteSeasonConfirm] = useState(false);
+  // Manual "Resend results" button state
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendMessage, setResendMessage] = useState(null); // { kind: 'ok'|'err', text }
+  const [showResendConfirm, setShowResendConfirm] = useState(false);
+
+  const doResend = async () => {
+    setShowResendConfirm(false);
+    setResendBusy(true);
+    setResendMessage(null);
+    try {
+      const res = await window.GRP_DB.resendLatestResults();
+      if (res && res.ok) {
+        setResendMessage({ kind: 'ok', text: `Sent to ${res.sent} recipient${res.sent === 1 ? '' : 's'} (game ${res.gameId}).` });
+      } else if (res && res.skipped) {
+        setResendMessage({ kind: 'err', text: `Skipped: ${res.reason}` });
+      } else {
+        setResendMessage({ kind: 'err', text: 'Email send returned an unknown result.' });
+      }
+    } catch (e) {
+      setResendMessage({ kind: 'err', text: e.message || 'Failed to send.' });
+    } finally {
+      setResendBusy(false);
+      // Auto-clear after 8s so message doesn't linger forever.
+      setTimeout(() => setResendMessage(null), 8000);
+    }
+  };
 
   // Load seasons + players on mount — wait for Firebase if it hasn't loaded yet
   useEffect(() => {
@@ -4058,6 +4084,10 @@ function LeagueDashboard({ onBack, fbUser }) {
           left: 0;
           background: #020a06;
           z-index: 5;
+          /* Right-edge mask so scrolled content can't peek through during
+             momentum scroll on iOS, and a hard left-edge cover so the rounded
+             corner area of the wrapper doesn't leak content either. */
+          box-shadow: 6px 0 8px -4px rgba(0, 0, 0, 0.7);
         }
         .league-table th.sticky-col { z-index: 11; }
         .league-table .total-col {
@@ -4074,6 +4104,12 @@ function LeagueDashboard({ onBack, fbUser }) {
           color: #1ec890;
           border-top: 1px solid rgba(20, 163, 123, 0.3);
           font-size: 12px;
+        }
+        /* Totals rows: keep the sticky first column fully opaque so scrolled
+           cells never show through "Players / Rebuys / Pot / League £ / ..." */
+        .league-table tr.totals-row td.sticky-col {
+          background: #020a06;
+          color: #1ec890;
         }
         /* Per-cell finishing-position colours (1st-5th in each individual game) */
         .league-table td.place-1 { color: #f4d03f; font-weight: 700; }
@@ -4138,7 +4174,32 @@ function LeagueDashboard({ onBack, fbUser }) {
               IMPORT SPREADSHEET
             </button>
           )}
+
+          {/* Admin: Resend latest results email */}
+          {fbUser && games.length > 0 && (
+            <button
+              onClick={() => setShowResendConfirm(true)}
+              disabled={resendBusy}
+              className="px-4 py-2 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-100 font-mono text-xs hover:bg-emerald-500/30 disabled:opacity-50"
+              title="Re-send the latest league game's results email to all players with email on file"
+            >
+              {resendBusy ? 'SENDING…' : '✉ RESEND RESULTS'}
+            </button>
+          )}
         </div>
+
+        {/* Resend status toast */}
+        {resendMessage && (
+          <div
+            className={`mb-4 px-3 py-2 rounded-lg font-mono text-xs border ${
+              resendMessage.kind === 'ok'
+                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                : 'bg-red-950/40 border-red-500/40 text-red-200'
+            }`}
+          >
+            {resendMessage.kind === 'ok' ? '✓ ' : '⚠ '}{resendMessage.text}
+          </div>
+        )}
 
         {loading ? (
           <div className="text-center py-16 text-emerald-200/60 font-mono">Loading...</div>
@@ -4168,7 +4229,7 @@ function LeagueDashboard({ onBack, fbUser }) {
             No games yet in this season.
           </div>
         ) : (
-          <div className="gold-border rounded-2xl bg-black/40 backdrop-blur p-4 overflow-x-auto">
+          <div className="gold-border rounded-2xl bg-black/40 backdrop-blur p-4 overflow-x-auto" style={{ overscrollBehaviorX: 'contain', WebkitOverflowScrolling: 'touch' }}>
             <table className="league-table">
               <thead>
                 <tr>
@@ -4284,6 +4345,13 @@ function LeagueDashboard({ onBack, fbUser }) {
           players={players}
           games={games}
           season={activeSeason}
+          fbUser={fbUser}
+          onPlayerUpdated={() => {
+            // Refetch player roster so the edited email is reflected.
+            if (window.GRP_DB) {
+              window.GRP_DB.getAllPlayers().then(setPlayers).catch(() => {});
+            }
+          }}
           onClose={() => setSelectedPlayerId(null)}
         />
       )}
@@ -4306,6 +4374,16 @@ function LeagueDashboard({ onBack, fbUser }) {
       )}
 
       {/* Delete season confirm */}
+      {/* Confirm before re-sending results email to everyone */}
+      {showResendConfirm && (
+        <ConfirmDialog
+          title="Resend latest results?"
+          message="This will email the most recent league game's results + standings to ALL active players who have an email on file. Use this if the morning email didn't go out or you want to re-send with corrections."
+          onConfirm={doResend}
+          onCancel={() => setShowResendConfirm(false)}
+        />
+      )}
+
       {showDeleteSeasonConfirm && activeSeason && (
         <ConfirmDialog
           title={`Delete ${activeSeason.name}?`}
@@ -4346,9 +4424,37 @@ function LeagueDashboard({ onBack, fbUser }) {
 }
 
 // ============ PLAYER PROFILE MODAL ============
-function PlayerProfile({ playerId, players, games, season, onClose }) {
+function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdated, onClose }) {
   const player = players.find(p => p.id === playerId);
   if (!player) return null;
+
+  // Email editing (admin only). Local state mirrors Firestore until saved.
+  const [emailInput, setEmailInput] = useState(player.email || '');
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailSavedAt, setEmailSavedAt] = useState(0);
+  const [emailError, setEmailError] = useState(null);
+  // Re-sync local input if the player prop changes (e.g. parent refetched)
+  useEffect(() => { setEmailInput(player.email || ''); }, [player.email, player.id]);
+
+  const saveEmail = async () => {
+    const trimmed = emailInput.trim();
+    if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setEmailError('Not a valid email address.');
+      return;
+    }
+    setEmailError(null);
+    setEmailSaving(true);
+    try {
+      await window.GRP_DB.upsertPlayer({ id: player.id, email: trimmed || null });
+      setEmailSavedAt(Date.now());
+      if (onPlayerUpdated) onPlayerUpdated();
+    } catch (e) {
+      setEmailError(e.message);
+    } finally {
+      setEmailSaving(false);
+    }
+  };
+  const emailDirty = (emailInput.trim() || '') !== (player.email || '');
 
   // Compute stats
   const gamesPlayed = games.filter(g => g.pointsAwarded?.[playerId] > 0);
@@ -4381,11 +4487,43 @@ function PlayerProfile({ playerId, players, games, season, onClose }) {
             {bdayStr && (
               <div className="text-emerald-300/60 font-mono text-xs mt-1">Birthday: {bdayStr}</div>
             )}
+            {/* Email: read-only for non-admins (only shown if set), editable for admins */}
+            {!fbUser && player.email && (
+              <div className="text-emerald-300/60 font-mono text-xs mt-1">Email: {player.email}</div>
+            )}
           </div>
           <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100">
             <X size={20} />
           </button>
         </div>
+
+        {/* Admin: editable email (drives results emails sent by Cloud Function) */}
+        {fbUser && (
+          <div className="mb-4 p-3 rounded-lg bg-black/30 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">EMAIL (results delivery)</div>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                placeholder="player@example.com  (blank = don't email)"
+                className="flex-1 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+              />
+              <button
+                onClick={saveEmail}
+                disabled={emailSaving || !emailDirty}
+                className="px-4 py-2 rounded-full font-display text-sm text-black disabled:opacity-30"
+                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+              >
+                {emailSaving ? '...' : 'SAVE'}
+              </button>
+            </div>
+            {emailError && <div className="text-red-400 text-xs mt-1 font-mono">{emailError}</div>}
+            {!emailError && emailSavedAt > 0 && Date.now() - emailSavedAt < 3000 && (
+              <div className="text-emerald-300 text-xs mt-1 font-mono">✓ saved</div>
+            )}
+          </div>
+        )}
 
         {/* Stats grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">

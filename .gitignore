@@ -2,3 +2,17 @@
 .venv/
 __pycache__/
 *.pyc
+
+# macOS
+.DS_Store
+*/.DS_Store
+
+# Firebase Cloud Functions
+functions/node_modules/
+functions/.env
+functions/.env.*
+functions/firebase-debug.log
+functions/firebase-debug.*.log
+firebase-debug.log
+firebase-debug.*.log
+.firebase/

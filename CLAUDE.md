@@ -52,6 +52,11 @@ grp-app/                           # repo root
 ├── import-data.json               # one-tap import of historical league data
 ├── icon-192.png                   # app icon (small)
 ├── icon-512.png                   # app icon (large)
+├── firebase.json                  # Firebase project config (functions deploy)
+├── .firebaserc                    # Firebase project alias → gr-poker
+├── functions/                     # Cloud Functions (Node 20) — results-email pipeline
+│   ├── package.json
+│   └── index.js                   # scheduled dailyResultsEmail + callable resendLatestResults
 ├── README.md
 └── logos/
     ├── logo-01.svg                # full GR Poker text logo
@@ -154,7 +159,17 @@ players/{slug}                     # slug = lowercase, hyphenated displayName
   realName: "Mark Bayley"          # optional
   birthday: { month: 6, day: 11 }  # optional
   sound: "none"                    # key in SOUND_LIBRARY for elimination cue
+  email: "cactus@example.com"      # optional — used by Cloud Function for results email
   active: true
+
+emailLog/{auto-id}                 # written by the Cloud Function for audit
+  sentAt: Timestamp                # serverTimestamp
+  gameId: "2026-r1-g3"
+  seasonId: "2026-r1"
+  recipientCount: 18
+  recipientIds: ["cactus", "duck", ...]
+  subject: "GR Poker — 2026 — Round 1 Game 3 results"
+  type: "results"
 
 seasons/{id}                       # id = "2025-r1", "2025-r2", "2026-r1", etc.
   name: "2025 — Round 1"
@@ -345,6 +360,63 @@ Each player has an assigned `sound` key. When eliminated, that sound plays. Soun
 
 ---
 
+## Email pipeline (results email to league members)
+
+Added in v7.24. League members on the active roster who have an `email` field
+get an HTML email the morning after a league game, summarising the result and
+showing updated standings.
+
+### Components
+
+- **Email collection UI** — admin opens a player's profile (LeagueDashboard → click a player name), edits the `EMAIL (results delivery)` field, taps SAVE. Stored on the `players/{slug}` document.
+- **Scheduled Cloud Function** `dailyResultsEmail` — runs daily at **09:00 Europe/London** via Cloud Scheduler. Queries Firestore for any game with `date == yesterday`. If a league game is found, computes standings + renders HTML + sends via Gmail SMTP (BCC'd to all active players with an email).
+- **Callable Cloud Function** `resendLatestResults` — admin-only HTTPS callable triggered by the **✉ RESEND RESULTS** button on the LeagueDashboard. Re-sends the most recent league game's email. Useful if the cron failed or you spot a typo.
+- **Audit log** — every send writes a `emailLog/{auto-id}` doc with timestamp, gameId, subject, and recipient IDs.
+
+### Region + runtime
+
+Both functions deployed to **europe-west2** (matches the Firestore region). Runtime: Node.js 20.
+
+### Secrets
+
+Stored via Firebase Functions Secrets (NOT in code, NOT in env files):
+
+- `GMAIL_USER` — full Gmail address (e.g. `grpoker.berkhamsted@gmail.com`)
+- `GMAIL_APP_PASSWORD` — 16-char App Password generated from the Gmail account's Security settings (requires 2FA enabled on that Gmail)
+
+Set via:
+```bash
+firebase functions:secrets:set GMAIL_USER
+firebase functions:secrets:set GMAIL_APP_PASSWORD
+```
+
+### Deploy
+
+From repo root:
+```bash
+cd functions && npm install   # one-off
+cd ..
+firebase deploy --only functions
+```
+
+### Cost
+
+Both functions are inside the Blaze free tier for this use case:
+- Scheduled: 30 invocations/month (free tier covers 2M).
+- Callable: a few clicks/year.
+- Gmail SMTP: free; 500 emails/day limit (way under our 32-member-ish ceiling).
+
+A Cloud Billing budget cap (£5/month) is set on the project as a safety net.
+
+### Limitations
+
+- One sender Gmail address — replies come back to it.
+- 500/day Gmail SMTP cap (irrelevant at current scale but worth noting if the club ever grows beyond ~300 active members).
+- BCC strategy means recipients can't see each other (good for privacy) and can't easily "reply all" (which is also good — most replies should go to the league organiser, not the whole roster).
+- No unsubscribe link yet — players ask Mark to remove their email manually.
+
+---
+
 ## Pending work (planned for v7.8+)
 
 In rough priority order:
@@ -379,6 +451,7 @@ In rough priority order:
 - Values pace — ship small versions, test, iterate; don't over-engineer
 - For destructive operations (deletes), always prefer multiple confirmation steps and "type DELETE" gates
 - When re-posting files or snippets earlier in a session, send them directly rather than telling Mark to scroll back
+- **Don't commit eagerly** — Mark usually has follow-up changes and prefers to batch them into a single version bump + commit (keeps the commit log clean). After making a change, bump `sw.js` cache if relevant, then *wait*. Ask "ready to commit as vX.Y?" rather than committing right away. Only commit when Mark explicitly says so.
 
 ---
 
@@ -398,6 +471,10 @@ Each version is summarised here so a new session can pick up at the right point.
 - **v7.6** — EditGameModal shows blank for null pot/league/subs values; quick-fill buttons "= 10% pot" and "= £3 × N players"; DELETE SEASON moved from standings page into EditGameModal "DESTRUCTIVE" section
 - **v7.7** — fixed season structure (correctly THREE seasons: 2025-r1, 2025-r2, 2026-r1, each 6 games = 5 regular + 1 final); regenerated `import-data.json`. **Deployment required**: delete existing 2025-r1 + 2026-r2 seasons via EditGameModal, then re-import.
 - **v7.8** — roster auto-populates from Firestore in SetupWizard (with localStorage fallback for offline); High Rollers filters to 9 regulars; players start unchecked by default (use ALL IN to bulk-select).
+- **v7.21** — inline SIGN IN button in the end-of-game SaveGameModal: if you started the game without signing in, you can authenticate without losing the unsaved game.
+- **v7.22** — buy-in defaults: League £30, High Rollers £40; preset chips £30 / £40 / £50.
+- **v7.23** — mobile fixes for league standings (opaque background on totals sticky-col, edge mask, iOS overscroll containment); HR previous-winners cell shrink-fix.
+- **v7.24** — **Results email pipeline**: `email` field on player schema + edit UI in PlayerProfile; Cloud Function `dailyResultsEmail` (cron 09:00 UK) sends HTML email to league members after a game; `resendLatestResults` callable + admin "✉ RESEND RESULTS" button on LeagueDashboard. Sends via Gmail SMTP using Nodemailer; secrets stored in Firebase Secret Manager. Firestore-region functions in `europe-west2`. **Deploy required**: see "Email pipeline" section above for one-off Gmail/Blaze/secrets setup.
 
 ---
 
