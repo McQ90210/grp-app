@@ -2256,7 +2256,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       <div className="felt-texture min-h-screen p-4 sm:p-8">
         <div className="max-w-4xl mx-auto">
           <div className="flex justify-between items-center mb-8">
-            <div>
+            <div className="flex items-center gap-3">
+              <img src="logos/GreeneRoomPokerLogo-02.svg" alt="" className="h-8 w-8 shrink-0" />
               <div className="font-display text-3xl gold-text">
                 {config.gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE GAME'}
               </div>
@@ -3115,14 +3116,11 @@ function GameTypePicker({ onPick }) {
       `}</style>
       <div className="w-full max-w-2xl">
         <div className="text-center mb-10">
-          {/* GR Poker logo header */}
-          <div className="inline-block mb-2">
-            <svg viewBox="0 0 531.2 600" xmlns="http://www.w3.org/2000/svg" className="h-40 w-auto mx-auto">
-              <path fill="#14a37b" d="m265.25,88.31c-115.52,0-209.17,93.65-209.17,209.17s93.65,209.17,209.17,209.17,209.17-93.65,209.17-209.17-93.65-209.17-209.17-209.17Zm124.5,52.48c20.25,16.1,36.97,35.66,49.7,58.12l-39.71,22.51c-9.84-17.35-22.79-32.6-38.52-45.11l28.53-35.52Zm-44.69,338.96c-22.84,11.08-48.46,17.31-75.55,17.31s-52.71-6.23-75.55-17.31l20.13-41.24c16.51,8.06,35.05,12.59,54.66,12.59h1.51c19.61,0,38.15-4.53,54.66-12.59l20.13,41.24Zm-149.61-244.62c-21.51,18.29-35.71,44.65-37.86,74.4l-45.78-3.28c2.99-43.06,23.55-81.21,54.66-107.66l28.98,36.55Zm63.36-72.74c8.84-1.41,17.91-2.14,27.13-2.14s18.29.73,27.13,2.14l-7.18,45.27c-6.43-1.02-13.02-1.55-19.74-1.55h-.41c-6.72,0-13.31.54-19.74,1.55l-7.18-45.27Zm-46.06,193.46c0-44.95,36.43-81.38,81.38-81.38s81.38,36.43,81.38,81.38-36.43,81.38-81.38,81.38-81.38-36.43-81.38-81.38Zm-37.96,159.85c-31.11-26.46-51.66-64.6-54.66-107.66l45.78-3.28c2.16,29.75,16.36,56.11,37.86,74.4l-28.98,36.55Zm267.21,0l-28.98-36.55c21.51-18.29,35.71-44.65,37.86-74.4l45.78,3.28c-2.99,43.06-23.55,81.21-54.66,107.66Z"/>
-              <text x="265.6" y="595" fontFamily="'Bebas Neue', sans-serif" fontSize="55" fill="#14a37b" textAnchor="middle" letterSpacing="0.1em">GR POKER</text>
-            </svg>
-          </div>
-          <div className="font-mono text-xs text-emerald-200/60 tracking-[0.3em] mt-2">BERKHAMSTED</div>
+          <img
+            src="logos/GreeneRoomPokerLogo-01.svg"
+            alt="Greene Room Poker — Berkhamsted"
+            className="h-32 sm:h-40 w-auto mx-auto"
+          />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -3290,7 +3288,10 @@ function HighRollersHistory({ onBack, fbUser }) {
           <button onClick={onBack} className="font-mono text-xs text-yellow-100/40 hover:text-yellow-100/80 mb-2">
             ← back
           </button>
-          <div className="font-display text-4xl gold-text">HIGH ROLLERS</div>
+          <div className="flex items-center gap-3">
+            <img src="logos/GreeneRoomPokerLogo-02.svg" alt="" className="h-10 w-10 shrink-0" />
+            <div className="font-display text-4xl gold-text">HIGH ROLLERS</div>
+          </div>
           <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
             CASUAL SIDE GAMES · {games.length} GAME{games.length === 1 ? '' : 'S'}
           </div>
@@ -3790,8 +3791,11 @@ function LeagueDashboard({ onBack, fbUser }) {
             <button onClick={onBack} className="font-mono text-xs text-yellow-100/40 hover:text-yellow-100/80 mb-2">
               ← back
             </button>
-            <div className="font-display text-4xl gold-text">
-              LEAGUE STANDINGS
+            <div className="flex items-center gap-3">
+              <img src="logos/GreeneRoomPokerLogo-02.svg" alt="" className="h-10 w-10 shrink-0" />
+              <div className="font-display text-4xl gold-text">
+                LEAGUE STANDINGS
+              </div>
             </div>
             {activeSeason && (
               <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
