@@ -220,7 +220,8 @@ Now write the recap (3-4 sentences, 60-100 words):`;
 // Brand colours (kept in sync with the app's .gold-text gradient and CLAUDE.md).
 const BRAND_GREEN = '#14a37b';
 const BRAND_GREEN_LIGHT = '#1ec890';
-const BG_DARK = '#062815';
+const BG_DARKEST = '#020a06';     // outer body (closest to black, like the app)
+const BG_DARK = '#062815';        // inner content panel (slightly lifted)
 const TEXT_LIGHT = '#d1fae5';
 
 function escape(s) {
@@ -240,15 +241,19 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
     name: playersById[pid]?.displayName || pid,
   }));
 
+  // Subtle row divider between every line in the tables.
+  const ROW_DIVIDER = 'border-bottom:1px solid rgba(20,163,123,0.12);';
+
   // Podium rows (top 3 with payouts).
   const podium = [1, 2, 3].map((place) => {
     const f = finishOrder[place - 1];
     const payout = game.payouts?.[String(place)] || 0;
+    const last = place === 3 ? '' : ROW_DIVIDER;
     return f
       ? `<tr>
-           <td style="padding:8px 12px;font-size:18px;">${['🥇', '🥈', '🥉'][place - 1]}</td>
-           <td style="padding:8px 12px;color:${TEXT_LIGHT};font-weight:600;">${escape(f.name)}</td>
-           <td style="padding:8px 12px;color:${BRAND_GREEN_LIGHT};text-align:right;font-family:monospace;">£${payout}</td>
+           <td style="padding:10px 4px;font-size:18px;width:32px;${last}">${['🥇', '🥈', '🥉'][place - 1]}</td>
+           <td style="padding:10px 4px;color:${TEXT_LIGHT};font-weight:600;font-size:15px;${last}">${escape(f.name)}</td>
+           <td style="padding:10px 4px;color:${BRAND_GREEN_LIGHT};text-align:right;font-family:monospace;font-size:15px;${last}">£${payout}</td>
          </tr>`
       : '';
   }).join('');
@@ -258,11 +263,12 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
     .map((row, i) => {
       const rankColours = ['#f4d03f', '#d4d4d4', '#d4924a'];
       const rankColour = rankColours[i] || TEXT_LIGHT;
+      const last = i === standings.length - 1 ? '' : ROW_DIVIDER;
       return `<tr>
-        <td style="padding:6px 10px;color:${rankColour};font-weight:700;font-family:monospace;">${i + 1}</td>
-        <td style="padding:6px 10px;color:${TEXT_LIGHT};">${escape(row.displayName)}</td>
-        <td style="padding:6px 10px;color:${BRAND_GREEN_LIGHT};text-align:right;font-family:monospace;font-weight:600;">${row.total.toLocaleString()}</td>
-        <td style="padding:6px 10px;color:#9ca3af;text-align:right;font-family:monospace;">${row.gamesPlayed}</td>
+        <td style="padding:8px 4px;color:${rankColour};font-weight:700;font-family:monospace;width:32px;${last}">${i + 1}</td>
+        <td style="padding:8px 4px;color:${TEXT_LIGHT};${last}">${escape(row.displayName)}</td>
+        <td style="padding:8px 4px;color:${BRAND_GREEN_LIGHT};text-align:right;font-family:monospace;font-weight:600;${last}">${row.total.toLocaleString()}</td>
+        <td style="padding:8px 4px 8px 24px;color:#9ca3af;text-align:left;font-family:monospace;${last}">${row.gamesPlayed}</td>
       </tr>`;
     })
     .join('');
@@ -277,55 +283,55 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>GRP Berkhamsted results</title></head>
-<body style="margin:0;padding:0;background:${BG_DARK};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <div style="max-width:640px;margin:0 auto;padding:24px 16px;background:${BG_DARK};color:${TEXT_LIGHT};">
+<body style="margin:0;padding:0;background-color:${BG_DARK};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;padding:28px 26px 24px;color:${TEXT_LIGHT};">
 
-    <h1 style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${BRAND_GREEN_LIGHT};letter-spacing:0.05em;font-size:28px;margin:0 0 4px;text-transform:uppercase;">GRP Berkhamsted</h1>
-    <div style="color:${BRAND_GREEN};font-size:13px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:24px;">
+    <h1 style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${BRAND_GREEN_LIGHT};letter-spacing:0.05em;font-size:24px;margin:0 0 2px;text-transform:uppercase;">GRP Berkhamsted</h1>
+    <div style="color:${BRAND_GREEN};font-size:12px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:20px;">
       ${escape(season.name)} · Game ${game.gameNumber}${isFinal ? ' · FINAL' : ''} · ${escape(game.date)}
     </div>
 
     ${
       recap
-        ? `<div style="padding:14px 16px;margin-bottom:24px;background:rgba(20,163,123,0.08);border-left:3px solid ${BRAND_GREEN};border-radius:0 8px 8px 0;color:${TEXT_LIGHT};font-size:15px;line-height:1.55;">
+        ? `<div style="padding:0 0 0 14px;margin-bottom:24px;border-left:2px solid ${BRAND_GREEN};color:${TEXT_LIGHT};font-size:15px;line-height:1.55;">
             ${escape(recap)}
           </div>`
         : ''
     }
 
-    <h2 style="color:${BRAND_GREEN_LIGHT};font-size:20px;margin:0 0 12px;border-bottom:1px solid rgba(20,163,123,0.3);padding-bottom:8px;">Last night's podium</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;background:rgba(0,0,0,0.3);border-radius:8px;">
-      ${podium || `<tr><td style="padding:12px;color:#9ca3af;">No results recorded.</td></tr>`}
+    <div style="color:${BRAND_GREEN_LIGHT};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 4px;font-weight:600;">Last night's podium</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:14px;">
+      ${podium || `<tr><td style="padding:12px 0;color:#9ca3af;">No results recorded.</td></tr>`}
     </table>
 
-    <div style="color:#9ca3af;font-size:13px;font-family:monospace;margin-bottom:24px;">
+    <div style="color:#9ca3af;font-size:12px;font-family:monospace;margin-bottom:28px;">
       ${attendeeCount} players · ${rebuys} rebuys · £${pot} pot · £${leagueMoney} to league · £${subs} subs
     </div>
 
     ${
       isFinal
-        ? `<div style="background:rgba(244,208,63,0.1);border:1px solid rgba(244,208,63,0.3);border-radius:8px;padding:12px;margin-bottom:24px;color:#fcd34d;font-size:13px;">
-            Final game — no league points awarded. The standings below are the season-end totals.
+        ? `<div style="border-left:2px solid #fcd34d;padding:2px 0 2px 14px;margin-bottom:28px;color:#fcd34d;font-size:13px;line-height:1.5;">
+            Final game, no league points awarded. The standings below are the season-end totals.
           </div>`
         : ''
     }
 
-    <h2 style="color:${BRAND_GREEN_LIGHT};font-size:20px;margin:0 0 12px;border-bottom:1px solid rgba(20,163,123,0.3);padding-bottom:8px;">Updated standings</h2>
-    <table style="width:100%;border-collapse:collapse;background:rgba(0,0,0,0.3);border-radius:8px;">
+    <div style="color:${BRAND_GREEN_LIGHT};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 4px;font-weight:600;">Updated standings</div>
+    <table style="width:100%;border-collapse:collapse;">
       <thead>
-        <tr style="background:rgba(20,163,123,0.15);">
-          <th style="padding:8px 10px;text-align:left;color:${BRAND_GREEN};font-size:11px;text-transform:uppercase;letter-spacing:0.1em;">#</th>
-          <th style="padding:8px 10px;text-align:left;color:${BRAND_GREEN};font-size:11px;text-transform:uppercase;letter-spacing:0.1em;">Player</th>
-          <th style="padding:8px 10px;text-align:right;color:${BRAND_GREEN};font-size:11px;text-transform:uppercase;letter-spacing:0.1em;">Points</th>
-          <th style="padding:8px 10px;text-align:right;color:${BRAND_GREEN};font-size:11px;text-transform:uppercase;letter-spacing:0.1em;">Played</th>
+        <tr>
+          <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);width:32px;">#</th>
+          <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Player</th>
+          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Points</th>
+          <th style="padding:6px 4px 6px 24px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Played</th>
         </tr>
       </thead>
       <tbody>${standingsRows}</tbody>
     </table>
 
-    <div style="margin-top:32px;padding-top:16px;border-top:1px solid rgba(20,163,123,0.2);color:#6b7280;font-size:12px;text-align:center;">
-      Greene Room Poker · Berkhamsted<br>
-      <a href="https://mcq90210.github.io/grp-app/" style="color:${BRAND_GREEN_LIGHT};text-decoration:none;">View full league standings →</a>
+    <div style="margin-top:28px;padding-top:14px;border-top:1px solid rgba(20,163,123,0.18);color:#6b7280;font-size:11px;text-align:center;letter-spacing:0.05em;">
+      Greene Room Poker, Berkhamsted &nbsp;·&nbsp;
+      <a href="https://mcq90210.github.io/grp-app/" style="color:${BRAND_GREEN_LIGHT};text-decoration:none;">View full standings</a>
     </div>
   </div>
 </body>
