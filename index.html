@@ -1255,13 +1255,36 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       setRosterLoaded(true);
     };
 
+    // Pull any locally-saved sound choices (set when picking sounds without
+    // being signed in — these need to survive a Firestore reload).
+    const readLocalSounds = () => {
+      try {
+        const saved = localStorage.getItem("poker-roster");
+        if (!saved) return {};
+        const parsed = JSON.parse(saved);
+        if (!Array.isArray(parsed)) return {};
+        const out = {};
+        parsed.forEach((p) => {
+          const name = typeof p === 'string' ? p : p.name;
+          const sound = typeof p === 'string' ? null : p.sound;
+          if (name && sound && sound !== 'none') out[name] = sound;
+        });
+        return out;
+      } catch (e) { return {}; }
+    };
+
     const loadFromFirestore = async () => {
       try {
         const firestorePlayers = await window.GRP_DB.getAllPlayers();
         if (firestorePlayers && firestorePlayers.length > 0) {
+          const localSounds = readLocalSounds();
           const members = firestorePlayers
             .filter((p) => p.active !== false)
-            .map((p) => ({ name: p.displayName, sound: p.sound || 'none' }));
+            .map((p) => ({
+              name: p.displayName,
+              // Local choice wins so picks made without sign-in survive a reload.
+              sound: localSounds[p.displayName] || p.sound || 'none',
+            }));
           finalize(members);
           return true;
         }
@@ -1350,10 +1373,11 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     setRoster(roster.map((p) => (p.name === name ? { ...p, sound: soundKey } : p)));
     // Persist to Firestore so the choice sticks across sessions and devices.
     // Writes need auth; if not signed in, the localStorage copy still holds it
-    // for this browser.
+    // for this browser (and load logic now overlays local choices on top of
+    // Firestore data so the picks survive).
     if (fbUser && window.GRP_DB) {
       window.GRP_DB.upsertPlayer({ displayName: name, sound: soundKey })
-        .catch(() => { /* swallow — localStorage still has it */ });
+        .catch((e) => { console.error('[grp] failed to save sound to Firestore:', e); });
     }
   };
 
