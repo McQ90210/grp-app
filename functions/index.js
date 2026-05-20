@@ -163,10 +163,13 @@ Output JUST the prose paragraph — no greeting, no sign-off, no markdown, no he
 
 Context:
 - League: Greene Room Poker, Berkhamsted (pub venue)
+- Cadence: ONE league game per month (not weekly). A round is 5 regular games + 1 final, spread over 6 months.
 - Season: ${season.name}
 - Game ${game.gameNumber}${game.isFinal ? ' (FINAL — no points awarded)' : ''} on ${game.date}
 - ${(game.attendees || []).length} players, pot £${game.pot || 0}, ${game.totalRebuys || 0} rebuys
 - Podium: ${podium || 'no results recorded'}
+
+When referring to the next game, say "next month" or "the next game", never "next week" or "tonight".
 
 Top-5 season standings after last night:
 ${standingsBlurb || '(no standings yet)'}
