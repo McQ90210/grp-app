@@ -1233,23 +1233,14 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   const [includeAntes, setIncludeAntes] = useState(false);
   const [rosterLoaded, setRosterLoaded] = useState(false);
 
-  // The 9 regulars who play High Rollers games (display names)
-  const HIGH_ROLLERS_REGULARS = [
-    'Cactus', 'Beans', 'Quads', 'Chit Chat', 'Duck',
-    'Ostrich', 'Shoes', 'The Boxer', 'River Dan',
-  ];
-
   // Load roster on mount: Firestore first (the source of truth), fall back to
-  // localStorage if Firebase isn't ready. Filter to High Rollers regulars when
-  // gameType is 'highrollers'.
+  // localStorage if Firebase isn't ready. Both game types show the full
+  // Greene Room roster — admin picks who's playing tonight by checking names.
   useEffect(() => {
     let cancelled = false;
     const finalize = (members) => {
       if (cancelled) return;
-      const filtered = gameType === 'highrollers'
-        ? members.filter((p) => HIGH_ROLLERS_REGULARS.includes(p.name))
-        : members;
-      setRoster(filtered);
+      setRoster(members);
       // All start unchecked — admin picks who's actually playing tonight
       setPlayingTonight(new Set());
       setRosterLoaded(true);
@@ -1964,12 +1955,16 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   }, [levels, speakClip]);
 
   // Welcome message — only when starting from level 1 for the first time.
-  // Plays the pre-recorded Adam clip; falls back to Web Speech.
-  const speakWelcome = useCallback(() => {
+  // Plays the pre-recorded Adam clip, then announces the opening blinds.
+  // Falls back to Web Speech for the welcome if the clip fails.
+  const speakWelcome = useCallback(async () => {
     const level = levels[0];
     if (!level || level.isBreak) return;
-    speakClip('welcome', 'Welcome to the home game, everyone. Best of luck.');
-  }, [levels, speakClip]);
+    await speakClip('welcome', 'Welcome to the home game, everyone. Best of luck.');
+    // Brief pause then announce the starting blinds for level 1.
+    await new Promise((r) => setTimeout(r, 400));
+    announceLevel(0);
+  }, [levels, speakClip, announceLevel]);
 
   useEffect(() => {
     if (!isRunning) return;
