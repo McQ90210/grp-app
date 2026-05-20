@@ -3318,7 +3318,7 @@ function SignInModal({ onClose }) {
   };
 
   return (
-    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+    <div onClick={onClose} className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
       <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-sm w-full">
         <div className="flex justify-between items-center mb-4">
           <div className="font-display text-2xl gold-text">SIGN IN</div>
@@ -4617,6 +4617,7 @@ function SaveGameModal({
   const [error, setError] = useState(null);
   const [savedOk, setSavedOk] = useState(false);
   const [savedId, setSavedId] = useState(null);
+  const [showSignIn, setShowSignIn] = useState(false);
 
   // Compute game ID. League games are deterministic from season+game number.
   // HR games use the date — if multiple games are played the same day, a
@@ -4748,8 +4749,17 @@ function SaveGameModal({
         </div>
 
         {!fbUser && (
-          <div className="mb-4 p-3 rounded-lg bg-red-950/30 border border-red-500/30 text-red-200 font-mono text-sm">
-            ⚠ You must be signed in as admin to save games. Sign in from the home page first.
+          <div className="mb-4 p-3 rounded-lg bg-red-950/30 border border-red-500/30 flex items-center justify-between gap-3">
+            <div className="text-red-200 font-mono text-sm">
+              ⚠ You must be signed in as admin to save this game.
+            </div>
+            <button
+              onClick={() => setShowSignIn(true)}
+              className="shrink-0 px-4 py-2 rounded-full font-display text-sm text-black"
+              style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+            >
+              SIGN IN
+            </button>
           </div>
         )}
 
@@ -4905,6 +4915,7 @@ function SaveGameModal({
           </button>
         </div>
       </div>
+      {showSignIn && <SignInModal onClose={() => setShowSignIn(false)} />}
     </div>
   );
 }
