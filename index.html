@@ -4554,11 +4554,14 @@ function SaveGameModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [savedOk, setSavedOk] = useState(false);
+  const [savedId, setSavedId] = useState(null);
 
-  // Compute game ID
+  // Compute game ID. League games are deterministic from season+game number.
+  // HR games use the date — if multiple games are played the same day, a
+  // numeric suffix is appended at save time (-2, -3, ...) to avoid clashes.
   const gameId = gameType === 'league'
     ? `${leagueContext?.seasonId}-g${leagueContext?.gameNumber}`
-    : `hr-${Date.now()}`;
+    : `hr-${date}`;
 
   const updatePoints = (pid, val) => {
     const num = parseInt(val);
@@ -4584,18 +4587,31 @@ function SaveGameModal({
     setBusy(true);
     setError(null);
     try {
-      // Check for existing game with this ID
-      const existing = await window.GRP_DB.getGameById(gameId);
-      if (existing) {
-        setError(
-          `A game with ID "${gameId}" is already saved. Edit it via the league dashboard, or delete it first.`
+      // Resolve the final game ID. League IDs are deterministic and clash =
+      // error (means that season+game number is already saved). HR IDs are
+      // date-based and clash = same-day repeat → append -2, -3, ...
+      let finalId = gameId;
+      if (isLeague) {
+        const existing = await window.GRP_DB.getGameById(gameId);
+        if (existing) {
+          setError(
+            `A game with ID "${gameId}" is already saved. Edit it via the league dashboard, or delete it first.`
+          );
+          setBusy(false);
+          return;
+        }
+      } else {
+        const allHr = await window.GRP_DB.getAllHighRollerGames();
+        const sameDay = allHr.filter(
+          (g) => g.id === gameId || (g.id && g.id.startsWith(`${gameId}-`))
         );
-        setBusy(false);
-        return;
+        if (sameDay.length > 0) {
+          finalId = `${gameId}-${sameDay.length + 1}`;
+        }
       }
 
       const gameDoc = {
-        id: gameId,
+        id: finalId,
         type: gameType,
         seasonId: isLeague ? leagueContext.seasonId : null,
         date,
@@ -4618,6 +4634,7 @@ function SaveGameModal({
       };
 
       await window.GRP_DB.saveGame(gameDoc);
+      setSavedId(finalId);
       setSavedOk(true);
       setBusy(false);
       // Don't auto-close — let user see confirmation and tap done
@@ -4633,7 +4650,7 @@ function SaveGameModal({
         <div className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-8 max-w-md w-full text-center">
           <div className="font-display text-4xl gold-text mb-3">✓ SAVED</div>
           <div className="text-emerald-100 mb-2">
-            Game <span className="font-mono text-emerald-300">{gameId}</span> recorded.
+            Game <span className="font-mono text-emerald-300">{savedId || gameId}</span> recorded.
           </div>
           <div className="text-yellow-100/60 text-sm mb-6">
             {gameType === 'league'
