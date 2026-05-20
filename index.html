@@ -4,13 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#14a37b" />
-  <title>GR Poker</title>
+  <title>GRP Berkhamsted</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon-192.png" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="GR Poker" />
+  <meta name="apple-mobile-web-app-title" content="GRP Berkhamsted" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -3911,6 +3911,119 @@ function HighRollersPlayerProfile({ playerId, players, games, onClose }) {
 
 // ============ LEAGUE DASHBOARD ============
 // Shows the season-by-season standings table — spreadsheet-style view of all games.
+// Admin-only modal to rename a season's id + name. Cascades to all of the
+// season's games (re-IDs them so the deterministic save path keeps working).
+function MigrateSeasonModal({ season, onClose, onMigrated }) {
+  const [newSeasonId, setNewSeasonId] = useState(season.id);
+  const [newName, setNewName] = useState(season.name || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+
+  const idDirty = newSeasonId !== season.id;
+  const nameDirty = newName !== (season.name || '');
+  const dirty = idDirty || nameDirty;
+
+  const run = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await window.GRP_DB.migrateSeason({
+        oldSeasonId: season.id,
+        newSeasonId: newSeasonId.trim(),
+        newName: nameDirty ? newName.trim() : undefined,
+      });
+      setResult(res);
+    } catch (e) {
+      setError(e.message || 'Migration failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (result) {
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-8 max-w-md w-full text-center">
+          <div className="font-display text-3xl gold-text mb-3">✓ MIGRATED</div>
+          <div className="text-emerald-100 mb-2 font-mono text-sm">
+            {result.oldSeasonId} → <span className="text-emerald-300">{result.newSeasonId}</span>
+          </div>
+          <div className="text-yellow-100/60 text-xs mb-6 font-mono">
+            Renamed “{result.newName}”. {result.migratedGameCount} game{result.migratedGameCount === 1 ? '' : 's'} migrated.
+          </div>
+          <button
+            onClick={() => onMigrated(result)}
+            className="w-full px-6 py-3 rounded-full font-display text-xl text-black"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            RELOAD
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full">
+        <div className="flex justify-between items-start mb-4">
+          <div className="font-display text-3xl gold-text">SEASON TOOLS</div>
+          <button onClick={onClose} disabled={busy} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        </div>
+
+        <div className="mb-4 p-3 rounded-lg bg-black/40 border border-yellow-500/20 font-mono text-xs text-yellow-100/70">
+          Renames this season's id and/or display name, and migrates every game in the season to match. Useful if a season was saved under the wrong id (e.g. “2026-r2” when the games actually belong to Round 1).
+        </div>
+
+        <div className="space-y-3 mb-5">
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">SEASON ID</div>
+            <input
+              type="text"
+              value={newSeasonId}
+              onChange={(e) => setNewSeasonId(e.target.value)}
+              placeholder="e.g. 2026-r1"
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+            <div className="text-yellow-100/30 text-[10px] font-mono mt-1">Current: {season.id}</div>
+          </div>
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">DISPLAY NAME</div>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="e.g. 2026 — Round 1"
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-3 p-3 rounded-lg bg-red-950/40 border border-red-500/40 text-red-200 font-mono text-xs">
+            {error}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button onClick={onClose} disabled={busy} className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm disabled:opacity-30">
+            CANCEL
+          </button>
+          <button
+            onClick={run}
+            disabled={busy || !dirty || !newSeasonId.trim()}
+            className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            {busy ? 'MIGRATING…' : 'MIGRATE'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LeagueDashboard({ onBack, fbUser }) {
   const [seasons, setSeasons] = useState([]);
   const [activeSeasonId, setActiveSeasonId] = useState(null);
@@ -3926,6 +4039,8 @@ function LeagueDashboard({ onBack, fbUser }) {
   const [resendBusy, setResendBusy] = useState(false);
   const [resendMessage, setResendMessage] = useState(null); // { kind: 'ok'|'err', text }
   const [showResendConfirm, setShowResendConfirm] = useState(false);
+  // Season-rename admin tool
+  const [showMigrateModal, setShowMigrateModal] = useState(false);
 
   const doResend = async () => {
     setShowResendConfirm(false);
@@ -4186,6 +4301,17 @@ function LeagueDashboard({ onBack, fbUser }) {
               {resendBusy ? 'SENDING…' : '✉ RESEND RESULTS'}
             </button>
           )}
+
+          {/* Admin: rename / migrate the current season's id + name */}
+          {fbUser && activeSeason && (
+            <button
+              onClick={() => setShowMigrateModal(true)}
+              className="px-4 py-2 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-100 font-mono text-xs hover:bg-yellow-500/25"
+              title="Rename this season's id and/or display name. All games in the season are migrated to match."
+            >
+              ⚙ SEASON TOOLS
+            </button>
+          )}
         </div>
 
         {/* Resend status toast */}
@@ -4374,6 +4500,19 @@ function LeagueDashboard({ onBack, fbUser }) {
       )}
 
       {/* Delete season confirm */}
+      {/* Admin: season migration modal */}
+      {showMigrateModal && activeSeason && (
+        <MigrateSeasonModal
+          season={activeSeason}
+          onClose={() => setShowMigrateModal(false)}
+          onMigrated={(result) => {
+            setShowMigrateModal(false);
+            // Force a full reload so all season state refreshes cleanly.
+            window.location.reload();
+          }}
+        />
+      )}
+
       {/* Confirm before re-sending results email to everyone */}
       {showResendConfirm && (
         <ConfirmDialog

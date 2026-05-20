@@ -173,6 +173,15 @@ async function resendLatestResults() {
   return res.data;
 }
 
+// Admin: rename a season's id + name and migrate all of its games to match.
+// Useful when a season was stored under the wrong id (e.g. "2026-r2" when the
+// data really belongs to Round 1). Returns { ok, migratedGameCount, ... }
+async function migrateSeason({ oldSeasonId, newSeasonId, newName }) {
+  const fn = httpsCallable(functions, 'migrateSeason');
+  const res = await fn({ oldSeasonId, newSeasonId, newName });
+  return res.data;
+}
+
 window.GRP_DB = {
   // Players
   getAllPlayers, getPlayer, upsertPlayer, subscribeToPlayers,
@@ -183,7 +192,7 @@ window.GRP_DB = {
   // Email
   resendLatestResults,
   // Admin
-  bulkImport,
+  bulkImport, migrateSeason,
 };
 
 window.dispatchEvent(new CustomEvent('firebase-ready'));

@@ -26,6 +26,9 @@ const db = admin.firestore();
 
 const GMAIL_USER = defineSecret('GMAIL_USER');
 const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
+// Optional — used by generateRecap() below. Free-tier Google AI Studio key.
+// If unset, the email still sends without a recap.
+const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
 
 const REGION = 'europe-west2';
 
@@ -126,6 +129,88 @@ function computeStandings(games, players) {
 }
 
 // ============================================================================
+// AI recap — short prose intro generated per email via Gemini (free tier).
+// ============================================================================
+
+// Returns a 2-3 sentence recap string, or null if Gemini is unavailable or
+// returns nothing useful. We never fail the email send if the recap fails —
+// just skip the intro paragraph.
+async function generateRecap({ game, season, standings, players }) {
+  const key = (() => {
+    try { return GEMINI_API_KEY.value(); } catch { return null; }
+  })();
+  if (!key) return null;
+
+  const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
+  const podium = [1, 2, 3].map((place) => {
+    const pid = (game.finishOrder || [])[place - 1];
+    const name = pid ? playersById[pid]?.displayName || pid : null;
+    const payout = game.payouts?.[String(place)] || 0;
+    return name ? `${place}. ${name} (£${payout})` : null;
+  }).filter(Boolean).join(', ');
+
+  const standingsBlurb = standings.slice(0, 5).map((s, i) =>
+    `${i + 1}. ${s.displayName} (${s.total.toLocaleString()} pts, ${s.gamesPlayed} games)`
+  ).join('\n');
+
+  const prompt = `Write a 3-4 sentence recap (60-100 words) of last night's Greene Room Poker
+league game, for the morning-after results email. Tone: warm, dry-witty, British pub
+energy. Reference at least TWO specific player nicknames and AT LEAST ONE specific
+number (place, points, pot, gap in standings, win count). Never use exclamation marks.
+Never use hyphens or em-dashes (-, —). Use commas, full stops, or rewrite the sentence
+instead. Never use the words "epic", "showdown", "thrilling", "battle", "duel", "clash".
+Output JUST the prose paragraph — no greeting, no sign-off, no markdown, no headers.
+
+Context:
+- League: Greene Room Poker, Berkhamsted (pub venue)
+- Season: ${season.name}
+- Game ${game.gameNumber}${game.isFinal ? ' (FINAL — no points awarded)' : ''} on ${game.date}
+- ${(game.attendees || []).length} players, pot £${game.pot || 0}, ${game.totalRebuys || 0} rebuys
+- Podium: ${podium || 'no results recorded'}
+
+Top-5 season standings after last night:
+${standingsBlurb || '(no standings yet)'}
+
+Now write the recap (3-4 sentences, 60-100 words):`;
+
+  try {
+    // gemini-2.5-flash is the current free-tier flagship. If 429s come back,
+    // try gemini-2.5-flash-lite (smaller, more generous quota) or
+    // gemini-1.5-flash (legacy, very stable free tier).
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          // Disable Gemini 2.5's internal "thinking" tokens. Without this, the
+          // model spends most of maxOutputTokens reasoning silently and truncates
+          // the actual response mid-sentence.
+          thinkingConfig: { thinkingBudget: 0 },
+          temperature: 0.8,
+          maxOutputTokens: 400,
+        },
+      }),
+    });
+    if (!res.ok) {
+      logger.warn(`Gemini API HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      return null;
+    }
+    const json = await res.json();
+    const text = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!text) {
+      logger.warn('Gemini returned no text:', JSON.stringify(json).slice(0, 200));
+      return null;
+    }
+    return text;
+  } catch (err) {
+    logger.warn('generateRecap failed (continuing without):', err.message);
+    return null;
+  }
+}
+
+// ============================================================================
 // Email rendering (inline-styled HTML for email-client safety)
 // ============================================================================
 
@@ -145,7 +230,7 @@ function escape(s) {
   }[c]));
 }
 
-function renderResultsEmail({ game, season, standings, players }) {
+function renderResultsEmail({ game, season, standings, players, recap }) {
   const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
   const finishOrder = (game.finishOrder || []).map((pid) => ({
     pid,
@@ -188,14 +273,22 @@ function renderResultsEmail({ game, season, standings, players }) {
 
   return `<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>GR Poker results</title></head>
+<head><meta charset="utf-8"><title>GRP Berkhamsted results</title></head>
 <body style="margin:0;padding:0;background:${BG_DARK};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <div style="max-width:640px;margin:0 auto;padding:24px 16px;background:${BG_DARK};color:${TEXT_LIGHT};">
 
-    <h1 style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${BRAND_GREEN_LIGHT};letter-spacing:0.05em;font-size:28px;margin:0 0 4px;text-transform:uppercase;">GR Poker</h1>
+    <h1 style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${BRAND_GREEN_LIGHT};letter-spacing:0.05em;font-size:28px;margin:0 0 4px;text-transform:uppercase;">GRP Berkhamsted</h1>
     <div style="color:${BRAND_GREEN};font-size:13px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:24px;">
       ${escape(season.name)} · Game ${game.gameNumber}${isFinal ? ' · FINAL' : ''} · ${escape(game.date)}
     </div>
+
+    ${
+      recap
+        ? `<div style="padding:14px 16px;margin-bottom:24px;background:rgba(20,163,123,0.08);border-left:3px solid ${BRAND_GREEN};border-radius:0 8px 8px 0;color:${TEXT_LIGHT};font-size:15px;line-height:1.55;">
+            ${escape(recap)}
+          </div>`
+        : ''
+    }
 
     <h2 style="color:${BRAND_GREEN_LIGHT};font-size:20px;margin:0 0 12px;border-bottom:1px solid rgba(20,163,123,0.3);padding-bottom:8px;">Last night's podium</h2>
     <table style="width:100%;border-collapse:collapse;margin-bottom:20px;background:rgba(0,0,0,0.3);border-radius:8px;">
@@ -266,7 +359,10 @@ async function sendResultsForGame(game) {
   }
 
   const standings = computeStandings(seasonGames, players);
-  const html = renderResultsEmail({ game, season, standings, players });
+  // Best-effort AI recap. If Gemini's unavailable, recap is null and the email
+  // still goes out — just without the prose intro.
+  const recap = await generateRecap({ game, season, standings, players });
+  const html = renderResultsEmail({ game, season, standings, players, recap });
 
   const user = GMAIL_USER.value();
   const pass = GMAIL_APP_PASSWORD.value();
@@ -279,12 +375,12 @@ async function sendResultsForGame(game) {
     auth: { user, pass },
   });
 
-  const subject = `GR Poker — ${season.name} Game ${game.gameNumber}${
+  const subject = `GRP Berkhamsted: ${season.name} · Game ${game.gameNumber}${
     game.isFinal ? ' FINAL' : ''
   } results`;
 
   await transporter.sendMail({
-    from: `"GR Poker League" <${user}>`,
+    from: `"GRP Berkhamsted" <${user}>`,
     to: user, // visible recipient = sender (so individual addresses stay private)
     bcc: recipients.map((r) => r.email),
     subject,
@@ -315,7 +411,7 @@ exports.dailyResultsEmail = onSchedule(
     schedule: '0 9 * * *',
     timeZone: 'Europe/London',
     region: REGION,
-    secrets: [GMAIL_USER, GMAIL_APP_PASSWORD],
+    secrets: [GMAIL_USER, GMAIL_APP_PASSWORD, GEMINI_API_KEY],
     retryCount: 1,
   },
   async () => {
@@ -345,7 +441,7 @@ exports.dailyResultsEmail = onSchedule(
 exports.resendLatestResults = onCall(
   {
     region: REGION,
-    secrets: [GMAIL_USER, GMAIL_APP_PASSWORD],
+    secrets: [GMAIL_USER, GMAIL_APP_PASSWORD, GEMINI_API_KEY],
   },
   async (request) => {
     if (!request.auth) {
@@ -365,5 +461,102 @@ exports.resendLatestResults = onCall(
       logger.error('resendLatestResults failed:', err);
       throw new HttpsError('internal', err.message || 'Email send failed.');
     }
+  }
+);
+
+// Callable: admin tool. Renames a season's document ID + name + cascades to
+// all of its games. Useful when historical seasons were stored under the wrong
+// ID (e.g. "2026-r2" when the data is actually Round 1).
+//
+// Input: { oldSeasonId, newSeasonId, newName? }
+// Output: { ok, migratedGameCount, oldSeasonId, newSeasonId }
+//
+// Atomicity: uses a Firestore batch (max 500 writes). Each game costs 2 writes
+// (create new + delete old), plus 2 for the season — caps at ~248 games which
+// is fine forever for this league.
+exports.migrateSeason = onCall(
+  { region: REGION },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
+    }
+    const { oldSeasonId, newSeasonId, newName } = request.data || {};
+    if (!oldSeasonId || !newSeasonId) {
+      throw new HttpsError('invalid-argument', 'oldSeasonId and newSeasonId are both required.');
+    }
+    if (oldSeasonId === newSeasonId && !newName) {
+      throw new HttpsError('invalid-argument', 'No change requested.');
+    }
+
+    // Fetch source season
+    const oldSnap = await db.doc(`seasons/${oldSeasonId}`).get();
+    if (!oldSnap.exists) {
+      throw new HttpsError('not-found', `Season ${oldSeasonId} does not exist.`);
+    }
+    const oldData = oldSnap.data();
+
+    // Block accidental overwrite if a different doc already lives at newSeasonId
+    if (oldSeasonId !== newSeasonId) {
+      const collide = await db.doc(`seasons/${newSeasonId}`).get();
+      if (collide.exists) {
+        throw new HttpsError('already-exists',
+          `Season ${newSeasonId} already exists. Pick a different new ID, or delete the existing one first.`);
+      }
+    }
+
+    // Fetch all games attached to the old season
+    const gamesSnap = await db.collection('games').where('seasonId', '==', oldSeasonId).get();
+
+    // If renaming the doc itself (id changes), we also have to rewrite each
+    // game's id (e.g. "2026-r2-g3" → "2026-r1-g3") so the deterministic
+    // "saveGame" path in the client doesn't collide later.
+    const idChanging = oldSeasonId !== newSeasonId;
+
+    const batch = db.batch();
+
+    // 1) Write the new season doc (only if id is changing OR name is changing)
+    const newSeasonRef = db.doc(`seasons/${newSeasonId}`);
+    batch.set(newSeasonRef, {
+      ...oldData,
+      ...(newName ? { name: newName } : {}),
+    });
+
+    // 2) For each game: copy to new doc id, update seasonId field, delete old
+    const renamedGames = [];
+    gamesSnap.docs.forEach((d) => {
+      const g = d.data();
+      const oldGameId = d.id;
+      const newGameId = idChanging
+        ? oldGameId.replace(new RegExp(`^${oldSeasonId}-`), `${newSeasonId}-`)
+        : oldGameId;
+      const newGameData = { ...g, seasonId: newSeasonId };
+      if (idChanging) {
+        batch.set(db.doc(`games/${newGameId}`), newGameData);
+        batch.delete(db.doc(`games/${oldGameId}`));
+        renamedGames.push({ from: oldGameId, to: newGameId });
+      } else {
+        // Same id, just update the seasonId field (a no-op write — kept for clarity)
+        batch.set(db.doc(`games/${oldGameId}`), newGameData);
+      }
+    });
+
+    // 3) Delete the old season doc if the id changed
+    if (idChanging) batch.delete(db.doc(`seasons/${oldSeasonId}`));
+
+    await batch.commit();
+
+    logger.info(
+      `migrateSeason: ${oldSeasonId} → ${newSeasonId}${newName ? ` ("${newName}")` : ''}; ` +
+      `migrated ${gamesSnap.size} games.`
+    );
+
+    return {
+      ok: true,
+      oldSeasonId,
+      newSeasonId,
+      newName: newName || oldData.name,
+      migratedGameCount: gamesSnap.size,
+      renamedGames,
+    };
   }
 );
