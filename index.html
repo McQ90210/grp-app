@@ -780,20 +780,41 @@ async function playSound(soundKey, customSounds = {}) {
 // Play a pre-recorded voice clip from sounds/voice/{key}.mp3.
 // Returns a Promise that resolves when playback ends, or rejects if the file
 // doesn't exist / fails to load — callers fall back to Web Speech in that case.
-// Only one voice clip plays at a time; starting a new one cancels the previous.
-let _activeVoiceAudio = null;
+//
+// We reuse a single <audio> element across clips. iOS Safari only allows
+// fresh `new Audio()` instances to play if created during a user gesture,
+// so creating new ones for each clip (e.g. for the blinds clip ~4s after
+// the welcome) was sporadically failing with NotAllowedError and causing
+// the Web Speech fallback to fire in a different system voice. Reusing a
+// single element preserves the audio unlock across the whole session.
+let _voiceAudio = null;
+let _voiceResolve = null;
+let _voiceReject = null;
 function playVoiceClip(key) {
   return new Promise((resolve, reject) => {
-    if (_activeVoiceAudio) {
-      try { _activeVoiceAudio.pause(); } catch (e) {}
-      _activeVoiceAudio = null;
+    if (!_voiceAudio) {
+      _voiceAudio = new Audio();
+      _voiceAudio.volume = 1;
+      _voiceAudio.onended = () => {
+        const r = _voiceResolve; _voiceResolve = _voiceReject = null;
+        if (r) r();
+      };
+      _voiceAudio.onerror = () => {
+        const r = _voiceReject; _voiceResolve = _voiceReject = null;
+        if (r) r(new Error('clip error'));
+      };
     }
-    const audio = new Audio(`sounds/voice/${key}.mp3`);
-    audio.volume = 1;
-    _activeVoiceAudio = audio;
-    audio.onended = () => { if (_activeVoiceAudio === audio) _activeVoiceAudio = null; resolve(); };
-    audio.onerror = () => { if (_activeVoiceAudio === audio) _activeVoiceAudio = null; reject(new Error('clip missing')); };
-    audio.play().catch((e) => { if (_activeVoiceAudio === audio) _activeVoiceAudio = null; reject(e); });
+    // Abandon any in-flight clip's promise — caller of the new one wins.
+    _voiceResolve = _voiceReject = null;
+    try { _voiceAudio.pause(); } catch (e) {}
+    _voiceResolve = resolve;
+    _voiceReject = reject;
+    _voiceAudio.src = `sounds/voice/${key}.mp3`;
+    try { _voiceAudio.currentTime = 0; } catch (e) {}
+    _voiceAudio.play().catch((e) => {
+      const r = _voiceReject; _voiceResolve = _voiceReject = null;
+      if (r) r(e);
+    });
   });
 }
 
@@ -1226,21 +1247,49 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   const [step, setStep] = useState(0);
   const [buyIn, setBuyIn] = useState('20');
   const [stackSize, setStackSize] = useState('10000');
-  const [roster, setRoster] = useState([]); // every club member, persisted
+  const [roster, setRoster] = useState([]); // currently displayed list
+  const [allGrpPlayers, setAllGrpPlayers] = useState([]); // full GRP roster — picker source
+  const [hrRegulars, setHrRegulars] = useState([]); // names on the HR regulars allowlist
+  const [showPlayerPicker, setShowPlayerPicker] = useState(false);
   const [playingTonight, setPlayingTonight] = useState(new Set()); // names selected for this game
   const [newPlayer, setNewPlayer] = useState('');
   const [duration, setDuration] = useState('180');
   const [includeAntes, setIncludeAntes] = useState(false);
   const [rosterLoaded, setRosterLoaded] = useState(false);
 
+  const readHrRegulars = () => {
+    try {
+      const saved = localStorage.getItem('grp-hr-regulars');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  };
+
   // Load roster on mount: Firestore first (the source of truth), fall back to
-  // localStorage if Firebase isn't ready. Both game types show the full
-  // Greene Room roster — admin picks who's playing tonight by checking names.
+  // localStorage if Firebase isn't ready. League mode shows the full Greene
+  // Room roster; High Rollers mode shows only the HR regulars allowlist
+  // (managed via the + picker and × delete button).
   useEffect(() => {
     let cancelled = false;
-    const finalize = (members) => {
+    const finalize = (allMembers) => {
       if (cancelled) return;
-      setRoster(members);
+      setAllGrpPlayers(allMembers);
+      if (gameType === 'highrollers') {
+        const hrReg = readHrRegulars();
+        setHrRegulars(hrReg);
+        // Build the displayed roster: GRP players in the allowlist, plus any
+        // non-GRP names that were added via "new player" in the picker.
+        const grpInAllow = allMembers.filter(p => hrReg.includes(p.name));
+        const nonGrp = hrReg
+          .filter(n => !allMembers.find(p => p.name === n))
+          .map(n => ({ name: n, sound: 'none' }));
+        setRoster([...grpInAllow, ...nonGrp]);
+      } else {
+        setRoster(allMembers);
+      }
       // All start unchecked — admin picks who's actually playing tonight
       setPlayingTonight(new Set());
       setRosterLoaded(true);
@@ -1337,6 +1386,34 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     })();
   }, [roster, rosterLoaded]);
 
+  // Persist HR regulars allowlist when in HR mode
+  useEffect(() => {
+    if (!rosterLoaded || gameType !== 'highrollers') return;
+    try {
+      localStorage.setItem('grp-hr-regulars', JSON.stringify(hrRegulars));
+    } catch (e) { /* fail silently */ }
+  }, [hrRegulars, rosterLoaded, gameType]);
+
+  // Add one-or-more names from the picker modal to the roster (HR mode only).
+  // GRP-roster names come with their saved sound; new names start at 'none'.
+  const addFromPicker = (names) => {
+    if (!names || names.length === 0) {
+      setShowPlayerPicker(false);
+      return;
+    }
+    const newReg = Array.from(new Set([...hrRegulars, ...names]));
+    setHrRegulars(newReg);
+    const toAdd = names
+      .filter(n => !roster.find(p => p.name === n))
+      .map(n => {
+        const grp = allGrpPlayers.find(p => p.name === n);
+        return grp ? { ...grp } : { name: n, sound: 'none' };
+      });
+    setRoster([...roster, ...toAdd]);
+    setPlayingTonight((prev) => new Set([...prev, ...names]));
+    setShowPlayerPicker(false);
+  };
+
   const addPlayer = () => {
     const name = newPlayer.trim();
     if (!name) return;
@@ -1372,7 +1449,8 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     }
   };
 
-  // Remove from roster entirely
+  // Remove from roster entirely. In HR mode this also drops the name from the
+  // regulars allowlist so they won't reappear next session unless re-added.
   const removeFromRoster = (name) => {
     setRoster(roster.filter((p) => p.name !== name));
     setPlayingTonight((prev) => {
@@ -1380,6 +1458,9 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       next.delete(name);
       return next;
     });
+    if (gameType === 'highrollers') {
+      setHrRegulars((prev) => prev.filter((n) => n !== name));
+    }
   };
 
   const selectAll = () => setPlayingTonight(new Set(roster.map((p) => p.name)));
@@ -1583,20 +1664,31 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                     ? 'Add your regulars below'
                     : `${playersArray.length} of ${roster.length} playing tonight`}
                 </div>
-                <div className="flex gap-2 mb-4 max-w-md mx-auto">
-                  <input
-                    type="text"
-                    value={newPlayer}
-                    onChange={(e) => setNewPlayer(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && addPlayer()}
-                    placeholder={roster.length === 0 ? "Add player..." : "Add new player..."}
-                    autoFocus
-                    className="flex-1 px-4 py-3 rounded-xl bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 focus:outline-none focus:border-yellow-500/50"
-                  />
-                  <button onClick={addPlayer} className="px-5 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-yellow-100 hover:bg-yellow-500/30">
-                    <Plus size={20} />
-                  </button>
-                </div>
+                {gameType === 'highrollers' ? (
+                  <div className="flex justify-center mb-4">
+                    <button
+                      onClick={() => setShowPlayerPicker(true)}
+                      className="px-6 py-3 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-yellow-100 font-display text-lg hover:bg-yellow-500/30 flex items-center gap-2"
+                    >
+                      <Plus size={20} /> ADD PLAYER
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2 mb-4 max-w-md mx-auto">
+                    <input
+                      type="text"
+                      value={newPlayer}
+                      onChange={(e) => setNewPlayer(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && addPlayer()}
+                      placeholder={roster.length === 0 ? "Add player..." : "Add new player..."}
+                      autoFocus
+                      className="flex-1 px-4 py-3 rounded-xl bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 focus:outline-none focus:border-yellow-500/50"
+                    />
+                    <button onClick={addPlayer} className="px-5 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-yellow-100 hover:bg-yellow-500/30">
+                      <Plus size={20} />
+                    </button>
+                  </div>
+                )}
 
                 {roster.length > 0 && (
                   <>
@@ -1793,6 +1885,123 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
             style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
           >
             {step === 4 ? 'START TOURNAMENT' : <>NEXT <ChevronRight size={18} /></>}
+          </button>
+        </div>
+      </div>
+
+      {showPlayerPicker && (
+        <PlayerPickerModal
+          allPlayers={allGrpPlayers}
+          alreadyAdded={hrRegulars}
+          onAdd={addFromPicker}
+          onClose={() => setShowPlayerPicker(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============ PLAYER PICKER MODAL (HR setup) ============
+// Used in High Rollers setup to add players to the regulars list. Shows every
+// GRP-roster player not already on the list (checkbox select-multiple) plus a
+// text field for adding a new (non-GRP) name.
+function PlayerPickerModal({ allPlayers, alreadyAdded, onAdd, onClose }) {
+  const [selected, setSelected] = useState(new Set());
+  const [newName, setNewName] = useState('');
+
+  const available = allPlayers.filter((p) => !alreadyAdded.includes(p.name));
+
+  const toggle = (name) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const commit = () => {
+    const names = [...selected];
+    const extra = newName.trim();
+    if (extra && !names.includes(extra) && !alreadyAdded.includes(extra)) {
+      names.push(extra);
+    }
+    onAdd(names);
+  };
+
+  const total = selected.size + (newName.trim() && !alreadyAdded.includes(newName.trim()) ? 1 : 0);
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[90vh] flex flex-col">
+        <div className="font-display text-2xl gold-text mb-1">ADD PLAYERS</div>
+        <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-4">
+          Pick from your GRP roster or add a new name
+        </div>
+
+        <div className="flex-1 overflow-y-auto pr-1 mb-4">
+          {available.length > 0 ? (
+            <>
+              <div className="font-mono text-xs text-emerald-300 tracking-widest mb-2">FROM GRP ROSTER</div>
+              <div className="space-y-1 mb-4">
+                {available.map((p) => {
+                  const isSelected = selected.has(p.name);
+                  return (
+                    <button
+                      key={p.name}
+                      onClick={() => toggle(p.name)}
+                      className={`w-full flex items-center gap-3 p-2.5 rounded-lg border transition-colors ${
+                        isSelected
+                          ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-100'
+                          : 'bg-black/30 border-yellow-500/10 text-yellow-100/80 hover:border-yellow-500/30'
+                      }`}
+                    >
+                      <span className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                        isSelected ? 'bg-emerald-500 border-emerald-400' : 'border-yellow-100/30'
+                      }`}>
+                        {isSelected && (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className="flex-1 text-left">{p.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <div className="text-yellow-100/40 text-sm text-center py-4 mb-2">
+              All GRP players are already on the regulars list.
+            </div>
+          )}
+
+          <div className="font-mono text-xs text-emerald-300 tracking-widest mb-2 mt-4">OR ADD A NEW NAME</div>
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && total > 0) commit(); }}
+            placeholder="New player name"
+            className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm focus:outline-none focus:border-yellow-500/50"
+          />
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm"
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={commit}
+            disabled={total === 0}
+            className="flex-1 px-4 py-2.5 rounded-full font-display text-base text-black disabled:opacity-30"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            ADD{total > 0 ? ` (${total})` : ''}
           </button>
         </div>
       </div>
