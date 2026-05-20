@@ -1008,7 +1008,13 @@ function LeagueContextScreen({ onConfirm, onBack }) {
         if (cancelled) return;
         setSeasons(allSeasons);
         setPlayers(allPlayers);
-        const active = allSeasons.find(s => s.status === 'active') || allSeasons[0];
+        // Prefer the season whose date range contains today; fall back to the
+        // 'active' flag, then to the most recent. Date-range wins so a stale
+        // future season tagged active (e.g. 2026-r2 dated Jul-Dec) doesn't
+        // get picked while we're still in the prior round.
+        const today = new Date().toISOString().slice(0, 10);
+        const byDate = allSeasons.find(s => s.startDate && s.endDate && s.startDate <= today && s.endDate >= today);
+        const active = byDate || allSeasons.find(s => s.status === 'active') || allSeasons[0];
         if (active) {
           setSeasonId(active.id);
           const seasonGames = await window.GRP_DB.getGamesForSeason(active.id);
@@ -3914,7 +3920,11 @@ function LeagueDashboard({ onBack, fbUser }) {
         if (cancelled) return;
         setSeasons(allSeasons);
         setPlayers(allPlayers);
-        const active = allSeasons.find(s => s.status === 'active') || allSeasons[0];
+        // Prefer the season whose date range contains today (see notes in
+        // LeagueContextScreen); fall back to status='active', then first.
+        const today = new Date().toISOString().slice(0, 10);
+        const byDate = allSeasons.find(s => s.startDate && s.endDate && s.startDate <= today && s.endDate >= today);
+        const active = byDate || allSeasons.find(s => s.status === 'active') || allSeasons[0];
         if (active) setActiveSeasonId(active.id);
         setLoading(false);
       } catch (e) {
