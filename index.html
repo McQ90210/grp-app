@@ -2035,6 +2035,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const [fullRosterFromDB, setFullRosterFromDB] = useState([]); // raw player docs from Firestore — for bounty calc
 
   const intervalRef = useRef(null);
+  const scrubDraggingRef = useRef(false);
 
   // Load the full club roster from Firestore so late-entry can suggest existing names
   useEffect(() => {
@@ -2571,22 +2572,26 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 role="slider"
                 aria-label="Scrub round time"
                 onPointerDown={(e) => {
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  const updateFromEvent = (clientX, rect) => {
-                    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-                    // ratio = elapsed, so timeLeft = total - elapsed
-                    const total = level.duration * 60;
-                    const newTimeLeft = Math.round(total - ratio * total);
-                    setTimeLeft(Math.max(0, Math.min(total, newTimeLeft)));
-                  };
+                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+                  scrubDraggingRef.current = true;
                   const rect = e.currentTarget.getBoundingClientRect();
-                  updateFromEvent(e.clientX, rect);
-                  e.currentTarget.onpointermove = (ev) => updateFromEvent(ev.clientX, rect);
-                  e.currentTarget.onpointerup = (ev) => {
-                    e.currentTarget.onpointermove = null;
-                    e.currentTarget.onpointerup = null;
-                  };
+                  const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                  const total = level.duration * 60;
+                  setTimeLeft(Math.max(0, Math.min(total, Math.round(total - ratio * total))));
                 }}
+                onPointerMove={(e) => {
+                  if (!scrubDraggingRef.current) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                  const total = level.duration * 60;
+                  setTimeLeft(Math.max(0, Math.min(total, Math.round(total - ratio * total))));
+                }}
+                onPointerUp={(e) => {
+                  scrubDraggingRef.current = false;
+                  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
+                }}
+                onPointerCancel={() => { scrubDraggingRef.current = false; }}
+                onPointerLeave={() => { scrubDraggingRef.current = false; }}
                 className="h-3 bg-black/40 rounded-full overflow-hidden mt-4 mx-auto max-w-md cursor-pointer relative group touch-none"
               >
                 <div className="h-full" style={{
