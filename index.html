@@ -984,6 +984,26 @@ function computePointsAwarded({ attendees, finishOrder, bountiedNames, knockedOu
   return points;
 }
 
+// Compute a season's status from its date range and (optionally) its games,
+// ignoring any stale `status` field saved on the doc. Rules:
+//   - upcoming: today is before startDate
+//   - complete: today is past endDate, OR all games have been played
+//   - active:   within the date range and at least one game still unplayed
+// If games aren't provided, the "all played" check is skipped — date alone
+// decides between upcoming / active / complete. Used by the league wizard
+// and dashboard so seasons don't have to be hand-flagged.
+function computeSeasonStatus(season, gamesForSeason) {
+  if (!season || !season.startDate || !season.endDate) return 'unknown';
+  const today = new Date().toISOString().slice(0, 10);
+  if (today < season.startDate) return 'upcoming';
+  if (today > season.endDate) return 'complete';
+  if (gamesForSeason && season.totalGames) {
+    const played = gamesForSeason.filter(g => g.seasonId === season.id).length;
+    if (played >= season.totalGames) return 'complete';
+  }
+  return 'active';
+}
+
 // ============ LEAGUE CONTEXT SCREEN ============
 // Shown before the setup wizard for league games. Auto-detects active season
 // and next game number, lets user confirm or override.
@@ -1008,13 +1028,9 @@ function LeagueContextScreen({ onConfirm, onBack }) {
         if (cancelled) return;
         setSeasons(allSeasons);
         setPlayers(allPlayers);
-        // Prefer the season whose date range contains today; fall back to the
-        // 'active' flag, then to the most recent. Date-range wins so a stale
-        // future season tagged active (e.g. 2026-r2 dated Jul-Dec) doesn't
-        // get picked while we're still in the prior round.
-        const today = new Date().toISOString().slice(0, 10);
-        const byDate = allSeasons.find(s => s.startDate && s.endDate && s.startDate <= today && s.endDate >= today);
-        const active = byDate || allSeasons.find(s => s.status === 'active') || allSeasons[0];
+        // Pick the season that's currently active by date — ignoring the
+        // stored `status` field, since it can drift out of sync.
+        const active = allSeasons.find(s => computeSeasonStatus(s) === 'active') || allSeasons[0];
         if (active) {
           setSeasonId(active.id);
           const seasonGames = await window.GRP_DB.getGamesForSeason(active.id);
@@ -1170,7 +1186,7 @@ function LeagueContextScreen({ onConfirm, onBack }) {
                     >
                       {seasons.map(s => (
                         <option key={s.id} value={s.id} style={{ background: '#0a3d1f' }}>
-                          {s.name} {s.status === 'active' ? '(active)' : '(complete)'}
+                          {s.name} ({computeSeasonStatus(s)})
                         </option>
                       ))}
                     </select>
@@ -3920,11 +3936,8 @@ function LeagueDashboard({ onBack, fbUser }) {
         if (cancelled) return;
         setSeasons(allSeasons);
         setPlayers(allPlayers);
-        // Prefer the season whose date range contains today (see notes in
-        // LeagueContextScreen); fall back to status='active', then first.
-        const today = new Date().toISOString().slice(0, 10);
-        const byDate = allSeasons.find(s => s.startDate && s.endDate && s.startDate <= today && s.endDate >= today);
-        const active = byDate || allSeasons.find(s => s.status === 'active') || allSeasons[0];
+        // Pick the season currently active by date (ignoring stored status).
+        const active = allSeasons.find(s => computeSeasonStatus(s) === 'active') || allSeasons[0];
         if (active) setActiveSeasonId(active.id);
         setLoading(false);
       } catch (e) {
@@ -4110,7 +4123,7 @@ function LeagueDashboard({ onBack, fbUser }) {
             >
               {seasons.map(s => (
                 <option key={s.id} value={s.id} style={{ background: '#0a3d1f' }}>
-                  {s.name} {s.status === 'active' ? '(active)' : ''}
+                  {s.name} ({computeSeasonStatus(s, games)})
                 </option>
               ))}
             </select>
