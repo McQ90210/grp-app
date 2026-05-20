@@ -2176,6 +2176,21 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     announceLevel(0);
   }, [levels, speakClip, announceLevel]);
 
+  // Mid-game level transition: "Blinds Up!" then the new blinds.
+  // Breaks skip the "Blinds Up" prefix — just play the break clip.
+  // Used for both the automatic timer roll-over and the manual NEXT button.
+  const announceLevelTransition = useCallback(async (levelIdx) => {
+    const lvl = levels[levelIdx];
+    if (!lvl) return;
+    if (lvl.isBreak) {
+      announceLevel(levelIdx);
+      return;
+    }
+    await speakClip('blinds-up', 'Blinds up!');
+    await new Promise((r) => setTimeout(r, 200));
+    announceLevel(levelIdx);
+  }, [levels, speakClip, announceLevel]);
+
   useEffect(() => {
     if (!isRunning) return;
     intervalRef.current = setInterval(() => {
@@ -2184,7 +2199,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           setCurrentLevel((lvl) => {
             const next = Math.min(lvl + 1, levels.length - 1);
             if (next !== lvl) {
-              setTimeout(() => announceLevel(next), 100);
+              setTimeout(() => announceLevelTransition(next), 100);
               setTimeout(() => setTimeLeft(levels[next].duration * 60), 0);
             } else {
               setIsRunning(false);
@@ -2205,7 +2220,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       });
     }, 1000);
     return () => clearInterval(intervalRef.current);
-  }, [isRunning, levels, currentLevel, announceLevel, speak, speakClip]);
+  }, [isRunning, levels, currentLevel, announceLevel, announceLevelTransition, speak, speakClip]);
 
   const togglePlay = () => {
     // iOS / Safari requires the very first speak() call to happen synchronously
@@ -2230,7 +2245,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       const next = currentLevel + 1;
       setCurrentLevel(next);
       setTimeLeft(levels[next].duration * 60);
-      if (isRunning) announceLevel(next);
+      if (isRunning) announceLevelTransition(next);
     }
   };
 
@@ -2531,27 +2546,27 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
 
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12 mb-6">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-              <div>
+              <div className="text-center">
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">LEVEL</div>
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {(currentLevel + 1).toString().padStart(2, '0')}
                   <span className="text-2xl sm:text-3xl text-yellow-500/40"> / {levels.length}</span>
                 </div>
               </div>
-              <div>
+              <div className="text-center">
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">REMAINING</div>
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {activePlayers.length.toString().padStart(2, '0')}
                   <span className="text-2xl sm:text-3xl text-yellow-500/40"> / {players.length}</span>
                 </div>
               </div>
-              <div>
+              <div className="text-center">
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">AVG STACK</div>
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {activePlayers.length > 0 ? avgStack.toLocaleString() : '—'}
                 </div>
               </div>
-              <div>
+              <div className="text-center">
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-300/80 tracking-widest mb-1">POT</div>
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   £{prizePool.toLocaleString()}
