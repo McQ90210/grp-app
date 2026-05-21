@@ -2481,8 +2481,16 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       if (lvl && !lvl.isBreak && lvl.bb > 0) {
         const avgStack = totalChipsInPlay / alive;
         const avgBB = Math.max(1, avgStack / lvl.bb);
-        // 1 bust per (avgBB/2 + 2) minutes → busts/min = 1 / that
-        const elimsPerMin = 1 / (avgBB / 2 + 2);
+        // Two effects compose:
+        //   stackPressure — busts speed up as avgBB shrinks (calibrated
+        //     against amateur-club play; ~1 bust per (avgBB/2 + 2) min).
+        //   playerDamper — small fields play SLOWER per-bust than big ones:
+        //     deep stacks relative to chips-in-play, tighter ranges as the
+        //     bubble approaches, and a long heads-up grind. Damper drops
+        //     linearly from 1 at 6+ players down to 0.2 at heads-up.
+        const stackPressure = 1 / (avgBB / 2 + 2);
+        const playerDamper = Math.max(0.2, Math.min(1, (alive - 1) / 5));
+        const elimsPerMin = stackPressure * playerDamper;
         bustAccum += elimsPerMin * (step / 60);
         while (bustAccum >= 1 && alive > 1) {
           alive -= 1;
