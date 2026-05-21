@@ -3750,10 +3750,10 @@ function HighRollersHistory({ onBack, fbUser }) {
                   <button
                     key={key}
                     onClick={() => setTimeRange(key)}
-                    className={`px-3 py-1 rounded-full font-mono text-xs tracking-widest transition-colors ${
+                    className={`px-2 py-0.5 rounded font-mono text-xs tracking-widest transition-colors ${
                       timeRange === key
-                        ? 'bg-emerald-500/30 border border-emerald-400/60 text-emerald-100'
-                        : 'bg-black/30 border border-yellow-500/20 text-yellow-100/60 hover:border-yellow-500/40'
+                        ? 'bg-emerald-500/25 border border-emerald-400/50 text-emerald-100'
+                        : 'border border-yellow-500/15 text-yellow-100/50 hover:text-yellow-100/80 hover:border-yellow-500/30'
                     }`}
                   >
                     {label}
