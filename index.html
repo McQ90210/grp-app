@@ -28,9 +28,36 @@
     html, body { background: #020a06; margin: 0; padding: 0; min-height: 100vh; }
     #root { min-height: 100vh; }
     body { overscroll-behavior-y: contain; }
+    /* Hide everything until our display fonts have actually loaded. Otherwise
+       the system sans-serif fallback renders for ~100-300ms (much wider than
+       Bebas Neue) and then visibly jumps when the real font swaps in. The
+       inline script below removes this class once document.fonts.ready
+       resolves, or after a 1.2s safety timeout if the font never arrives. */
+    body.fonts-pending { visibility: hidden; }
   </style>
+  <script>
+    // Add the gating class as early as possible — before any content paints.
+    document.documentElement.classList.add('fonts-pending');
+    document.addEventListener('DOMContentLoaded', () => {
+      document.body.classList.add('fonts-pending');
+      const reveal = () => {
+        document.body.classList.remove('fonts-pending');
+        document.documentElement.classList.remove('fonts-pending');
+      };
+      const fontsReady = (document.fonts && document.fonts.ready) || Promise.resolve();
+      // Wait specifically for Bebas Neue — the one that causes the visible jump.
+      // .load() resolves when the font is actually downloaded and ready to render.
+      const bebas = document.fonts && document.fonts.load
+        ? document.fonts.load('1em "Bebas Neue"').catch(() => {})
+        : Promise.resolve();
+      Promise.race([
+        Promise.all([fontsReady, bebas]),
+        new Promise((r) => setTimeout(r, 1200)),  // safety: never block forever
+      ]).then(reveal);
+    });
+  </script>
 </head>
-<body>
+<body class="fonts-pending">
   <div id="root"></div>
   <script type="text/babel" data-presets="react" data-type="module">
 // Destructure hooks for in-browser use
