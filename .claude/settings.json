@@ -4,7 +4,12 @@
       "Bash(firebase deploy --only *)",
       "Bash(firebase functions:log *)",
       "Bash(firebase functions:secrets:access *)",
-      "Bash(firebase projects:list)"
+      "Bash(firebase projects:list)",
+      "Bash(cd *)",
+      "Bash(git add *)",
+      "Bash(git commit -m *)",
+      "Bash(git push *)",
+      "Bash(git fetch *)"
     ]
   }
 }
