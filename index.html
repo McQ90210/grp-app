@@ -2445,6 +2445,68 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const totalChipsInPlay = baseChipsFromStarting + (config.stackSize * totalRebuys);
   const avgStack = activePlayers.length > 0 ? Math.round(totalChipsInPlay / activePlayers.length) : 0;
 
+  // ===== End-time projection =====
+  // Minute-by-minute simulation. At each minute we compute the current
+  // average stack in BBs and translate that to a bust-out rate (empirically
+  // tuned for an amateur club: ~1 bust per (avgBB/2 + 2) minutes). Players
+  // decrement until only one is left, then we report the wall-clock time
+  // at that point.
+  //
+  // Why this beats the simpler "find the level where BB ≥ totalChips/N/15"
+  // heuristic: that approach fires when blinds first get punishing, but
+  // doesn't model the actual cascade that happens once they do. The
+  // simulation captures the self-reinforcing acceleration — as players
+  // bust, avg stack grows slowly, but BB grows much faster across level
+  // changes, so avgBB drops over time and busts speed up.
+  const endProjection = (() => {
+    if (!levels || levels.length === 0) return null;
+    if (activePlayers.length <= 1) return null;
+
+    // Worst-case "latest end": every remaining level plays in full.
+    let latestEndSec = timeLeft;
+    for (let i = currentLevel + 1; i < levels.length; i++) {
+      latestEndSec += levels[i].duration * 60;
+    }
+
+    // Simulate forward in 60-second steps.
+    let alive = activePlayers.length;
+    let levelIdx = currentLevel;
+    let secsLeftInLevel = timeLeft;
+    let elapsedSec = 0;
+    let bustAccum = 0;
+    const MAX_SIM_SEC = 12 * 60 * 60; // 12-hour safety net
+    while (alive > 1 && levelIdx < levels.length && elapsedSec < MAX_SIM_SEC) {
+      const lvl = levels[levelIdx];
+      const step = Math.min(60, Math.max(1, secsLeftInLevel));
+      if (lvl && !lvl.isBreak && lvl.bb > 0) {
+        const avgStack = totalChipsInPlay / alive;
+        const avgBB = Math.max(1, avgStack / lvl.bb);
+        // 1 bust per (avgBB/2 + 2) minutes → busts/min = 1 / that
+        const elimsPerMin = 1 / (avgBB / 2 + 2);
+        bustAccum += elimsPerMin * (step / 60);
+        while (bustAccum >= 1 && alive > 1) {
+          alive -= 1;
+          bustAccum -= 1;
+        }
+      }
+      elapsedSec += step;
+      secsLeftInLevel -= step;
+      if (secsLeftInLevel <= 0) {
+        levelIdx += 1;
+        if (levels[levelIdx]) secsLeftInLevel = levels[levelIdx].duration * 60;
+      }
+    }
+    // If we ran out of levels with players left, fall back to latest.
+    const projectedSec = alive > 1 ? latestEndSec : elapsedSec;
+
+    const now = Date.now();
+    const fmt = (d) => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    return {
+      likely: fmt(new Date(now + projectedSec * 1000)),
+      latest: fmt(new Date(now + latestEndSec * 1000)),
+    };
+  })();
+
   // Final 3 dramatic mode: when 3 or fewer remain and the field started larger.
   const finalThreeMode = activePlayers.length <= 3 && players.length > 3 && !winner;
 
@@ -2675,11 +2737,23 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               )}
             </div>
 
-            {nextLvl && (
+            {(nextLvl || endProjection) && (
               <div className="text-center pt-6 border-t border-yellow-500/10">
-                <div className="font-mono text-xs text-yellow-500/40 tracking-widest mb-1">NEXT</div>
-                <div className="font-mono text-yellow-100/60 text-sm">
-                  {nextLvl.isBreak ? `${nextLvl.duration} min break` : `${nextLvl.sb} / ${nextLvl.bb}${nextLvl.ante > 0 ? ` (ante ${nextLvl.ante})` : ''}`}
+                <div className="grid grid-cols-2 gap-4">
+                  {nextLvl && (
+                    <div>
+                      <div className="font-mono text-xs text-yellow-500/40 tracking-widest mb-1">NEXT</div>
+                      <div className="font-mono text-yellow-100/60 text-sm">
+                        {nextLvl.isBreak ? `${nextLvl.duration} min break` : `${nextLvl.sb} / ${nextLvl.bb}${nextLvl.ante > 0 ? ` (ante ${nextLvl.ante})` : ''}`}
+                      </div>
+                    </div>
+                  )}
+                  {endProjection && (
+                    <div title={`Based on chip stack, blind level, level times, and players remaining. Worst case (all levels run in full): ${endProjection.latest}`}>
+                      <div className="font-mono text-xs text-yellow-500/40 tracking-widest mb-1">EST. FINISH</div>
+                      <div className="font-mono text-yellow-100/60 text-sm">~{endProjection.likely}</div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -4114,6 +4188,10 @@ function LeagueDashboard({ onBack, fbUser }) {
           font-weight: 700;
           color: #1ec890;
           font-size: 15px;
+          /* Pull the right-justified numbers inward from the cell edge so
+             they sit more visually centred in this wider column, while still
+             aligning to each other on the right. */
+          padding-right: 40px;
         }
         .league-table tr:hover td:not(.sticky-col):not(.total-col) {
           background: rgba(20, 163, 123, 0.06);
@@ -4326,7 +4404,7 @@ function LeagueDashboard({ onBack, fbUser }) {
                     G1/G2/... without scrolling back up on long player lists. */}
                 {games.length > 0 && (
                   <tr className="header-recap">
-                    <td className="sticky-col text-left">Player</td>
+                    <td className="sticky-col text-left"></td>
                     {games.map((g) => (
                       <td key={g.id} className="text-center">
                         G{g.gameNumber}
