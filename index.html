@@ -1268,7 +1268,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   const isFinal = leagueContext?.isFinal === true;
   const [step, setStep] = useState(0);
   const [buyIn, setBuyIn] = useState(gameType === 'highrollers' ? '40' : '30');
-  const [stackSize, setStackSize] = useState('10000');
+  const [stackSize, setStackSize] = useState(gameType === 'highrollers' ? '6000' : '10000');
   const [roster, setRoster] = useState([]); // currently displayed list
   const [allGrpPlayers, setAllGrpPlayers] = useState([]); // full GRP roster — picker source
   const [hrRegulars, setHrRegulars] = useState([]); // names on the HR regulars allowlist
@@ -1664,7 +1664,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                 </div>
                 {!isFinal && (
                   <div className="flex gap-2 justify-center mt-4 flex-wrap">
-                    {['5000', '10000', '20000', '50000'].map((v) => (
+                    {(gameType === 'highrollers' ? ['6000', '8000', '10000'] : ['5000', '10000', '20000', '50000']).map((v) => (
                       <button key={v} onClick={() => setStackSize(v)} className="px-4 py-1.5 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50">{parseInt(v).toLocaleString()}</button>
                     ))}
                   </div>
@@ -2413,7 +2413,15 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
 
   const addLevel = () => {
     const last = levels[levels.length - 1];
-    setLevels([...levels, { ...last, sb: last.sb * 2, bb: last.bb * 2 }]);
+    // Skip back past any trailing break to find the last play level for doubling.
+    const lastPlay = [...levels].reverse().find((l) => !l.isBreak) || last;
+    setLevels([...levels, { ...lastPlay, sb: lastPlay.sb * 2, bb: lastPlay.bb * 2, isBreak: false }]);
+  };
+
+  const addBreak = () => {
+    // 10-minute break by default. Sits at the end of the structure; user can
+    // drag... well, edit duration or delete. (No reordering UI yet.)
+    setLevels([...levels, { sb: 0, bb: 0, ante: 0, duration: 10, isBreak: true }]);
   };
 
   const removeLevel = (idx) => {
@@ -2523,7 +2531,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         <div className="max-w-4xl mx-auto">
           <div className="flex justify-between items-center mb-8">
             <div className="flex items-center gap-3">
-              <img src="logos/GreeneRoomPokerLogo-02.svg" alt="" className="h-8 w-8 shrink-0" />
+              <img src="logos/GreeneRoomPokerLogo-02.svg" alt="" className="h-12 w-12 shrink-0" />
               <div className="font-display text-3xl gold-text">
                 {config.gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE GAME'}
               </div>
@@ -2917,73 +2925,84 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
               </div>
 
-              {/* Voice selector */}
-              {voices.length > 0 && (
-                <div className="mb-6 p-4 rounded-xl bg-black/30 border border-yellow-500/10">
-                  <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2">VOICE</div>
-                  <div className="flex gap-2">
-                    <select
-                      value={selectedVoiceURI || ''}
-                      onChange={(e) => setSelectedVoiceURI(e.target.value)}
-                      className="flex-1 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm focus:outline-none focus:border-yellow-500/50"
-                    >
-                      {voices.map((v) => (
-                        <option key={v.voiceURI} value={v.voiceURI} style={{ background: '#0a3d1f' }}>
-                          {v.name} ({v.lang}){v.localService ? '' : ' ★'}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={() => {
-                        if (typeof window === 'undefined' || !window.speechSynthesis) return;
-                        window.speechSynthesis.cancel();
-                        const u = new SpeechSynthesisUtterance('Blinds are now two hundred and four hundred. Good luck.');
-                        const v = getVoice();
-                        if (v) u.voice = v;
-                        u.rate = 0.95;
-                        window.speechSynthesis.speak(u);
-                      }}
-                      className="px-4 py-2 rounded-lg bg-yellow-500/20 border border-yellow-500/40 text-yellow-100 font-mono text-xs hover:bg-yellow-500/30"
-                    >
-                      TEST
-                    </button>
-                  </div>
-                  <div className="text-xs font-mono text-yellow-100/40 mt-2">
-                    ★ = network voice (usually higher quality)
-                  </div>
-                </div>
-              )}
+              {/* Voice selector UI removed in v7.29 — we now use a pre-recorded
+                  Adam script for everything in-game. The Google US English voice
+                  is auto-selected (see useEffect on `voices`) and kept as a
+                  runtime fallback for any utterance that doesn't have a clip. */}
 
               <div className="font-display text-xl gold-text mb-3">BLIND STRUCTURE</div>
               <div className="space-y-2 max-h-80 overflow-y-auto pr-2">
                 <div className="grid grid-cols-12 gap-2 text-xs font-mono text-yellow-500/60 tracking-widest px-2 pb-1">
                   <div className="col-span-1">#</div>
-                  <div className="col-span-2">SB</div>
-                  <div className="col-span-2">BB</div>
+                  <div className="col-span-3">SB</div>
+                  <div className="col-span-3">BB</div>
                   <div className="col-span-2">ANTE</div>
                   <div className="col-span-2">MIN</div>
-                  <div className="col-span-2">BREAK</div>
                   <div className="col-span-1"></div>
                 </div>
-                {levels.map((lvl, idx) => (
-                  <div key={idx} className={`grid grid-cols-12 gap-2 items-center p-2 rounded-lg ${idx === currentLevel ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-black/20'}`}>
-                    <div className="col-span-1 font-mono text-yellow-100/60 text-sm">{idx + 1}</div>
-                    <input type="number" value={lvl.sb} onChange={(e) => updateLevel(idx, 'sb', parseInt(e.target.value) || 0)} disabled={lvl.isBreak} className="col-span-2 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm disabled:opacity-30" />
-                    <input type="number" value={lvl.bb} onChange={(e) => updateLevel(idx, 'bb', parseInt(e.target.value) || 0)} disabled={lvl.isBreak} className="col-span-2 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm disabled:opacity-30" />
-                    <input type="number" value={lvl.ante} onChange={(e) => updateLevel(idx, 'ante', parseInt(e.target.value) || 0)} disabled={lvl.isBreak} className="col-span-2 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm disabled:opacity-30" />
-                    <input type="number" value={lvl.duration} onChange={(e) => updateLevel(idx, 'duration', parseInt(e.target.value) || 1)} className="col-span-2 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm" />
-                    <div className="col-span-2 flex justify-center">
-                      <input type="checkbox" checked={lvl.isBreak} onChange={(e) => updateLevel(idx, 'isBreak', e.target.checked)} className="w-4 h-4 accent-yellow-500" />
+                {levels.map((lvl, idx) => {
+                  // Empty/0 duration is allowed temporarily so the user can backspace
+                  // and retype. We just flag the row so they know to fix or delete it.
+                  const onDurationChange = (e) => {
+                    const v = e.target.value;
+                    if (v === '') {
+                      updateLevel(idx, 'duration', 0);
+                    } else {
+                      const n = parseInt(v, 10);
+                      if (!isNaN(n) && n >= 0) updateLevel(idx, 'duration', n);
+                    }
+                  };
+                  const durationDisplay = lvl.duration > 0 ? lvl.duration : '';
+                  const durationWarn = !lvl.duration || lvl.duration <= 0;
+                  const rowClass = `grid grid-cols-12 gap-2 items-center p-2 rounded-lg ${
+                    idx === currentLevel ? 'bg-yellow-500/10 border border-yellow-500/30' :
+                    lvl.isBreak ? 'bg-blue-500/10 border border-blue-500/20' :
+                    'bg-black/20'
+                  }`;
+                  return (
+                    <div key={idx}>
+                      <div className={rowClass}>
+                        <div className="col-span-1 font-mono text-yellow-100/60 text-sm">{idx + 1}</div>
+                        {lvl.isBreak ? (
+                          <div className="col-span-8 font-mono text-blue-200 text-sm tracking-widest text-center">
+                            ☕ BREAK
+                          </div>
+                        ) : (
+                          <>
+                            <input type="number" inputMode="numeric" value={lvl.sb} onChange={(e) => updateLevel(idx, 'sb', parseInt(e.target.value) || 0)} className="col-span-3 min-w-0 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm" />
+                            <input type="number" inputMode="numeric" value={lvl.bb} onChange={(e) => updateLevel(idx, 'bb', parseInt(e.target.value) || 0)} className="col-span-3 min-w-0 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm" />
+                            <input type="number" inputMode="numeric" value={lvl.ante} onChange={(e) => updateLevel(idx, 'ante', parseInt(e.target.value) || 0)} className="col-span-2 min-w-0 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm" />
+                          </>
+                        )}
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          value={durationDisplay}
+                          onChange={onDurationChange}
+                          placeholder="min"
+                          className={`col-span-2 min-w-0 px-2 py-1 rounded bg-black/40 border text-yellow-50 text-sm ${durationWarn ? 'border-red-500/60' : 'border-yellow-500/20'}`}
+                        />
+                        <button onClick={() => removeLevel(idx)} className="col-span-1 text-yellow-100/40 hover:text-red-400 flex justify-center">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      {durationWarn && (
+                        <div className="px-2 pt-1 text-[10px] font-mono text-red-300/80">
+                          Set a time or delete this level (the timer can't run a 0-minute level).
+                        </div>
+                      )}
                     </div>
-                    <button onClick={() => removeLevel(idx)} className="col-span-1 text-yellow-100/40 hover:text-red-400">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-              <button onClick={addLevel} className="control-btn mt-3 w-full py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 font-mono text-sm">
-                + ADD LEVEL
-              </button>
+              <div className="flex gap-2 mt-3">
+                <button onClick={addLevel} className="control-btn flex-1 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 font-mono text-sm">
+                  + ADD LEVEL
+                </button>
+                <button onClick={addBreak} className="control-btn flex-1 py-2 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-100 font-mono text-sm">
+                  + ADD BREAK
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -3598,9 +3617,9 @@ function HighRollersHistory({ onBack, fbUser }) {
               <div className="font-mono text-xs text-yellow-100/40 tracking-widest">PLAYER STANDINGS BY NET PROFIT</div>
               <div className="flex gap-1.5">
                 {[
-                  { key: 'all', label: 'All time' },
-                  { key: '12m', label: 'Last 12 mo' },
-                  { key: '6m', label: 'Last 6 mo' },
+                  { key: 'all', label: 'ALL TIME' },
+                  { key: '12m', label: 'LAST 12 MO' },
+                  { key: '6m', label: 'LAST 6 MO' },
                 ].map(({ key, label }) => (
                   <button
                     key={key}
@@ -4105,6 +4124,21 @@ function LeagueDashboard({ onBack, fbUser }) {
           border-top: 1px solid rgba(20, 163, 123, 0.3);
           font-size: 12px;
         }
+        /* Header recap row: rendered between the last player and the aggregate
+           rows so column labels (G1/G2/.../Total) stay visible on long lists. */
+        .league-table tr.header-recap td {
+          background: rgba(0, 0, 0, 0.5);
+          color: #14a37b;
+          font-weight: 700;
+          font-size: 13px;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          border-top: 1px solid rgba(20, 163, 123, 0.3);
+        }
+        .league-table tr.header-recap td.sticky-col {
+          background: #020a06;
+          color: #14a37b;
+        }
         /* Totals rows: keep the sticky first column fully opaque so scrolled
            cells never show through "Players / Rebuys / Pot / League £ / ..." */
         .league-table tr.totals-row td.sticky-col {
@@ -4288,6 +4322,19 @@ function LeagueDashboard({ onBack, fbUser }) {
                     </tr>
                   );
                 })}
+                {/* Repeat the column header above the aggregates so you can read
+                    G1/G2/... without scrolling back up on long player lists. */}
+                {games.length > 0 && (
+                  <tr className="header-recap">
+                    <td className="sticky-col text-left">Player</td>
+                    {games.map((g) => (
+                      <td key={g.id} className="text-center">
+                        G{g.gameNumber}
+                      </td>
+                    ))}
+                    <td className="total-col text-right">Total</td>
+                  </tr>
+                )}
                 {/* Aggregate rows */}
                 <tr className="totals-row">
                   <td className="sticky-col">Players</td>

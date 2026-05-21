@@ -106,8 +106,16 @@ function ukYesterdayString() {
 }
 
 // Compute standings rows for a season, sorted by total points desc.
-// Returns: [{ pid, displayName, total, gamesPlayed }, ...]
-function computeStandings(games, players) {
+//
+// If `latestGameId` is passed, each row also carries:
+//   - delta:   integer position change vs. the standings as they were BEFORE
+//              that game (positive = moved up, negative = moved down, 0 = same)
+//   - isNew:   true if the player had no prior points and is appearing for the
+//              first time in this game (delta will be null)
+//
+// Returns: [{ pid, displayName, total, gamesPlayed, delta, isNew }, ...]
+function computeStandings(games, players, latestGameId) {
+  // Current totals + game counts
   const totals = {};
   const playedCount = {};
   games.forEach((g) => {
@@ -116,16 +124,49 @@ function computeStandings(games, players) {
       if (pts > 0) playedCount[pid] = (playedCount[pid] || 0) + 1;
     });
   });
+
+  // Prior totals: same as current minus whatever the latest game contributed.
+  // (Players who didn't play the latest game have unchanged totals.)
+  const priorRankMap = {};
+  if (latestGameId) {
+    const latestGame = games.find((g) => g.id === latestGameId);
+    const latestPoints = latestGame ? (latestGame.pointsAwarded || {}) : {};
+    const priorTotals = {};
+    Object.entries(totals).forEach(([pid, t]) => {
+      priorTotals[pid] = t - (latestPoints[pid] || 0);
+    });
+    // Build prior ranking — only players who had points before this game qualify
+    Object.entries(priorTotals)
+      .filter(([, t]) => t > 0)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([pid], i) => { priorRankMap[pid] = i + 1; });
+  }
+
   const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
   return Object.entries(totals)
     .filter(([, t]) => t > 0)
     .sort((a, b) => b[1] - a[1])
-    .map(([pid, total]) => ({
-      pid,
-      displayName: playersById[pid]?.displayName || pid,
-      total,
-      gamesPlayed: playedCount[pid] || 0,
-    }));
+    .map(([pid, total], i) => {
+      const currentRank = i + 1;
+      const priorRank = priorRankMap[pid];
+      let delta = null;
+      let isNew = false;
+      if (latestGameId) {
+        if (priorRank === undefined) {
+          isNew = true;
+        } else {
+          delta = priorRank - currentRank;
+        }
+      }
+      return {
+        pid,
+        displayName: playersById[pid]?.displayName || pid,
+        total,
+        gamesPlayed: playedCount[pid] || 0,
+        delta,
+        isNew,
+      };
+    });
 }
 
 // ============================================================================
@@ -258,6 +299,27 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
       : '';
   }).join('');
 
+  // Render the position-change indicator for one standings row.
+  //   delta > 0  → ▲ +N (green)
+  //   delta < 0  → ▼ -N (red)
+  //   delta == 0 → no change (grey dash)
+  //   isNew      → small yellow "NEW" pill (player appeared for the first time)
+  const renderDelta = (row) => {
+    if (row.isNew) {
+      return `<span style="color:#fcd34d;font-size:10px;font-weight:700;letter-spacing:0.05em;">NEW</span>`;
+    }
+    if (row.delta === null || row.delta === undefined) {
+      return `<span style="color:#4b5563;">·</span>`;
+    }
+    if (row.delta > 0) {
+      return `<span style="color:#34d399;font-family:monospace;font-weight:600;">▲${row.delta}</span>`;
+    }
+    if (row.delta < 0) {
+      return `<span style="color:#f87171;font-family:monospace;font-weight:600;">▼${Math.abs(row.delta)}</span>`;
+    }
+    return `<span style="color:#6b7280;font-family:monospace;">—</span>`;
+  };
+
   // Standings rows.
   const standingsRows = standings
     .map((row, i) => {
@@ -266,6 +328,7 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
       const last = i === standings.length - 1 ? '' : ROW_DIVIDER;
       return `<tr>
         <td style="padding:8px 4px;color:${rankColour};font-weight:700;font-family:monospace;width:32px;${last}">${i + 1}</td>
+        <td style="padding:8px 4px;text-align:left;font-size:12px;width:48px;${last}">${renderDelta(row)}</td>
         <td style="padding:8px 4px;color:${TEXT_LIGHT};${last}">${escape(row.displayName)}</td>
         <td style="padding:8px 4px;color:${BRAND_GREEN_LIGHT};text-align:right;font-family:monospace;font-weight:600;${last}">${row.total.toLocaleString()}</td>
         <td style="padding:8px 4px 8px 24px;color:#9ca3af;text-align:left;font-family:monospace;${last}">${row.gamesPlayed}</td>
@@ -321,6 +384,7 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
       <thead>
         <tr>
           <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);width:32px;">#</th>
+          <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);width:48px;">Δ</th>
           <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Player</th>
           <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Points</th>
           <th style="padding:6px 4px 6px 24px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Played</th>
@@ -367,7 +431,7 @@ async function sendResultsForGame(game) {
     return { skipped: true, reason: 'No players with email addresses on file.' };
   }
 
-  const standings = computeStandings(seasonGames, players);
+  const standings = computeStandings(seasonGames, players, game.id);
   // Best-effort AI recap. If Gemini's unavailable, recap is null and the email
   // still goes out — just without the prose intro.
   const recap = await generateRecap({ game, season, standings, players });
