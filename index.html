@@ -19,6 +19,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" />
+  <!-- Preload the logos so they're ready when React first paints them. -->
+  <link rel="preload" as="image" href="logos/GreeneRoomPokerLogo-02.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -45,13 +47,20 @@
         document.documentElement.classList.remove('fonts-pending');
       };
       const fontsReady = (document.fonts && document.fonts.ready) || Promise.resolve();
-      // Wait specifically for Bebas Neue — the one that causes the visible jump.
-      // .load() resolves when the font is actually downloaded and ready to render.
-      const bebas = document.fonts && document.fonts.load
-        ? document.fonts.load('1em "Bebas Neue"').catch(() => {})
-        : Promise.resolve();
+      // Wait for every font we use, not just Bebas Neue. If we only gated on
+      // Bebas Neue, Inter / JetBrains Mono would swap from fallback to real
+      // font AFTER the page is revealed, producing a secondary flicker on
+      // body text and numeric stats.
+      const load = (spec) => (document.fonts && document.fonts.load
+        ? document.fonts.load(spec).catch(() => {})
+        : Promise.resolve());
+      const bebas = load('1em "Bebas Neue"');
+      const inter = load('1em "Inter"');
+      const inter600 = load('600 1em "Inter"');
+      const mono = load('1em "JetBrains Mono"');
+      const monoBold = load('700 1em "JetBrains Mono"');
       Promise.race([
-        Promise.all([fontsReady, bebas]),
+        Promise.all([fontsReady, bebas, inter, inter600, mono, monoBold]),
         new Promise((r) => setTimeout(r, 1200)),  // safety: never block forever
       ]).then(reveal);
     });
