@@ -4128,6 +4128,7 @@ function LeagueDashboard({ onBack, fbUser }) {
   const [showResendConfirm, setShowResendConfirm] = useState(false);
   // Sandbox / admin tooling
   const [showAdminTools, setShowAdminTools] = useState(false);
+  const [showManagePlayers, setShowManagePlayers] = useState(false);
   const [adminBusy, setAdminBusy] = useState(null); // 'wipeHR' | 'wipeSim' | 'simulate' | null
   const [adminMessage, setAdminMessage] = useState(null); // { kind: 'ok'|'err', text }
   const [showWipeHRConfirm, setShowWipeHRConfirm] = useState(false);
@@ -4480,6 +4481,13 @@ function LeagueDashboard({ onBack, fbUser }) {
             {showAdminTools && (
               <div className="mt-2 p-3 rounded-lg bg-black/30 border border-yellow-500/15 flex flex-wrap gap-2">
                 <button
+                  onClick={() => setShowManagePlayers(true)}
+                  className="px-3 py-1.5 rounded font-mono text-xs border border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/15"
+                  title="Edit player email addresses for the morning-after results email."
+                >
+                  ✉ MANAGE PLAYERS
+                </button>
+                <button
                   onClick={doSimulate}
                   disabled={adminBusy !== null}
                   className="px-3 py-1.5 rounded font-mono text-xs border border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
@@ -4714,6 +4722,17 @@ function LeagueDashboard({ onBack, fbUser }) {
       )}
 
       {/* Delete season confirm */}
+      {/* Manage Players (bulk email edit) */}
+      {showManagePlayers && (
+        <ManagePlayersModal
+          onClose={() => setShowManagePlayers(false)}
+          onSaved={() => {
+            // Refresh local players list so any other UI reflects new emails immediately.
+            if (window.GRP_DB) window.GRP_DB.getAllPlayers().then(setPlayers).catch(() => {});
+          }}
+        />
+      )}
+
       {/* Confirm wipe HR data */}
       {showWipeHRConfirm && (
         <ConfirmDialog
@@ -4790,33 +4809,8 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
   const player = players.find(p => p.id === playerId);
   if (!player) return null;
 
-  // Email editing (admin only). Local state mirrors Firestore until saved.
-  const [emailInput, setEmailInput] = useState(player.email || '');
-  const [emailSaving, setEmailSaving] = useState(false);
-  const [emailSavedAt, setEmailSavedAt] = useState(0);
-  const [emailError, setEmailError] = useState(null);
-  // Re-sync local input if the player prop changes (e.g. parent refetched)
-  useEffect(() => { setEmailInput(player.email || ''); }, [player.email, player.id]);
-
-  const saveEmail = async () => {
-    const trimmed = emailInput.trim();
-    if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-      setEmailError('Not a valid email address.');
-      return;
-    }
-    setEmailError(null);
-    setEmailSaving(true);
-    try {
-      await window.GRP_DB.upsertPlayer({ id: player.id, email: trimmed || null });
-      setEmailSavedAt(Date.now());
-      if (onPlayerUpdated) onPlayerUpdated();
-    } catch (e) {
-      setEmailError(e.message);
-    } finally {
-      setEmailSaving(false);
-    }
-  };
-  const emailDirty = (emailInput.trim() || '') !== (player.email || '');
+  // Email editing has moved to the MANAGE PLAYERS admin screen. Profile view
+  // now matches the cleaner High Rollers profile layout (no email row).
 
   // Birthday display
   const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -4861,42 +4855,11 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
               <div className="text-emerald-300/60 font-mono text-xs mt-1">Birthday: {bdayStr}</div>
             )}
             {/* Email: read-only for non-admins (only shown if set), editable for admins */}
-            {!fbUser && player.email && (
-              <div className="text-emerald-300/60 font-mono text-xs mt-1">Email: {player.email}</div>
-            )}
           </div>
           <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100">
             <X size={20} />
           </button>
         </div>
-
-        {/* Admin: editable email (drives results emails sent by Cloud Function) */}
-        {fbUser && (
-          <div className="mb-4 p-3 rounded-lg bg-black/30 border border-emerald-500/20">
-            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">EMAIL (results delivery)</div>
-            <div className="flex gap-2">
-              <input
-                type="email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                placeholder="player@example.com  (blank = don't email)"
-                className="flex-1 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
-              />
-              <button
-                onClick={saveEmail}
-                disabled={emailSaving || !emailDirty}
-                className="px-4 py-2 rounded-full font-display text-sm text-black disabled:opacity-30"
-                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
-              >
-                {emailSaving ? '...' : 'SAVE'}
-              </button>
-            </div>
-            {emailError && <div className="text-red-400 text-xs mt-1 font-mono">{emailError}</div>}
-            {!emailError && emailSavedAt > 0 && Date.now() - emailSavedAt < 3000 && (
-              <div className="text-emerald-300 text-xs mt-1 font-mono">✓ saved</div>
-            )}
-          </div>
-        )}
 
         {/* Stats grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
@@ -5131,6 +5094,151 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
             ? (season ? `Stats for ${season.name}` : '')
             : `${(chartGames || []).filter(g => (g?.finishOrder || []).includes(playerId)).length} games across all seasons`}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ MANAGE PLAYERS MODAL ============
+// Admin bulk-edit screen for player email addresses. Useful for collecting
+// emails from the whole roster at once when first setting up the results-
+// email pipeline, and for occasional updates after.
+function ManagePlayersModal({ onClose, onSaved }) {
+  const [players, setPlayers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [edits, setEdits] = useState({}); // { [id]: { email } } — pending changes
+  const [saving, setSaving] = useState(false);
+  const [savedCount, setSavedCount] = useState(0);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const doLoad = async () => {
+      try {
+        const all = await window.GRP_DB.getAllPlayers();
+        if (cancelled) return;
+        all.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+        setPlayers(all);
+        setLoading(false);
+      } catch (e) {
+        if (!cancelled) { setError(e.message); setLoading(false); }
+      }
+    };
+    if (window.GRP_DB) doLoad();
+    else {
+      const onReady = () => doLoad();
+      window.addEventListener('firebase-ready', onReady);
+      return () => { cancelled = true; window.removeEventListener('firebase-ready', onReady); };
+    }
+    return () => { cancelled = true; };
+  }, []);
+
+  const setEmail = (id, val) => {
+    setEdits((e) => ({ ...e, [id]: { ...(e[id] || {}), email: val } }));
+  };
+
+  const dirtyCount = Object.keys(edits).filter((id) => {
+    const before = (players.find((p) => p.id === id)?.email || '').trim();
+    const after = (edits[id].email || '').trim();
+    return before !== after;
+  }).length;
+
+  const save = async () => {
+    setError(null);
+    setSaving(true);
+    setSavedCount(0);
+    try {
+      for (const [id, ed] of Object.entries(edits)) {
+        const v = (ed.email || '').trim();
+        if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+          throw new Error(`Invalid email for "${id}": ${v}`);
+        }
+      }
+      let n = 0;
+      for (const [id, ed] of Object.entries(edits)) {
+        const before = (players.find((p) => p.id === id)?.email || '').trim();
+        const after = (ed.email || '').trim();
+        if (before === after) continue;
+        await window.GRP_DB.upsertPlayer({ id, email: after || null });
+        n += 1;
+      }
+      setSavedCount(n);
+      setEdits({});
+      const all = await window.GRP_DB.getAllPlayers();
+      all.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+      setPlayers(all);
+      if (onSaved) onSaved(n);
+    } catch (e) {
+      setError(e.message || 'Save failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="font-display text-3xl gold-text">MANAGE PLAYERS</div>
+            <div className="text-yellow-100/60 font-mono text-xs mt-1">Edit email addresses for the morning-after results email.</div>
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        </div>
+
+        {loading ? (
+          <div className="text-center py-12 text-emerald-200/60 font-mono">Loading…</div>
+        ) : (
+          <>
+            {error && (
+              <div className="mb-3 p-3 rounded-lg bg-red-950/40 border border-red-500/40 text-red-200 font-mono text-xs">{error}</div>
+            )}
+            {savedCount > 0 && (
+              <div className="mb-3 p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 font-mono text-xs">
+                ✓ Saved {savedCount} player{savedCount === 1 ? '' : 's'}.
+              </div>
+            )}
+
+            <div className="space-y-1 mb-5 max-h-[60vh] overflow-y-auto pr-2">
+              {players.map((p) => {
+                const current = edits[p.id]?.email !== undefined ? edits[p.id].email : (p.email || '');
+                const isDirty = (edits[p.id]?.email !== undefined) && ((p.email || '').trim() !== current.trim());
+                return (
+                  <div key={p.id} className={`flex items-center gap-2 px-2 py-1.5 rounded border ${isDirty ? 'bg-yellow-500/10 border-yellow-500/40' : 'border-transparent'}`}>
+                    <div className="w-32 font-mono text-sm text-emerald-100 truncate" title={p.realName || p.displayName}>
+                      {p.displayName}
+                    </div>
+                    <input
+                      type="email"
+                      value={current}
+                      onChange={(e) => setEmail(p.id, e.target.value)}
+                      placeholder="player@example.com"
+                      className="flex-1 px-2 py-1 rounded bg-black/40 border border-yellow-500/15 text-yellow-50 placeholder-yellow-100/30 font-mono text-xs focus:outline-none focus:border-yellow-500/40"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={onClose}
+                disabled={saving}
+                className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm disabled:opacity-30"
+              >
+                CLOSE
+              </button>
+              <button
+                onClick={save}
+                disabled={saving || dirtyCount === 0}
+                className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
+                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+              >
+                {saving ? 'SAVING…' : dirtyCount > 0 ? `SAVE ${dirtyCount} CHANGE${dirtyCount === 1 ? '' : 'S'}` : 'SAVE'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
