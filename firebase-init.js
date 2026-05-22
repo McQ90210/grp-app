@@ -96,6 +96,15 @@ async function getGamesForSeason(seasonId) {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+// All league games across all seasons. Sorted by date asc. No composite
+// index needed — we filter on a single field (`type`) and sort client-side.
+async function getAllLeagueGames() {
+  const snap = await getDocs(query(collection(db, 'games'), where('type', '==', 'league')));
+  const games = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  games.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  return games;
+}
+
 async function getAllHighRollerGames() {
   const snap = await getDocs(query(
     collection(db, 'games'),
@@ -202,7 +211,7 @@ window.GRP_DB = {
   // Seasons
   getAllSeasons, getActiveSeason, upsertSeason,
   // Games
-  getGamesForSeason, getAllHighRollerGames, getGameById, saveGame, deleteGame, subscribeToSeasonGames,
+  getGamesForSeason, getAllLeagueGames, getAllHighRollerGames, getGameById, saveGame, deleteGame, subscribeToSeasonGames,
   // Email
   resendLatestResults,
   // Admin
