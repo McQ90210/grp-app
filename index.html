@@ -4346,10 +4346,6 @@ function LeagueDashboard({ onBack, fbUser }) {
           font-weight: 700;
           color: #1ec890;
           font-size: 15px;
-          /* Pull the right-justified numbers inward from the cell edge so
-             they sit more visually centred in this wider column, while still
-             aligning to each other on the right. */
-          padding-right: 40px;
         }
         .league-table tr:hover td:not(.sticky-col):not(.total-col) {
           background: rgba(20, 163, 123, 0.06);
@@ -4575,7 +4571,7 @@ function LeagueDashboard({ onBack, fbUser }) {
                       )}
                     </th>
                   ))}
-                  <th className="total-col text-right">Total</th>
+                  <th className="total-col text-center">Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -4614,7 +4610,7 @@ function LeagueDashboard({ onBack, fbUser }) {
                           </td>
                         );
                       })}
-                      <td className="total-col text-right">{row.total.toLocaleString()}</td>
+                      <td className="total-col text-center">{row.total.toLocaleString()}</td>
                     </tr>
                   );
                 })}
@@ -4628,39 +4624,39 @@ function LeagueDashboard({ onBack, fbUser }) {
                         {g.isFinal ? 'FINAL' : `G${g.gameNumber}`}
                       </td>
                     ))}
-                    <td className="total-col text-right">Total</td>
+                    <td className="total-col text-center">Total</td>
                   </tr>
                 )}
                 {/* Aggregate rows */}
                 <tr className="totals-row">
                   <td className="sticky-col">Players</td>
                   {aggregates.playersPerGame.map((v, i) => <td key={i} className="text-center">{v || '—'}</td>)}
-                  <td className="total-col text-right">—</td>
+                  <td className="total-col text-center">—</td>
                 </tr>
                 <tr className="totals-row">
                   <td className="sticky-col">Rebuys</td>
                   {aggregates.rebuys.map((v, i) => <td key={i} className="text-center">{v || 0}</td>)}
-                  <td className="total-col text-right">{aggregates.rebuys.reduce((a, b) => a + (b || 0), 0)}</td>
+                  <td className="total-col text-center">{aggregates.rebuys.reduce((a, b) => a + (b || 0), 0)}</td>
                 </tr>
                 <tr className="totals-row">
                   <td className="sticky-col">Pot (£)</td>
                   {aggregates.pot.map((v, i) => <td key={i} className="text-center">{v || '—'}</td>)}
-                  <td className="total-col text-right">{aggregates.pot.reduce((a, b) => a + (b || 0), 0)}</td>
+                  <td className="total-col text-center">{aggregates.pot.reduce((a, b) => a + (b || 0), 0)}</td>
                 </tr>
                 <tr className="totals-row">
                   <td className="sticky-col">League £</td>
                   {aggregates.leagueMoney.map((v, i) => <td key={i} className="text-center">{v || 0}</td>)}
-                  <td className="total-col text-right">{aggregates.leagueMoney.reduce((a, b) => a + (b || 0), 0)}</td>
+                  <td className="total-col text-center">{aggregates.leagueMoney.reduce((a, b) => a + (b || 0), 0)}</td>
                 </tr>
                 <tr className="totals-row">
                   <td className="sticky-col">Prize £</td>
                   {aggregates.prizePool.map((v, i) => <td key={i} className="text-center">{v || '—'}</td>)}
-                  <td className="total-col text-right">—</td>
+                  <td className="total-col text-center">—</td>
                 </tr>
                 <tr className="totals-row">
                   <td className="sticky-col">Subs £</td>
                   {aggregates.subs.map((v, i) => <td key={i} className="text-center">{v == null ? '—' : v}</td>)}
-                  <td className="total-col text-right">{aggregates.subs.reduce((a, b) => a + (b || 0), 0)}</td>
+                  <td className="total-col text-center">{aggregates.subs.reduce((a, b) => a + (b || 0), 0)}</td>
                 </tr>
                 {/* Payouts: 1st-5th */}
                 {[1, 2, 3, 4, 5].map(place => (
@@ -4669,7 +4665,7 @@ function LeagueDashboard({ onBack, fbUser }) {
                     {games.map((g, i) => (
                       <td key={i} className="text-center">{g.payouts?.[String(place)] || '—'}</td>
                     ))}
-                    <td className="total-col text-right">—</td>
+                    <td className="total-col text-center">—</td>
                   </tr>
                 ))}
               </tbody>
@@ -4942,6 +4938,85 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
           </div>
         </div>
 
+        {/* Toggle: shared between the two charts below */}
+        <div className="flex justify-end gap-1.5 mb-3">
+          {[
+            { key: 'season', label: 'CURRENT SEASON' },
+            { key: 'all', label: 'ALL TIME' },
+          ].map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setChartView(key)}
+              className={`px-2 py-0.5 rounded font-mono text-[10px] tracking-widest transition-colors ${
+                chartView === key
+                  ? 'bg-emerald-500/25 border border-emerald-400/50 text-emerald-100'
+                  : 'border border-yellow-500/15 text-yellow-100/50 hover:text-yellow-100/80 hover:border-yellow-500/30'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Cumulative-points line chart */}
+        {(() => {
+          const safeGames = Array.isArray(chartGames) ? chartGames : [];
+          if (safeGames.length === 0) {
+            return (
+              <div className="mb-5">
+                <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">CUMULATIVE POINTS (over time)</div>
+                <div className="text-yellow-100/40 font-mono text-sm py-6 text-center">
+                  {chartView === 'all' ? 'Loading…' : 'No games yet'}
+                </div>
+              </div>
+            );
+          }
+          const pointsPerGame = safeGames.map(g => (g.pointsAwarded || {})[playerId] || 0);
+          const cumPoints = [];
+          let running = 0;
+          pointsPerGame.forEach(p => { running += p; cumPoints.push(running); });
+          const cpW = 600, cpH = 160, cpPAD = 24;
+          const cpXs = safeGames.length > 1
+            ? safeGames.map((_, i) => cpPAD + (i * (cpW - 2 * cpPAD)) / (safeGames.length - 1))
+            : [cpW / 2];
+          const cpMax = Math.max(1, ...cumPoints);
+          const cpYs = cumPoints.map(v => cpH - cpPAD - (v / cpMax) * (cpH - 2 * cpPAD));
+          const cpPath = cpXs.map((x, i) => `${i === 0 ? 'M' : 'L'} ${x} ${cpYs[i]}`).join(' ');
+          const cpArea = `${cpPath} L ${cpXs[cpXs.length-1]} ${cpH - cpPAD} L ${cpXs[0]} ${cpH - cpPAD} Z`;
+          const fmtPts = (v) => v >= 1000 ? `${(v/1000).toFixed(v >= 10000 ? 0 : 1)}k` : String(Math.round(v));
+          return (
+            <div className="mb-5">
+              <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">CUMULATIVE POINTS (over time)</div>
+              <div className="flex">
+                <div className="flex flex-col justify-between items-end pr-2 py-3 font-mono text-[10px] text-yellow-100/40 tracking-wider" style={{ minHeight: '120px' }}>
+                  <span>{fmtPts(cpMax)}</span>
+                  <span className="text-yellow-100/25">{fmtPts(cpMax / 2)}</span>
+                  <span className="text-yellow-100/25">0</span>
+                </div>
+                <div className="flex-1 p-3 rounded-lg bg-black/40 border border-emerald-500/10">
+                  <svg viewBox={`0 0 ${cpW} ${cpH}`} className="w-full" style={{ height: 'auto' }}>
+                    <path d={cpArea} fill="rgba(20,163,123,0.18)" />
+                    <path d={cpPath} fill="none" stroke="#1ec890" strokeWidth="2" />
+                    {safeGames.map((g, i) => (
+                      <g key={g.id}>
+                        <circle cx={cpXs[i]} cy={cpYs[i]} r="3" fill="#1ec890" />
+                        <title>{`${g.isFinal ? 'FINAL' : 'G' + g.gameNumber} (${g.date}): +${pointsPerGame[i].toLocaleString()} pts (running ${cumPoints[i].toLocaleString()})`}</title>
+                      </g>
+                    ))}
+                  </svg>
+                  {chartView === 'season' && (
+                    <div className="flex justify-between text-[10px] font-mono text-yellow-100/30 mt-1 px-2">
+                      {safeGames.map((g) => (
+                        <span key={g.id}>{g.isFinal ? 'FINAL' : `G${g.gameNumber}`}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Finishing-position bar chart */}
         {(() => {
           // Compute the max field size across the visible games (default to 9
@@ -4961,28 +5036,7 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
           const midTick = Math.ceil(maxField / 2);
           return (
             <div className="mb-4">
-              <div className="flex justify-between items-center mb-2">
-                <div className="font-mono text-xs text-yellow-100/40 tracking-widest">FINISHING POSITION</div>
-                <div className="flex gap-1.5">
-                  {[
-                    { key: 'season', label: 'CURRENT SEASON' },
-                    { key: 'all', label: 'ALL TIME' },
-                  ].map(({ key, label }) => (
-                    <button
-                      key={key}
-                      onClick={() => setChartView(key)}
-                      className={`px-2 py-0.5 rounded font-mono text-[10px] tracking-widest transition-colors ${
-                        chartView === key
-                          ? 'bg-emerald-500/25 border border-emerald-400/50 text-emerald-100'
-                          : 'border border-yellow-500/15 text-yellow-100/50 hover:text-yellow-100/80 hover:border-yellow-500/30'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
+              <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">FINISHING POSITION</div>
               <div className="flex">
                 {/* Y-axis labels */}
                 <div className="flex flex-col justify-between items-end h-40 pr-2 py-3 font-mono text-[10px] text-yellow-100/40 tracking-wider">
