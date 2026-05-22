@@ -3884,6 +3884,7 @@ function HighRollersPlayerProfile({ playerId, players, games, onClose }) {
       net: winnings - buyIn,
       place,
       totalPlayers: (g.attendees || []).length,
+      paidCount: Object.keys(g.payouts || {}).length,
     };
   });
 
@@ -3894,7 +3895,9 @@ function HighRollersPlayerProfile({ playerId, players, games, onClose }) {
   // Stats
   const gamesPlayed = history.length;
   const wins = history.filter((h) => h.place === 1).length;
-  const podiums = history.filter((h) => h.place && h.place <= 3).length;
+  // "In the Money" — uses the actual number of paid places per game (top 3 for
+  // small fields, top 4 for bigger fields) rather than a hardcoded top-3.
+  const podiums = history.filter((h) => h.place && h.paidCount > 0 && h.place <= h.paidCount).length;
   const totalBuyIns = history.reduce((s, h) => s + h.buyIn, 0);
   const totalWinnings = history.reduce((s, h) => s + h.winnings, 0);
   const netTotal = totalWinnings - totalBuyIns;
@@ -4834,7 +4837,14 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
   const gamesPlayed = chartGames.filter(g => g.pointsAwarded?.[playerId] > 0 || (g.finishOrder || []).includes(playerId));
   const totalPoints = gamesPlayed.reduce((sum, g) => sum + (g.pointsAwarded?.[playerId] || 0), 0);
   const wins = gamesPlayed.filter(g => g.finishOrder?.[0] === playerId).length;
-  const podiums = gamesPlayed.filter(g => (g.finishOrder || []).slice(0, 3).includes(playerId)).length;
+  // "In the Money" — uses the actual payouts on each game rather than a fixed
+  // top-3, so 4-paid games correctly credit a 4th place finish.
+  const podiums = gamesPlayed.filter(g => {
+    const paidCount = Object.keys(g.payouts || {}).length;
+    if (paidCount === 0) return false;
+    const pos = (g.finishOrder || []).indexOf(playerId);
+    return pos >= 0 && pos < paidCount;
+  }).length;
   const totalBuyIns = gamesPlayed.length * 30; // £30 buy-in standard; doesn't include rebuys
   const winnings = gamesPlayed.reduce((sum, g) => {
     const pos = (g.finishOrder || []).indexOf(playerId);
