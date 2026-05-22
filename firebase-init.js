@@ -182,6 +182,20 @@ async function migrateSeason({ oldSeasonId, newSeasonId, newName }) {
   return res.data;
 }
 
+// Admin: destructive tools + simulation.
+async function wipeHighRollers() {
+  const res = await httpsCallable(functions, 'wipeHighRollers')({});
+  return res.data;
+}
+async function wipeSimData() {
+  const res = await httpsCallable(functions, 'wipeSimData')({});
+  return res.data;
+}
+async function simulateGames() {
+  const res = await httpsCallable(functions, 'simulateGames')({});
+  return res.data;
+}
+
 window.GRP_DB = {
   // Players
   getAllPlayers, getPlayer, upsertPlayer, subscribeToPlayers,
@@ -192,7 +206,7 @@ window.GRP_DB = {
   // Email
   resendLatestResults,
   // Admin
-  bulkImport, migrateSeason,
+  bulkImport, migrateSeason, wipeHighRollers, wipeSimData, simulateGames,
 };
 
 window.dispatchEvent(new CustomEvent('firebase-ready'));

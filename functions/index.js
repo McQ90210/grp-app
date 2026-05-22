@@ -633,3 +633,318 @@ exports.migrateSeason = onCall(
     };
   }
 );
+
+// ============================================================================
+// Admin tooling — wipe + simulate
+// ============================================================================
+//
+// `wipeHighRollers`  — delete every game with type === 'highrollers'.
+// `wipeSimData`      — delete every game and season whose id begins with `sim-`.
+// `simulateGames`    — generate 4 sandbox seasons, 20 league games + 20 HR games,
+//                      using real player IDs and points/payout rules from CLAUDE.md.
+//                      Skill-weighted so Cactus / Duck / Chicken / River Dan
+//                      tend to finish higher.
+//
+// All three require an authenticated caller.
+
+// Helper: batched delete (max 500 docs per Firestore batch).
+async function batchDelete(refs) {
+  let deleted = 0;
+  for (let i = 0; i < refs.length; i += 450) {
+    const slice = refs.slice(i, i + 450);
+    const batch = db.batch();
+    slice.forEach((r) => batch.delete(r));
+    await batch.commit();
+    deleted += slice.length;
+  }
+  return deleted;
+}
+
+exports.wipeHighRollers = onCall(
+  { region: REGION },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
+    }
+    const snap = await db.collection('games').where('type', '==', 'highrollers').get();
+    const deleted = await batchDelete(snap.docs.map((d) => d.ref));
+    logger.info(`wipeHighRollers: removed ${deleted} HR games.`);
+    return { ok: true, deleted };
+  }
+);
+
+exports.wipeSimData = onCall(
+  { region: REGION },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
+    }
+    // Firestore doesn't support "id starts with" queries directly. Two scans:
+    const [gamesSnap, seasonsSnap] = await Promise.all([
+      db.collection('games').get(),
+      db.collection('seasons').get(),
+    ]);
+    const simGames = gamesSnap.docs.filter((d) => d.id.startsWith('sim-'));
+    const simSeasons = seasonsSnap.docs.filter((d) => d.id.startsWith('sim-'));
+    const delG = await batchDelete(simGames.map((d) => d.ref));
+    const delS = await batchDelete(simSeasons.map((d) => d.ref));
+    logger.info(`wipeSimData: removed ${delG} games + ${delS} seasons.`);
+    return { ok: true, deletedGames: delG, deletedSeasons: delS };
+  }
+);
+
+exports.simulateGames = onCall(
+  { region: REGION, timeoutSeconds: 120 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
+    }
+
+    // ----- Player roster (real IDs from CLAUDE.md) + skill weights -----
+    // Higher weight = more likely to finish high. Tuned roughly to your
+    // sense of who tends to do well.
+    const PLAYERS = [
+      { id: 'cactus', skill: 5, birthday: { month: 6, day: 11 } },
+      { id: 'duck', skill: 4, birthday: { month: 1, day: 16 } },
+      { id: 'chicken', skill: 4, birthday: { month: 10, day: 30 } },
+      { id: 'river-dan', skill: 4, birthday: { month: 7, day: 21 } },
+      { id: 'ostrich', skill: 3, birthday: { month: 2, day: 20 } },
+      { id: 'quads', skill: 3, birthday: { month: 5, day: 29 } },
+      { id: 'chit-chat', skill: 3, birthday: { month: 5, day: 6 } },
+      { id: 'beans', skill: 3, birthday: { month: 4, day: 26 } },
+      { id: 'the-boxer', skill: 3, birthday: { month: 11, day: 18 } },
+      { id: 'hair', skill: 2, birthday: { month: 8, day: 12 } },
+      { id: 'shoes', skill: 2, birthday: { month: 5, day: 18 } },
+      { id: 'the-dentist', skill: 2, birthday: { month: 10, day: 4 } },
+      { id: 'toby', skill: 2, birthday: { month: 10, day: 6 } },
+      { id: 'pth', skill: 2, birthday: { month: 10, day: 7 } },
+      { id: 'fire-truck-john', skill: 2, birthday: { month: 8, day: 29 } },
+      { id: 'anthony-boden', skill: 2, birthday: { month: 11, day: 2 } },
+      { id: 'tinker-bell', skill: 2, birthday: { month: 6, day: 27 } },
+      { id: 'graham-barlow', skill: 1, birthday: { month: 10, day: 11 } },
+      { id: 'moth', skill: 1, birthday: { month: 5, day: 19 } },
+      { id: 'the-agent', skill: 1, birthday: { month: 10, day: 27 } },
+      { id: 'dom', skill: 1, birthday: { month: 3, day: 14 } },
+      { id: 'jay-gohil', skill: 1, birthday: { month: 12, day: 4 } },
+      { id: 'simon-wilkins', skill: 1, birthday: { month: 12, day: 11 } },
+      { id: 'santa', skill: 1, birthday: { month: 12, day: 30 } },
+      { id: 'michael-barnes', skill: 1, birthday: { month: 4, day: 22 } },
+      { id: 'oli-elsaesser', skill: 1, birthday: { month: 7, day: 15 } },
+      { id: 'sam-maffia', skill: 1, birthday: { month: 9, day: 16 } },
+      { id: 'jimmy', skill: 1, birthday: { month: 1, day: 24 } },
+      { id: 'david', skill: 1 },
+      { id: 'stephen', skill: 1 },
+      { id: 'kelvin-the-detective', skill: 1 },
+      { id: 'ben-conolly', skill: 1 },
+    ];
+    const HR_REGULARS = ['cactus', 'beans', 'quads', 'chit-chat', 'duck', 'ostrich', 'shoes', 'the-boxer', 'river-dan'];
+
+    // ----- Helpers -----
+    const rand = (n) => Math.floor(Math.random() * n);
+    const pick = (arr, k) => {
+      const c = [...arr];
+      const out = [];
+      for (let i = 0; i < k && c.length > 0; i++) {
+        out.push(c.splice(rand(c.length), 1)[0]);
+      }
+      return out;
+    };
+    const skillSort = (attendees) => {
+      // Each player's "draw" = skill × random in [0.5, 1.5). Sort desc.
+      const playerById = Object.fromEntries(PLAYERS.map((p) => [p.id, p]));
+      return [...attendees].sort((a, b) => {
+        const sa = (playerById[a]?.skill || 1) * (0.5 + Math.random());
+        const sb = (playerById[b]?.skill || 1) * (0.5 + Math.random());
+        return sb - sa;
+      });
+    };
+    const bountiedMonthFor = (birthMonth) => {
+      // June birthdays bountied in May; December bountied in November (per CLAUDE.md)
+      if (birthMonth === 6) return 5;
+      if (birthMonth === 12) return 11;
+      return birthMonth;
+    };
+    const computePayouts = (prizePool, paidCount = 3) => {
+      // Same 50/30/20 splits used in real games for ≤10 players, rounded to £10
+      const SPLITS = paidCount === 3 ? [0.50, 0.30, 0.20] : [0.45, 0.25, 0.18, 0.12];
+      const raw = SPLITS.map((s) => Math.round((prizePool * s) / 10) * 10);
+      // Absorb rounding remainder onto 1st place
+      const sum = raw.reduce((a, b) => a + b, 0);
+      raw[0] += prizePool - sum;
+      const out = {};
+      raw.forEach((v, i) => { if (v > 0) out[String(i + 1)] = v; });
+      return out;
+    };
+    const computePoints = ({ attendees, finishOrder, bountiedIds, isFinal }) => {
+      if (isFinal) return {};
+      const pts = {};
+      attendees.forEach((pid) => { pts[pid] = 2000; });
+      const bonuses = [8000, 5000, 3000, 1000, 500];
+      bonuses.forEach((b, i) => {
+        const pid = finishOrder[i];
+        if (pid && pts[pid] !== undefined) pts[pid] += b;
+      });
+      bountiedIds.forEach((pid) => {
+        if (pts[pid] !== undefined) pts[pid] += 2000;
+      });
+      return pts;
+    };
+
+    // ----- Sandbox seasons (4 of them) -----
+    const SEASONS = [
+      { id: 'sim-2024-r1', name: '2024 — Round 1 (SIM)', startDate: '2024-01-01', endDate: '2024-06-30', gamesPerMonth: 1, months: [1,2,3,4,5,6] },
+      { id: 'sim-2024-r2', name: '2024 — Round 2 (SIM)', startDate: '2024-07-01', endDate: '2024-12-31', gamesPerMonth: 1, months: [7,8,9,10,11,12] },
+      { id: 'sim-2025-r1', name: '2025 — Round 1 (SIM)', startDate: '2025-01-01', endDate: '2025-06-30', gamesPerMonth: 1, months: [1,2,3,4,5,6] },
+      { id: 'sim-2025-r2', name: '2025 — Round 2 (SIM)', startDate: '2025-07-01', endDate: '2025-12-31', gamesPerMonth: 1, months: [7,8] }, // partial — only 2 games
+    ];
+
+    const batch = db.batch();
+    const writes = { seasons: 0, leagueGames: 0, hrGames: 0 };
+
+    // Birthday lookup for bounty logic
+    const playerById = Object.fromEntries(PLAYERS.map((p) => [p.id, p]));
+
+    // ----- Build league games -----
+    for (const season of SEASONS) {
+      const totalGames = season.months.length;
+      batch.set(db.doc(`seasons/${season.id}`), {
+        name: season.name,
+        startDate: season.startDate,
+        endDate: season.endDate,
+        totalGames,
+        finalGameIndex: totalGames,
+        status: 'complete',
+      });
+      writes.seasons += 1;
+
+      // Carry-forward bounty bag (people whose birth month has come up but
+      // who haven't attended yet this round — kept simple).
+      const pendingBounties = new Set();
+
+      for (let i = 0; i < season.months.length; i++) {
+        const month = season.months[i];
+        const isFinal = i === season.months.length - 1 && season.id !== 'sim-2025-r2';
+        const day = 8 + rand(20); // somewhere mid-month
+        const yyyy = season.startDate.slice(0, 4);
+        const mm = String(month).padStart(2, '0');
+        const dd = String(day).padStart(2, '0');
+        const gameId = `${season.id}-g${i + 1}`;
+
+        // 9 attendees, skill-weighted-random subset
+        const attendees = pick(PLAYERS.map((p) => p.id), 9);
+        const finishOrder = skillSort(attendees);
+
+        // Apply bounty: players whose bountied month is THIS month, plus any carry-fwd, who attended
+        const playerBountyMonth = new Set();
+        PLAYERS.forEach((p) => {
+          if (p.birthday && bountiedMonthFor(p.birthday.month) === month) {
+            playerBountyMonth.add(p.id);
+          }
+        });
+        // Add pending carry-forwards
+        pendingBounties.forEach((pid) => playerBountyMonth.add(pid));
+        // Bountied players who attend
+        const bountiedAttendees = attendees.filter((pid) => playerBountyMonth.has(pid));
+        // Players from the eligible pool who didn't attend → carry forward
+        playerBountyMonth.forEach((pid) => {
+          if (!attendees.includes(pid)) pendingBounties.add(pid);
+          else pendingBounties.delete(pid);
+        });
+
+        const totalRebuys = isFinal ? 0 : rand(11);
+        const buyIn = 30;
+        const pot = (attendees.length + totalRebuys) * buyIn;
+        const subs = 3 * attendees.length;
+        const leagueMoney = isFinal ? 0 : Math.round((pot * 0.1) / 10) * 10;
+        const prizePool = pot - subs - leagueMoney;
+        const payouts = computePayouts(prizePool, 3);
+        const pointsAwarded = computePoints({ attendees, finishOrder, bountiedIds: bountiedAttendees, isFinal });
+
+        // Random per-player rebuys assignment (just spread totalRebuys randomly)
+        const rebuys = {};
+        let left = totalRebuys;
+        while (left > 0) {
+          const pid = attendees[rand(attendees.length)];
+          rebuys[pid] = (rebuys[pid] || 0) + 1;
+          left -= 1;
+        }
+
+        batch.set(db.doc(`games/${gameId}`), {
+          type: 'league',
+          seasonId: season.id,
+          date: `${yyyy}-${mm}-${dd}`,
+          gameNumber: i + 1,
+          isFinal,
+          buyIn,
+          attendees,
+          rebuys,
+          totalRebuys,
+          finishOrder,
+          pot,
+          payouts,
+          leagueMoney,
+          prizePool,
+          subs,
+          pointsAwarded,
+          bountyHolders: bountiedAttendees,
+          bountyClaims: [],
+          notes: 'Generated by simulateGames (sandbox data).',
+        });
+        writes.leagueGames += 1;
+      }
+    }
+
+    // ----- Build 20 HR games -----
+    // Spread bi-weekly across the last 10 months.
+    const now = new Date();
+    const hrCount = 20;
+    for (let i = 0; i < hrCount; i++) {
+      const offsetDays = 14 * (hrCount - i); // older games further back
+      const d = new Date(now.getTime() - offsetDays * 24 * 60 * 60 * 1000);
+      const date = d.toISOString().slice(0, 10);
+      const gameId = `sim-hr-${date}`;
+
+      const nPlayers = 3 + rand(3); // 3-5 players
+      const attendees = pick(HR_REGULARS, nPlayers);
+      const finishOrder = skillSort(attendees);
+      const buyIn = 40;
+      const totalRebuys = rand(6);
+      const pot = (attendees.length + totalRebuys) * buyIn;
+      const payouts = computePayouts(pot, Math.min(3, nPlayers));
+      const rebuys = {};
+      let left = totalRebuys;
+      while (left > 0) {
+        const pid = attendees[rand(attendees.length)];
+        rebuys[pid] = (rebuys[pid] || 0) + 1;
+        left -= 1;
+      }
+
+      batch.set(db.doc(`games/${gameId}`), {
+        type: 'highrollers',
+        seasonId: null,
+        date,
+        gameNumber: null,
+        isFinal: false,
+        buyIn,
+        attendees,
+        rebuys,
+        totalRebuys,
+        finishOrder,
+        pot,
+        payouts,
+        leagueMoney: 0,
+        prizePool: pot,
+        subs: 0,
+        pointsAwarded: {},
+        bountyHolders: [],
+        bountyClaims: [],
+        notes: 'Generated by simulateGames (sandbox data).',
+      });
+      writes.hrGames += 1;
+    }
+
+    await batch.commit();
+    logger.info(`simulateGames wrote ${writes.seasons} seasons + ${writes.leagueGames} league games + ${writes.hrGames} HR games.`);
+    return { ok: true, ...writes };
+  }
+);
