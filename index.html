@@ -4822,25 +4822,15 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
   };
   const emailDirty = (emailInput.trim() || '') !== (player.email || '');
 
-  // Compute stats
-  const gamesPlayed = games.filter(g => g.pointsAwarded?.[playerId] > 0);
-  const totalPoints = gamesPlayed.reduce((sum, g) => sum + (g.pointsAwarded[playerId] || 0), 0);
-  const wins = gamesPlayed.filter(g => g.finishOrder?.[0] === playerId).length;
-  const podiums = gamesPlayed.filter(g => (g.finishOrder || []).slice(0, 3).includes(playerId)).length;
-  const totalBuyIns = gamesPlayed.length * 30; // £30 buy-in standard; doesn't include rebuys
-  const winnings = gamesPlayed.reduce((sum, g) => {
-    const pos = (g.finishOrder || []).indexOf(playerId);
-    if (pos < 0 || pos > 4) return sum;
-    return sum + (g.payouts?.[String(pos + 1)] || 0);
-  }, 0);
-
   // Birthday display
   const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const bdayStr = player.birthday ? `${monthNames[player.birthday.month]} ${player.birthday.day}` : null;
 
-  // ===== Chart: finishing-position over time =====
-  // Toggle between current-season view and all-time view. All-time view
-  // lazy-fetches every league game across all seasons.
+  // ===== Chart + stats source toggle =====
+  // CURRENT SEASON uses the games prop. ALL TIME lazy-fetches every league
+  // game across every season. Stats blocks above the chart and the chart
+  // itself both pull from the same `chartGames` array so the toggle drives
+  // the whole profile.
   const [chartView, setChartView] = useState('season');
   const [allGames, setAllGames] = useState(null);
   useEffect(() => {
@@ -4849,6 +4839,18 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
     }
   }, [chartView, allGames]);
   const chartGames = chartView === 'all' ? (allGames || []) : games;
+
+  // Compute stats from whichever set is selected.
+  const gamesPlayed = chartGames.filter(g => g.pointsAwarded?.[playerId] > 0 || (g.finishOrder || []).includes(playerId));
+  const totalPoints = gamesPlayed.reduce((sum, g) => sum + (g.pointsAwarded?.[playerId] || 0), 0);
+  const wins = gamesPlayed.filter(g => g.finishOrder?.[0] === playerId).length;
+  const podiums = gamesPlayed.filter(g => (g.finishOrder || []).slice(0, 3).includes(playerId)).length;
+  const totalBuyIns = gamesPlayed.length * 30; // £30 buy-in standard; doesn't include rebuys
+  const winnings = gamesPlayed.reduce((sum, g) => {
+    const pos = (g.finishOrder || []).indexOf(playerId);
+    if (pos < 0 || pos > 4) return sum;
+    return sum + (g.payouts?.[String(pos + 1)] || 0);
+  }, 0);
 
   return (
     <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
