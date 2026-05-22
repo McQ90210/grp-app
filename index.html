@@ -4051,10 +4051,9 @@ function HighRollersPlayerProfile({ playerId, players, games, onClose }) {
                       <div className="border-t border-yellow-500/5" />
                       <div className="border-t border-yellow-500/10" />
                     </div>
-                    <div className="flex items-end gap-1.5 h-full relative">
+                    <div className="flex gap-1.5 h-full relative">
                       {history.map((h) => {
                         const tp = h.totalPlayers || maxField;
-                        // Use maxField for scaling so bars are comparable across games with different field sizes.
                         const heightPct = h.place
                           ? Math.max(8, Math.round(((maxField - h.place + 1) / maxField) * 100))
                           : 0;
@@ -4068,20 +4067,28 @@ function HighRollersPlayerProfile({ playerId, players, games, onClose }) {
                         return (
                           <div
                             key={h.gameId}
-                            className="flex-1 flex flex-col items-center justify-end h-full"
+                            className="flex-1 relative h-full"
                             title={`${h.date}: ${h.place ? `${ordinal(h.place)} of ${tp}` : 'no position'}`}
                           >
                             {h.place && (
-                              <div className="font-mono text-[10px] text-yellow-100/60 mb-0.5">{h.place}</div>
+                              <>
+                                <div
+                                  className="absolute inset-x-0 rounded-t"
+                                  style={{
+                                    bottom: 0,
+                                    height: `${heightPct}%`,
+                                    minHeight: '4px',
+                                    background: color,
+                                  }}
+                                />
+                                <div
+                                  className="absolute inset-x-0 text-center font-mono text-[10px] text-yellow-100/60"
+                                  style={{ bottom: `calc(${heightPct}% + 2px)` }}
+                                >
+                                  {h.place}
+                                </div>
+                              </>
                             )}
-                            <div
-                              className="w-full rounded-t"
-                              style={{
-                                height: `${heightPct}%`,
-                                minHeight: h.place ? '4px' : '0',
-                                background: color,
-                              }}
-                            />
                           </div>
                         );
                       })}
@@ -4994,11 +5001,10 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
                       {chartView === 'all' ? 'Loading…' : 'No games yet'}
                     </div>
                   ) : (
-                    <div className="flex items-end gap-1.5 h-full relative">
+                    <div className="flex gap-1.5 h-full relative">
                       {safeGames.map((g) => {
                         const finishOrder = (g && g.finishOrder) || [];
                         const pos = finishOrder.indexOf(playerId); // 0-indexed; -1 if didn't play
-                        // Height: 1st = 100%, position N = (maxField - N + 1) / maxField %
                         const heightPct = pos < 0
                           ? 0
                           : Math.max(8, Math.round(((maxField - pos) / maxField) * 100));
@@ -5020,23 +5026,28 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
                           tip = `${gameLabel} (${g.date || '?'}): ${ordinal(pos + 1)} of ${fieldSize}`;
                         }
                         return (
-                          <div
-                            key={g.id}
-                            className="flex-1 flex flex-col items-center justify-end"
-                            title={tip}
-                          >
-                            {/* Position number above the bar */}
+                          <div key={g.id} className="flex-1 relative h-full" title={tip}>
                             {pos >= 0 && (
-                              <div className="font-mono text-[10px] text-yellow-100/60 mb-0.5">{pos + 1}</div>
+                              <>
+                                {/* Bar — absolute-positioned from the bottom so heightPct is relative to the chart area */}
+                                <div
+                                  className="absolute inset-x-0 rounded-t"
+                                  style={{
+                                    bottom: 0,
+                                    height: `${heightPct}%`,
+                                    minHeight: '3px',
+                                    background: bg,
+                                  }}
+                                />
+                                {/* Position number sits just above the bar */}
+                                <div
+                                  className="absolute inset-x-0 text-center font-mono text-[10px] text-yellow-100/60"
+                                  style={{ bottom: `calc(${heightPct}% + 2px)` }}
+                                >
+                                  {pos + 1}
+                                </div>
+                              </>
                             )}
-                            <div
-                              className="w-full rounded-t transition-all"
-                              style={{
-                                height: `${heightPct}%`,
-                                minHeight: pos >= 0 ? '3px' : '0',
-                                background: bg,
-                              }}
-                            />
                           </div>
                         );
                       })}
