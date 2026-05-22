@@ -3981,74 +3981,122 @@ function HighRollersPlayerProfile({ playerId, players, games, onClose }) {
           </div>
           {history.length === 0 ? (
             <div className="text-yellow-100/40 font-mono text-sm py-6 text-center">No games yet.</div>
-          ) : (
-            <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/10">
-              <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 'auto' }}>
-                {/* zero line */}
-                <line x1={PAD} x2={W - PAD} y1={zeroY} y2={zeroY} stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" />
-                {/* area fill */}
-                <path d={areaD} fill={netTotal >= 0 ? 'rgba(20,163,123,0.18)' : 'rgba(239,68,68,0.18)'} />
-                {/* line */}
-                <path d={pathD} fill="none" stroke={netTotal >= 0 ? '#1ec890' : '#ef4444'} strokeWidth="2" />
-                {/* points + labels */}
-                {history.map((h, i) => (
-                  <g key={h.gameId}>
-                    <circle cx={xs[i]} cy={ys[i]} r="3" fill={cumulative[i] >= 0 ? '#1ec890' : '#ef4444'} />
-                    <title>{`${h.date}: ${h.net >= 0 ? '+' : ''}£${h.net} (running ${cumulative[i] >= 0 ? '+' : ''}£${cumulative[i]})`}</title>
-                  </g>
-                ))}
-              </svg>
-              <div className="flex justify-between text-[10px] font-mono text-yellow-100/30 mt-1 px-2">
-                {history.map((h, i) => (
-                  <span key={i}>{h.date?.slice(5) || ''}</span>
-                ))}
+          ) : (() => {
+            // Y-axis: max profit at top, zero (or midpoint) in middle, min at bottom.
+            const fmt = (v) => `${v >= 0 ? '+' : ''}£${Math.round(v)}`;
+            const yLabels = [maxCum, (maxCum + minCum) / 2, minCum];
+            return (
+              <div className="flex">
+                {/* Y-axis labels */}
+                <div className="flex flex-col justify-between items-end pr-2 py-3 font-mono text-[10px] text-yellow-100/40 tracking-wider" style={{ height: 'auto', minHeight: '120px' }}>
+                  <span>{fmt(yLabels[0])}</span>
+                  <span className="text-yellow-100/25">{fmt(yLabels[1])}</span>
+                  <span className="text-yellow-100/25">{fmt(yLabels[2])}</span>
+                </div>
+                {/* Chart area */}
+                <div className="flex-1 p-3 rounded-lg bg-black/40 border border-emerald-500/10">
+                  <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 'auto' }}>
+                    {/* zero line */}
+                    <line x1={PAD} x2={W - PAD} y1={zeroY} y2={zeroY} stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" />
+                    {/* area fill */}
+                    <path d={areaD} fill={netTotal >= 0 ? 'rgba(20,163,123,0.18)' : 'rgba(239,68,68,0.18)'} />
+                    {/* line */}
+                    <path d={pathD} fill="none" stroke={netTotal >= 0 ? '#1ec890' : '#ef4444'} strokeWidth="2" />
+                    {/* points + labels */}
+                    {history.map((h, i) => (
+                      <g key={h.gameId}>
+                        <circle cx={xs[i]} cy={ys[i]} r="3" fill={cumulative[i] >= 0 ? '#1ec890' : '#ef4444'} />
+                        <title>{`${h.date}: ${h.net >= 0 ? '+' : ''}£${h.net} (running ${cumulative[i] >= 0 ? '+' : ''}£${cumulative[i]})`}</title>
+                      </g>
+                    ))}
+                  </svg>
+                  <div className="flex justify-between text-[10px] font-mono text-yellow-100/30 mt-1 px-2">
+                    {history.map((h, i) => (
+                      <span key={i}>{h.date?.slice(5) || ''}</span>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Position chart */}
-        {history.length > 0 && (
-          <div className="mb-2">
-            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">
-              FINAL POSITION (1st = tallest)
-            </div>
-            <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/10">
-              <div className="flex items-end gap-1.5" style={{ height: `${PH}px` }}>
-                {history.map((h) => {
-                  const tp = h.totalPlayers || 1;
-                  const heightPct = h.place
-                    ? ((tp - h.place + 1) / tp) * 100
-                    : 0;
-                  const color = h.place === 1
-                    ? 'linear-gradient(180deg, #f4d03f, #d4ac0d)'
-                    : h.place === 2
-                      ? 'linear-gradient(180deg, #d6d6d6, #a0a0a0)'
-                      : h.place === 3
-                        ? 'linear-gradient(180deg, #cd7f32, #8a5a23)'
-                        : 'linear-gradient(180deg, #14a37b, #0a6e52)';
-                  return (
-                    <div
-                      key={h.gameId}
-                      className="flex-1 rounded-t relative"
-                      style={{
-                        height: `${heightPct}%`,
-                        minHeight: h.place ? '4px' : '0',
-                        background: color,
-                      }}
-                      title={`${h.date}: ${h.place ? `${h.place}/${tp}` : 'no position'}`}
-                    />
-                  );
-                })}
+        {history.length > 0 && (() => {
+          // Max field size across this player's HR games. Sensible default: 5.
+          const maxField = Math.max(5, ...history.map((h) => h.totalPlayers || 0));
+          const ordinal = (n) => {
+            const s = ['th','st','nd','rd'];
+            const v = n % 100;
+            return n + (s[(v - 20) % 10] || s[v] || s[0]);
+          };
+          const midTick = Math.ceil(maxField / 2);
+          return (
+            <div className="mb-2">
+              <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">
+                FINAL POSITION
               </div>
-              <div className="flex justify-between text-[10px] font-mono text-yellow-100/30 mt-1 px-2">
-                {history.map((h, i) => (
-                  <span key={i}>{h.place ? `${h.place}/${h.totalPlayers}` : '—'}</span>
-                ))}
+              <div className="flex">
+                {/* Y-axis labels */}
+                <div className="flex flex-col justify-between items-end pr-2 py-3 font-mono text-[10px] text-yellow-100/40 tracking-wider" style={{ height: `${PH}px` }}>
+                  <span>{ordinal(1)}</span>
+                  <span className="text-yellow-100/25">{ordinal(midTick)}</span>
+                  <span className="text-yellow-100/25">{ordinal(maxField)}</span>
+                </div>
+                <div className="flex-1 p-3 rounded-lg bg-black/40 border border-emerald-500/10">
+                  {/* Subtle horizontal grid lines */}
+                  <div className="relative" style={{ height: `${PH - 24}px` }}>
+                    <div className="absolute inset-0 pointer-events-none flex flex-col justify-between">
+                      <div className="border-t border-yellow-500/10" />
+                      <div className="border-t border-yellow-500/5" />
+                      <div className="border-t border-yellow-500/10" />
+                    </div>
+                    <div className="flex items-end gap-1.5 h-full relative">
+                      {history.map((h) => {
+                        const tp = h.totalPlayers || maxField;
+                        // Use maxField for scaling so bars are comparable across games with different field sizes.
+                        const heightPct = h.place
+                          ? Math.max(8, Math.round(((maxField - h.place + 1) / maxField) * 100))
+                          : 0;
+                        const color = h.place === 1
+                          ? 'linear-gradient(180deg, #f4d03f, #d4ac0d)'
+                          : h.place === 2
+                            ? 'linear-gradient(180deg, #d6d6d6, #a0a0a0)'
+                            : h.place === 3
+                              ? 'linear-gradient(180deg, #cd7f32, #8a5a23)'
+                              : 'linear-gradient(180deg, #14a37b, #0a6e52)';
+                        return (
+                          <div
+                            key={h.gameId}
+                            className="flex-1 flex flex-col items-center justify-end h-full"
+                            title={`${h.date}: ${h.place ? `${ordinal(h.place)} of ${tp}` : 'no position'}`}
+                          >
+                            {h.place && (
+                              <div className="font-mono text-[10px] text-yellow-100/60 mb-0.5">{h.place}</div>
+                            )}
+                            <div
+                              className="w-full rounded-t"
+                              style={{
+                                height: `${heightPct}%`,
+                                minHeight: h.place ? '4px' : '0',
+                                background: color,
+                              }}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-[10px] font-mono text-yellow-100/30 mt-1 px-2">
+                    {history.map((h, i) => (
+                      <span key={i}>{h.place ? `${h.place}/${h.totalPlayers}` : '—'}</span>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );
