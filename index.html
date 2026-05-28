@@ -2263,15 +2263,42 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       setTimeLeft((t) => {
         if (t <= 1) {
           setCurrentLevel((lvl) => {
-            const next = Math.min(lvl + 1, levels.length - 1);
-            if (next !== lvl) {
-              setTimeout(() => announceLevelTransition(next), 100);
-              setTimeout(() => setTimeLeft(levels[next].duration * 60), 0);
-            } else {
-              setIsRunning(false);
-              setTimeout(() => speakClip('complete', 'Tournament complete. Well played.'), 100);
+            const atLast = lvl >= levels.length - 1;
+            if (!atLast) {
+              const nextIdx = lvl + 1;
+              setTimeout(() => announceLevelTransition(nextIdx), 100);
+              setTimeout(() => setTimeLeft(levels[nextIdx].duration * 60), 0);
+              return nextIdx;
             }
-            return next;
+            // Past the last preset level — auto-append a new one with the
+            // next blind step so blinds keep climbing while the game is
+            // still in progress. (Winner detection in doEliminate stops
+            // the tournament when only one player remains.)
+            const cur = levels[lvl];
+            if (cur.isBreak) {
+              // Shouldn't normally reach the last level on a break — just stop.
+              setIsRunning(false);
+              return lvl;
+            }
+            const newBB = nextBlindStep(cur.bb);
+            const newSB = Math.floor(newBB / 2);
+            const newAnte = cur.ante > 0 ? Math.floor(newBB / 4) : 0;
+            const newLevel = { sb: newSB, bb: newBB, ante: newAnte, duration: cur.duration, isBreak: false };
+            setLevels((prev) => [...prev, newLevel]);
+            const nextIdx = lvl + 1;
+            setTimeout(() => setTimeLeft(newLevel.duration * 60), 0);
+            // Announce the new blinds directly so we don't rely on stale
+            // `levels` inside announceLevelTransition's closure.
+            setTimeout(async () => {
+              try {
+                await speakClip('blinds-up', 'Blinds up!');
+                await new Promise((r) => setTimeout(r, 200));
+                const anteText = newAnte > 0 ? `, with an ante of ${newAnte}` : '';
+                const key = newAnte > 0 ? `blinds-${newBB}-ante` : `blinds-${newBB}`;
+                speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
+              } catch (e) { /* ignore */ }
+            }, 100);
+            return nextIdx;
           });
           return 0;
         }
@@ -2312,6 +2339,30 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       setCurrentLevel(next);
       setTimeLeft(levels[next].duration * 60);
       if (isRunning) announceLevelTransition(next);
+      return;
+    }
+    // Already at the last preset level — append a new one with the next
+    // blind step so the tournament can keep going.
+    const cur = levels[currentLevel];
+    if (!cur || cur.isBreak) return;
+    const newBB = nextBlindStep(cur.bb);
+    const newSB = Math.floor(newBB / 2);
+    const newAnte = cur.ante > 0 ? Math.floor(newBB / 4) : 0;
+    const newLevel = { sb: newSB, bb: newBB, ante: newAnte, duration: cur.duration, isBreak: false };
+    const nextIdx = currentLevel + 1;
+    setLevels((prev) => [...prev, newLevel]);
+    setCurrentLevel(nextIdx);
+    setTimeLeft(newLevel.duration * 60);
+    if (isRunning) {
+      setTimeout(async () => {
+        try {
+          await speakClip('blinds-up', 'Blinds up!');
+          await new Promise((r) => setTimeout(r, 200));
+          const anteText = newAnte > 0 ? `, with an ante of ${newAnte}` : '';
+          const key = newAnte > 0 ? `blinds-${newBB}-ante` : `blinds-${newBB}`;
+          speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
+        } catch (e) { /* ignore */ }
+      }, 100);
     }
   };
 
@@ -2769,21 +2820,21 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             <div className="grid grid-cols-3 gap-4 mb-8">
               {level.isBreak ? (
                 <div className="col-span-3 text-center py-6">
-                  <div className="font-display text-6xl text-blue-300">BREAK</div>
+                  <div className="font-display text-7xl sm:text-8xl text-blue-300">BREAK</div>
                 </div>
               ) : (
                 <>
                   <div className="text-center">
-                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">SMALL BLIND</div>
-                    <div className="font-display text-4xl sm:text-5xl text-yellow-50">{level.sb.toLocaleString()}</div>
+                    <div className="font-mono text-xs sm:text-sm text-yellow-500/60 tracking-widest mb-2">SMALL BLIND</div>
+                    <div className="font-display text-6xl sm:text-8xl text-yellow-50 leading-none">{level.sb.toLocaleString()}</div>
                   </div>
                   <div className="text-center border-x border-yellow-500/10">
-                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">BIG BLIND</div>
-                    <div className="font-display text-4xl sm:text-5xl text-yellow-50">{level.bb.toLocaleString()}</div>
+                    <div className="font-mono text-xs sm:text-sm text-yellow-500/60 tracking-widest mb-2">BIG BLIND</div>
+                    <div className="font-display text-6xl sm:text-8xl text-yellow-50 leading-none">{level.bb.toLocaleString()}</div>
                   </div>
                   <div className="text-center">
-                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">ANTE</div>
-                    <div className="font-display text-4xl sm:text-5xl text-yellow-50">{level.ante > 0 ? level.ante.toLocaleString() : '—'}</div>
+                    <div className="font-mono text-xs sm:text-sm text-yellow-500/60 tracking-widest mb-2">ANTE</div>
+                    <div className="font-display text-6xl sm:text-8xl text-yellow-50 leading-none">{level.ante > 0 ? level.ante.toLocaleString() : '—'}</div>
                   </div>
                 </>
               )}
