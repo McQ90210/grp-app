@@ -2472,6 +2472,12 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     }
     setPlayers([...players, { name, sound }]);
     setNewPlayerName('');
+    // Late-join welcome announcement. Per-player clip lives at
+    // sounds/voice/welcome-{slug}.mp3; falls back to Web Speech if missing.
+    if (voiceEnabled && hasStarted) {
+      const slug = slugifyName(name);
+      speakClip(`welcome-${slug}`, `Welcome to the game, ${name}.`);
+    }
   };
 
   const togglePlayerEliminated = (name) => {
@@ -2927,16 +2933,16 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 <div className={`grid gap-4 ${nextLvl && endProjection ? 'grid-cols-2' : 'grid-cols-1 justify-items-center'}`}>
                   {nextLvl && (
                     <div>
-                      <div className="font-mono text-xs text-yellow-500/40 tracking-widest mb-1">NEXT</div>
-                      <div className="font-mono text-yellow-100/60 text-sm">
+                      <div className="font-mono text-sm sm:text-base text-yellow-500/50 tracking-widest mb-2">NEXT</div>
+                      <div className="font-mono text-yellow-100/80 text-xl sm:text-2xl">
                         {nextLvl.isBreak ? `${nextLvl.duration} min break` : `${nextLvl.sb} / ${nextLvl.bb}${nextLvl.ante > 0 ? ` (ante ${nextLvl.ante})` : ''}`}
                       </div>
                     </div>
                   )}
                   {endProjection && (
                     <div title={`Based on chip stack, blind level, level times, and players remaining. Worst case (all levels run in full): ${endProjection.latest}`}>
-                      <div className="font-mono text-xs text-yellow-500/40 tracking-widest mb-1">EST. FINISH</div>
-                      <div className="font-mono text-yellow-100/60 text-sm">~{endProjection.likely}</div>
+                      <div className="font-mono text-sm sm:text-base text-yellow-500/50 tracking-widest mb-2">EST. FINISH</div>
+                      <div className="font-mono text-yellow-100/80 text-xl sm:text-2xl">~{endProjection.likely}</div>
                     </div>
                   )}
                 </div>
