@@ -5974,6 +5974,10 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
   // Per-player rebuy counts. Needed for HR so the profit/loss math
   // (buyIns += buyIn * (1 + rebuys[pid])) lands correctly per player.
   const [rebuys, setRebuys] = useState({ ...(game.rebuys || {}) });
+  // Per-player buy-in. HR profit/loss is driven by this directly, so the
+  // modal exposes BUY IN (not POT) for HR; pot is derived on save from
+  // buyIn × (attendees + totalRebuys). League keeps POT editable.
+  const [buyIn, setBuyIn] = useState(game.buyIn == null ? '' : String(game.buyIn));
 
   // Adjust one player's rebuy count. Negative count is clamped to 0.
   const bumpRebuy = (pid, delta) => {
@@ -6043,11 +6047,11 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
       const updates = {
         ...game,
         date,
-        pot: parseFloat(pot) || 0,
         payouts,
         finishOrder,
       };
       if (isLeague) {
+        updates.pot = parseFloat(pot) || 0;
         updates.totalRebuys = parseInt(totalRebuys) || 0;
         updates.leagueMoney = parseFloat(leagueMoney) || 0;
         updates.subs = parseFloat(subs) || 0;
@@ -6057,11 +6061,14 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
         // store the existing value for league untouched).
         updates.rebuys = rebuys;
       } else {
-        // HR: preserve attendees as-is. Per-player rebuys ARE editable —
-        // derive the running total from their sum for back-compat.
+        // HR: BUY IN is the editable field; derive the pot from it.
+        const newBuyIn = parseFloat(buyIn) || 0;
+        const totalR = Object.values(rebuys).reduce((a, b) => a + (b || 0), 0);
+        updates.buyIn = newBuyIn;
         updates.attendees = attendees;
         updates.rebuys = rebuys;
-        updates.totalRebuys = Object.values(rebuys).reduce((a, b) => a + (b || 0), 0);
+        updates.totalRebuys = totalR;
+        updates.pot = newBuyIn * (attendees.length + totalR);
       }
       await window.GRP_DB.saveGame(updates);
       onSaved();
@@ -6121,14 +6128,21 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
             </div>
           )}
           <div>
-            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">POT £</div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">
+              {isLeague ? 'POT £' : 'BUY IN £'}
+            </div>
             <input
               type="number"
-              value={pot}
+              value={isLeague ? pot : buyIn}
               placeholder="—"
-              onChange={(e) => setPot(e.target.value)}
+              onChange={(e) => (isLeague ? setPot(e.target.value) : setBuyIn(e.target.value))}
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
             />
+            {!isLeague && (
+              <div className="font-mono text-[10px] text-yellow-100/40 mt-1">
+                pot recalculated on save from buy-in × ({attendees.length} players + {Object.values(rebuys).reduce((a, b) => a + (b || 0), 0)} rebuys)
+              </div>
+            )}
           </div>
           {isLeague && (
             <>
