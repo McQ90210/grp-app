@@ -2102,6 +2102,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
 
   const intervalRef = useRef(null);
   const scrubDraggingRef = useRef(false);
+  // Refs to the latest levels / currentLevel so the interval callback (set
+  // up once per isRunning change) can read fresh values without dep churn.
+  const levelsRef = useRef(null);
+  const currentLevelRef = useRef(0);
 
   // Load the full club roster from Firestore so late-entry can suggest existing names
   useEffect(() => {
@@ -2257,63 +2261,84 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     announceLevel(levelIdx);
   }, [levels, speakClip, announceLevel]);
 
+  // Keep refs in sync so the interval callback can read fresh values
+  // without resubscribing every render.
+  useEffect(() => { levelsRef.current = levels; }, [levels]);
+  useEffect(() => { currentLevelRef.current = currentLevel; }, [currentLevel]);
+
   useEffect(() => {
     if (!isRunning) return;
     intervalRef.current = setInterval(() => {
       setTimeLeft((t) => {
-        if (t <= 1) {
-          setCurrentLevel((lvl) => {
-            const atLast = lvl >= levels.length - 1;
-            if (!atLast) {
-              const nextIdx = lvl + 1;
-              setTimeout(() => announceLevelTransition(nextIdx), 100);
-              setTimeout(() => setTimeLeft(levels[nextIdx].duration * 60), 0);
-              return nextIdx;
+        if (t > 1) {
+          // Mid-round warnings — read fresh values via refs.
+          const lvls = levelsRef.current || [];
+          const cl = currentLevelRef.current;
+          const curLvl = lvls[cl];
+          if (curLvl && !curLvl.isBreak) {
+            if (t === 301 && curLvl.duration > 5) {
+              speakClip('five-min', 'Five minutes remaining in this round.');
+            } else if (t === 61) {
+              speakClip('one-min', 'One minute remaining.');
             }
-            // Past the last preset level — auto-append a new one with the
-            // next blind step so blinds keep climbing while the game is
-            // still in progress. (Winner detection in doEliminate stops
-            // the tournament when only one player remains.)
-            const cur = levels[lvl];
-            if (cur.isBreak) {
-              // Shouldn't normally reach the last level on a break — just stop.
-              setIsRunning(false);
-              return lvl;
-            }
-            const newBB = nextBlindStep(cur.bb);
-            const newSB = Math.floor(newBB / 2);
-            const newAnte = cur.ante > 0 ? Math.floor(newBB / 4) : 0;
-            const newLevel = { sb: newSB, bb: newBB, ante: newAnte, duration: cur.duration, isBreak: false };
-            setLevels((prev) => [...prev, newLevel]);
-            const nextIdx = lvl + 1;
-            setTimeout(() => setTimeLeft(newLevel.duration * 60), 0);
-            // Announce the new blinds directly so we don't rely on stale
-            // `levels` inside announceLevelTransition's closure.
-            setTimeout(async () => {
-              try {
-                await speakClip('blinds-up', 'Blinds up!');
-                await new Promise((r) => setTimeout(r, 200));
-                const anteText = newAnte > 0 ? `, with an ante of ${newAnte}` : '';
-                const key = newAnte > 0 ? `blinds-${newBB}-ante` : `blinds-${newBB}`;
-                speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
-              } catch (e) { /* ignore */ }
-            }, 100);
-            return nextIdx;
-          });
-          return 0;
+          }
+          return t - 1;
         }
-        // Only fire the 5-min warning if the round itself is longer than 5 min
-        if (t === 301 && levels[currentLevel].duration > 5 && !levels[currentLevel].isBreak) {
-          speakClip('five-min', 'Five minutes remaining in this round.');
-        }
-        if (t === 61 && !levels[currentLevel].isBreak) {
-          speakClip('one-min', 'One minute remaining.');
-        }
-        return t - 1;
+        // t <= 1 — level expired. Defer the level transition to a microtask
+        // so we're not mutating other state from inside this setTimeLeft
+        // updater (which caused a black-screen crash in v7.47 when the
+        // auto-extend race left currentLevel pointing past levels[]).
+        setTimeout(() => handleLevelExpiry(), 0);
+        return 0;
       });
     }, 1000);
     return () => clearInterval(intervalRef.current);
-  }, [isRunning, levels, currentLevel, announceLevel, announceLevelTransition, speak, speakClip]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunning]);
+
+  // Single source of truth for "the level timer just hit zero". Reads
+  // current state via refs so it always sees fresh values, then does its
+  // state mutations as plain (auto-batched) setState calls.
+  const handleLevelExpiry = useCallback(() => {
+    const lvls = levelsRef.current || [];
+    const lvl = currentLevelRef.current;
+    const atLast = lvl >= lvls.length - 1;
+
+    if (!atLast) {
+      const nextIdx = lvl + 1;
+      setCurrentLevel(nextIdx);
+      setTimeLeft(lvls[nextIdx].duration * 60);
+      setTimeout(() => announceLevelTransition(nextIdx), 100);
+      return;
+    }
+    // Past the last preset level — auto-append a new one with the next
+    // blind step so blinds keep climbing while the game is still going.
+    // (Winner detection in doEliminate ends the tournament cleanly.)
+    const cur = lvls[lvl];
+    if (!cur || cur.isBreak) {
+      setIsRunning(false);
+      return;
+    }
+    const newBB = nextBlindStep(cur.bb);
+    const newSB = Math.floor(newBB / 2);
+    const newAnte = cur.ante > 0 ? Math.floor(newBB / 4) : 0;
+    const newLevel = { sb: newSB, bb: newBB, ante: newAnte, duration: cur.duration, isBreak: false };
+    // Append BEFORE bumping currentLevel — React 18 auto-batches these
+    // sequential calls so they commit together (the v7.47 crash came from
+    // calling setLevels from INSIDE setCurrentLevel's updater).
+    setLevels((prev) => [...prev, newLevel]);
+    setCurrentLevel(lvl + 1);
+    setTimeLeft(newLevel.duration * 60);
+    setTimeout(async () => {
+      try {
+        await speakClip('blinds-up', 'Blinds up!');
+        await new Promise((r) => setTimeout(r, 200));
+        const anteText = newAnte > 0 ? `, with an ante of ${newAnte}` : '';
+        const key = newAnte > 0 ? `blinds-${newBB}-ante` : `blinds-${newBB}`;
+        speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
+      } catch (e) { /* ignore */ }
+    }, 100);
+  }, [announceLevelTransition, speakClip]);
 
   const togglePlay = () => {
     // iOS / Safari requires the very first speak() call to happen synchronously
@@ -2526,10 +2551,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     }
   };
 
-  const level = levels[currentLevel];
+  // Defensive: if currentLevel ever points past the array (e.g. a brief
+  // race during the auto-extend), fall back to the last available level
+  // instead of crashing the whole timer screen.
+  const level = levels[currentLevel] || levels[levels.length - 1] || { sb: 0, bb: 0, ante: 0, duration: 1, isBreak: false };
   const nextLvl = levels[currentLevel + 1];
   const activePlayers = players.filter((p) => !eliminatedPlayers.includes(p.name));
-  const progress = 1 - timeLeft / (level.duration * 60);
+  const progress = 1 - timeLeft / ((level.duration || 1) * 60);
   // Prize pool includes rebuys
   const totalEntries = players.length + totalRebuys;
   const prizePool = config.buyIn * totalEntries;
