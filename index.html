@@ -4377,55 +4377,6 @@ function LeagueDashboard({ onBack, fbUser }) {
   // Sandbox / admin tooling
   const [showAdminTools, setShowAdminTools] = useState(false);
   const [showManagePlayers, setShowManagePlayers] = useState(false);
-  const [adminBusy, setAdminBusy] = useState(null); // 'wipeHR' | 'wipeSim' | 'simulate' | null
-  const [adminMessage, setAdminMessage] = useState(null); // { kind: 'ok'|'err', text }
-  const [showWipeHRConfirm, setShowWipeHRConfirm] = useState(false);
-  const [showWipeSimConfirm, setShowWipeSimConfirm] = useState(false);
-
-  const announceAdmin = (kind, text) => {
-    setAdminMessage({ kind, text });
-    setTimeout(() => setAdminMessage(null), 8000);
-  };
-
-  const doWipeHR = async () => {
-    setShowWipeHRConfirm(false);
-    setAdminBusy('wipeHR');
-    setAdminMessage(null);
-    try {
-      const r = await window.GRP_DB.wipeHighRollers();
-      announceAdmin('ok', `✓ Wiped ${r.deleted} High Rollers games.`);
-      if (window.GRP_DB) window.GRP_DB.getAllSeasons().then(setSeasons).catch(() => {});
-    } catch (e) {
-      announceAdmin('err', e.message || 'Wipe failed.');
-    } finally { setAdminBusy(null); }
-  };
-
-  const doWipeSim = async () => {
-    setShowWipeSimConfirm(false);
-    setAdminBusy('wipeSim');
-    setAdminMessage(null);
-    try {
-      const r = await window.GRP_DB.wipeSimData();
-      announceAdmin('ok', `✓ Wiped ${r.deletedGames} sim games + ${r.deletedSeasons} sim seasons.`);
-      window.location.reload();
-    } catch (e) {
-      announceAdmin('err', e.message || 'Wipe failed.');
-      setAdminBusy(null);
-    }
-  };
-
-  const doSimulate = async () => {
-    setAdminBusy('simulate');
-    setAdminMessage(null);
-    try {
-      const r = await window.GRP_DB.simulateGames();
-      announceAdmin('ok', `✓ Created ${r.seasons} sandbox seasons + ${r.leagueGames} league games + ${r.hrGames} HR games.`);
-      window.location.reload();
-    } catch (e) {
-      announceAdmin('err', e.message || 'Simulation failed.');
-      setAdminBusy(null);
-    }
-  };
 
   const doResend = async () => {
     setShowResendConfirm(false);
@@ -4735,41 +4686,6 @@ function LeagueDashboard({ onBack, fbUser }) {
                 >
                   ✉ MANAGE PLAYERS
                 </button>
-                <button
-                  onClick={doSimulate}
-                  disabled={adminBusy !== null}
-                  className="px-3 py-1.5 rounded font-mono text-xs border border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
-                  title="Generate 4 sandbox seasons + 20 league games + 20 HR games using sim- prefix"
-                >
-                  {adminBusy === 'simulate' ? 'SIMULATING…' : '🧪 SIMULATE 20+20'}
-                </button>
-                <button
-                  onClick={() => setShowWipeSimConfirm(true)}
-                  disabled={adminBusy !== null}
-                  className="px-3 py-1.5 rounded font-mono text-xs border border-yellow-500/40 text-yellow-100 hover:bg-yellow-500/15 disabled:opacity-40"
-                  title="Delete every game and season whose id starts with sim-. Real data untouched."
-                >
-                  {adminBusy === 'wipeSim' ? 'WIPING…' : '🗑 WIPE SIM DATA'}
-                </button>
-                <button
-                  onClick={() => setShowWipeHRConfirm(true)}
-                  disabled={adminBusy !== null}
-                  className="px-3 py-1.5 rounded font-mono text-xs border border-red-500/40 text-red-200 hover:bg-red-500/15 disabled:opacity-40"
-                  title="Delete every High Rollers game in Firestore. League games untouched."
-                >
-                  {adminBusy === 'wipeHR' ? 'WIPING…' : '🗑 WIPE HR DATA'}
-                </button>
-              </div>
-            )}
-            {adminMessage && (
-              <div
-                className={`mt-2 px-3 py-2 rounded-lg font-mono text-xs border ${
-                  adminMessage.kind === 'ok'
-                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
-                    : 'bg-red-950/40 border-red-500/40 text-red-200'
-                }`}
-              >
-                {adminMessage.kind === 'ok' ? '' : '⚠ '}{adminMessage.text}
               </div>
             )}
           </div>
@@ -4978,28 +4894,6 @@ function LeagueDashboard({ onBack, fbUser }) {
             // Refresh local players list so any other UI reflects new emails immediately.
             if (window.GRP_DB) window.GRP_DB.getAllPlayers().then(setPlayers).catch(() => {});
           }}
-        />
-      )}
-
-      {/* Confirm wipe HR data */}
-      {showWipeHRConfirm && (
-        <ConfirmDialog
-          title="Wipe ALL High Rollers data?"
-          message="This will permanently delete every High Rollers game in the database. League games are not affected. There is no undo."
-          requireType="WIPE"
-          onConfirm={doWipeHR}
-          onCancel={() => setShowWipeHRConfirm(false)}
-        />
-      )}
-
-      {/* Confirm wipe sim data */}
-      {showWipeSimConfirm && (
-        <ConfirmDialog
-          title="Wipe ALL sandbox / sim data?"
-          message="Removes every game and season whose id starts with 'sim-'. Real league + HR data is not affected."
-          requireType="WIPE"
-          onConfirm={doWipeSim}
-          onCancel={() => setShowWipeSimConfirm(false)}
         />
       )}
 
