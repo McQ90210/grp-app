@@ -2116,14 +2116,19 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const intervalRef = useRef(null);
   const scrubDraggingRef = useRef(false);
   // Refs to the latest levels / currentLevel so the interval callback (set
-  // up once per isRunning change) can read fresh values without dep churn.
-  const levelsRef = useRef(null);
-  const currentLevelRef = useRef(0);
+  // up once per isRunning change) and the announce callbacks read fresh
+  // values, even after a manual level edit changes the state.
+  const levelsRef = useRef(levels);
+  const currentLevelRef = useRef(currentLevel);
+  // Sync refs on every render — synchronous, so even effects/handlers that
+  // fire before the useEffect commits read the latest values.
+  levelsRef.current = levels;
+  currentLevelRef.current = currentLevel;
   // timeLeft is read by the live-save snapshot. We don't want every second
   // tick to fire a save, so we keep timeLeft out of the save effect's deps
-  // and read its current value from this ref instead.
+  // and read its current value from this ref instead. Synced synchronously.
   const timeLeftRef = useRef(timeLeft);
-  useEffect(() => { timeLeftRef.current = timeLeft; }, [timeLeft]);
+  timeLeftRef.current = timeLeft;
 
   // Live-game persistence. Writes the in-progress tournament state to
   // localStorage on every change (always) and to Firestore liveGames/current
@@ -2273,38 +2278,38 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     });
   }, [voiceEnabled, getVoice]);
 
+  // Read levels via levelsRef rather than closure so a stale-closure capture
+  // (e.g. timer's interval set up before a manual level edit) doesn't read
+  // out the previous BB/SB values after the user changed them.
   const announceLevel = useCallback((levelIdx) => {
-    const level = levels[levelIdx];
+    const level = (levelsRef.current || [])[levelIdx];
     if (!level) return;
     if (level.isBreak) {
       speakClip(`break-${level.duration}`, `Break time. ${level.duration} minute break. Stretch your legs.`);
     } else {
-      // Pre-recorded blinds clip keyed by BB; ante variant when present.
-      // Level number and round duration are visible on screen, so we don't
-      // announce them verbally (would require dynamic Web Speech mid-Adam).
       const anteText = level.ante > 0 ? `, with an ante of ${level.ante}` : '';
       const key = level.ante > 0 ? `blinds-${level.bb}-ante` : `blinds-${level.bb}`;
       speakClip(key, `Blinds are now ${level.sb} and ${level.bb}${anteText}.`);
     }
-  }, [levels, speakClip]);
+  }, [speakClip]);
 
   // Welcome message — only when starting from level 1 for the first time.
   // Plays the pre-recorded Adam clip, then announces the opening blinds.
   // Falls back to Web Speech for the welcome if the clip fails.
   const speakWelcome = useCallback(async () => {
-    const level = levels[0];
+    const level = (levelsRef.current || [])[0];
     if (!level || level.isBreak) return;
     await speakClip('welcome', 'Welcome to the home game, everyone. Best of luck.');
     // Brief pause then announce the starting blinds for level 1.
     await new Promise((r) => setTimeout(r, 400));
     announceLevel(0);
-  }, [levels, speakClip, announceLevel]);
+  }, [speakClip, announceLevel]);
 
-  // Mid-game level transition: "Blinds Up!" then the new blinds.
-  // Breaks skip the "Blinds Up" prefix — just play the break clip.
-  // Used for both the automatic timer roll-over and the manual NEXT button.
+  // Mid-game level transition: "Blinds Up!" then the new blinds. Breaks skip
+  // the "Blinds Up" prefix. Used for both the automatic timer roll-over and
+  // the manual NEXT button. Reads via levelsRef for the same reason as above.
   const announceLevelTransition = useCallback(async (levelIdx) => {
-    const lvl = levels[levelIdx];
+    const lvl = (levelsRef.current || [])[levelIdx];
     if (!lvl) return;
     if (lvl.isBreak) {
       announceLevel(levelIdx);
@@ -2313,12 +2318,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     await speakClip('blinds-up', 'Blinds up!');
     await new Promise((r) => setTimeout(r, 200));
     announceLevel(levelIdx);
-  }, [levels, speakClip, announceLevel]);
-
-  // Keep refs in sync so the interval callback can read fresh values
-  // without resubscribing every render.
-  useEffect(() => { levelsRef.current = levels; }, [levels]);
-  useEffect(() => { currentLevelRef.current = currentLevel; }, [currentLevel]);
+  }, [speakClip, announceLevel]);
 
   useEffect(() => {
     if (!isRunning) return;
