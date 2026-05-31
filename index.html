@@ -3750,6 +3750,33 @@ function HighRollersHistory({ onBack, fbUser }) {
   const [error, setError] = useState(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   const [timeRange, setTimeRange] = useState('all'); // 'all' | '12m' | '6m'
+  // Admin tools — only shown when signed in
+  const [showAdminTools, setShowAdminTools] = useState(false);
+  const [adminBusy, setAdminBusy] = useState(null); // 'wipeHR' | null
+  const [adminMessage, setAdminMessage] = useState(null);
+  const [showWipeHRConfirm, setShowWipeHRConfirm] = useState(false);
+
+  const announceAdmin = (kind, text) => {
+    setAdminMessage({ kind, text });
+    setTimeout(() => setAdminMessage(null), 8000);
+  };
+
+  const doWipeHR = async () => {
+    setShowWipeHRConfirm(false);
+    setAdminBusy('wipeHR');
+    setAdminMessage(null);
+    try {
+      const r = await window.GRP_DB.wipeHighRollers();
+      announceAdmin('ok', `✓ Wiped ${r.deleted} High Rollers games.`);
+      // Refresh the page's local game state in place — no full reload needed.
+      try {
+        const fresh = await window.GRP_DB.getAllHighRollerGames();
+        setGames(fresh || []);
+      } catch (_) {}
+    } catch (e) {
+      announceAdmin('err', e.message || 'Wipe failed.');
+    } finally { setAdminBusy(null); }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -3863,6 +3890,41 @@ function HighRollersHistory({ onBack, fbUser }) {
             CASUAL SIDE GAMES · {games.length} GAME{games.length === 1 ? '' : 'S'}
           </div>
         </div>
+
+        {/* Admin tooling — destructive wipe sits where the data lives */}
+        {fbUser && (
+          <div className="mb-4">
+            <button
+              onClick={() => setShowAdminTools(!showAdminTools)}
+              className="font-mono text-[10px] tracking-widest text-yellow-100/40 hover:text-yellow-100/70"
+            >
+              {showAdminTools ? '▼' : '▶'} ADMIN TOOLS
+            </button>
+            {showAdminTools && (
+              <div className="mt-2 p-3 rounded-lg bg-black/30 border border-yellow-500/15 flex flex-wrap gap-2">
+                <button
+                  onClick={() => setShowWipeHRConfirm(true)}
+                  disabled={adminBusy !== null}
+                  className="px-3 py-1.5 rounded font-mono text-xs border border-red-500/40 text-red-200 hover:bg-red-500/15 disabled:opacity-40"
+                  title="Delete every High Rollers game in Firestore. League games untouched."
+                >
+                  {adminBusy === 'wipeHR' ? 'WIPING…' : '🗑 WIPE HR DATA'}
+                </button>
+              </div>
+            )}
+            {adminMessage && (
+              <div
+                className={`mt-2 px-3 py-2 rounded-lg font-mono text-xs border ${
+                  adminMessage.kind === 'ok'
+                    ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
+                    : 'bg-red-950/40 border-red-500/30 text-red-200'
+                }`}
+              >
+                {adminMessage.text}
+              </div>
+            )}
+          </div>
+        )}
 
         {loading ? (
           <div className="text-center py-16 text-emerald-200/60 font-mono">Loading...</div>
@@ -3991,6 +4053,16 @@ function HighRollersHistory({ onBack, fbUser }) {
             players={players}
             games={games}
             onClose={() => setSelectedPlayerId(null)}
+          />
+        )}
+
+        {showWipeHRConfirm && (
+          <ConfirmDialog
+            title="Wipe ALL High Rollers data?"
+            message="This will permanently delete every High Rollers game in the database. League games are not affected. There is no undo."
+            requireType="WIPE"
+            onConfirm={doWipeHR}
+            onCancel={() => setShowWipeHRConfirm(false)}
           />
         )}
       </div>
