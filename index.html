@@ -3778,6 +3778,17 @@ function HighRollersHistory({ onBack, fbUser }) {
     } finally { setAdminBusy(null); }
   };
 
+  // Game being edited (admin only). Reuses the league EditGameModal which
+  // is type-aware (hides league-only sections for HR).
+  const [editingGame, setEditingGame] = useState(null);
+
+  const refreshGames = async () => {
+    try {
+      const fresh = await window.GRP_DB.getAllHighRollerGames();
+      setGames(fresh || []);
+    } catch (_) {}
+  };
+
   useEffect(() => {
     let cancelled = false;
     const doLoad = async () => {
@@ -4016,10 +4027,21 @@ function HighRollersHistory({ onBack, fbUser }) {
                   const medal = ['🥇', '🥈', '🥉'];
                   return (
                     <div key={g.id} className="p-3 rounded-lg bg-black/40 border border-emerald-500/10 font-mono text-sm">
-                      <div className="flex justify-between items-center mb-2">
+                      <div className="flex justify-between items-center mb-2 gap-2">
                         <div className="text-yellow-100/80">{g.date || 'unknown date'}</div>
-                        <div className="text-emerald-100/80 text-xs">
-                          {g.attendees?.length || 0} players · £{g.pot || 0} pot
+                        <div className="flex items-center gap-2">
+                          <div className="text-emerald-100/80 text-xs">
+                            {g.attendees?.length || 0} players · £{g.pot || 0} pot
+                          </div>
+                          {fbUser && (
+                            <button
+                              onClick={() => setEditingGame(g)}
+                              className="px-2 py-0.5 rounded text-[10px] font-mono tracking-widest text-yellow-100/50 hover:text-yellow-100 hover:bg-yellow-500/10 border border-yellow-500/20"
+                              title="Edit this game"
+                            >
+                              EDIT
+                            </button>
+                          )}
                         </div>
                       </div>
                       <div className="grid grid-cols-3 gap-2">
@@ -4063,6 +4085,18 @@ function HighRollersHistory({ onBack, fbUser }) {
             requireType="WIPE"
             onConfirm={doWipeHR}
             onCancel={() => setShowWipeHRConfirm(false)}
+          />
+        )}
+
+        {editingGame && (
+          <EditGameModal
+            game={editingGame}
+            players={players}
+            onClose={() => setEditingGame(null)}
+            onSaved={async () => {
+              setEditingGame(null);
+              await refreshGames();
+            }}
           />
         )}
       </div>
@@ -5924,6 +5958,7 @@ function SaveGameModal({
 
 // ============ EDIT GAME MODAL ============
 function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason }) {
+  const isLeague = game.type !== 'highrollers';
   const playersById = {};
   players.forEach(p => { playersById[p.id] = p; });
 
@@ -5940,8 +5975,28 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
   const [error, setError] = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  const attendees = Object.keys(pointsAwarded);
+  // League uses pointsAwarded keys as the attendee list (since points = played);
+  // HR has an explicit attendees array on the doc instead.
+  const attendees = isLeague ? Object.keys(pointsAwarded) : (game.attendees || []);
   const playerCount = attendees.length;
+
+  // For HR position editing: swap places. If the dropdown for place P picks
+  // player X who's currently at place Q, we swap them so the order stays a
+  // valid permutation.
+  const setPlaceTo = (placeIdx, newPid) => {
+    if (!newPid) return;
+    const next = [...finishOrder];
+    // Ensure slot exists
+    while (next.length <= placeIdx) next.push(null);
+    const existing = next[placeIdx];
+    const otherIdx = next.indexOf(newPid);
+    if (otherIdx >= 0 && otherIdx !== placeIdx) {
+      // Swap
+      next[otherIdx] = existing;
+    }
+    next[placeIdx] = newPid;
+    setFinishOrder(next);
+  };
 
   // Quick-fill helpers
   const fillLeagueFromPot = () => {
@@ -5975,14 +6030,20 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
         ...game,
         date,
         pot: parseFloat(pot) || 0,
-        leagueMoney: parseFloat(leagueMoney) || 0,
-        subs: parseFloat(subs) || 0,
         totalRebuys: parseInt(totalRebuys) || 0,
         payouts,
-        pointsAwarded,
         finishOrder,
-        attendees: Object.keys(pointsAwarded),
       };
+      if (isLeague) {
+        updates.leagueMoney = parseFloat(leagueMoney) || 0;
+        updates.subs = parseFloat(subs) || 0;
+        updates.pointsAwarded = pointsAwarded;
+        updates.attendees = Object.keys(pointsAwarded);
+      } else {
+        // HR: preserve attendees as-is (positions can be edited, but the
+        // roster of who played isn't editable from this modal yet).
+        updates.attendees = attendees;
+      }
       await window.GRP_DB.saveGame(updates);
       onSaved();
     } catch (e) {
@@ -6008,7 +6069,9 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
         <div className="flex justify-between items-start mb-4">
           <div>
             <div className="font-display text-3xl gold-text">
-              EDIT GAME {game.gameNumber}{game.isFinal && <span className="text-yellow-300 ml-2 text-xl">— FINAL</span>}
+              {isLeague
+                ? <>EDIT GAME {game.gameNumber}{game.isFinal && <span className="text-yellow-300 ml-2 text-xl">— FINAL</span>}</>
+                : <>EDIT HR GAME</>}
             </div>
             <div className="text-yellow-100/40 font-mono text-xs mt-1">{game.id}</div>
           </div>
@@ -6046,46 +6109,50 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
               className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
             />
           </div>
-          <div>
-            <div className="flex justify-between items-baseline mb-1">
-              <span className="font-mono text-xs text-yellow-100/40 tracking-widest">LEAGUE £</span>
-              <button
-                onClick={fillLeagueFromPot}
-                disabled={!pot}
-                className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                title="Set to 10% of pot"
-              >
-                = 10% pot
-              </button>
-            </div>
-            <input
-              type="number"
-              value={leagueMoney}
-              placeholder="—"
-              onChange={(e) => setLeagueMoney(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
-            />
-          </div>
-          <div>
-            <div className="flex justify-between items-baseline mb-1">
-              <span className="font-mono text-xs text-yellow-100/40 tracking-widest">SUBS £</span>
-              <button
-                onClick={fillSubsFromPlayers}
-                disabled={!playerCount}
-                className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 disabled:opacity-30 disabled:cursor-not-allowed"
-                title={`Set to £3 × ${playerCount} players`}
-              >
-                = £3 × {playerCount}
-              </button>
-            </div>
-            <input
-              type="number"
-              value={subs}
-              placeholder="—"
-              onChange={(e) => setSubs(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
-            />
-          </div>
+          {isLeague && (
+            <>
+              <div>
+                <div className="flex justify-between items-baseline mb-1">
+                  <span className="font-mono text-xs text-yellow-100/40 tracking-widest">LEAGUE £</span>
+                  <button
+                    onClick={fillLeagueFromPot}
+                    disabled={!pot}
+                    className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Set to 10% of pot"
+                  >
+                    = 10% pot
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  value={leagueMoney}
+                  placeholder="—"
+                  onChange={(e) => setLeagueMoney(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between items-baseline mb-1">
+                  <span className="font-mono text-xs text-yellow-100/40 tracking-widest">SUBS £</span>
+                  <button
+                    onClick={fillSubsFromPlayers}
+                    disabled={!playerCount}
+                    className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title={`Set to £3 × ${playerCount} players`}
+                  >
+                    = £3 × {playerCount}
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  value={subs}
+                  placeholder="—"
+                  onChange={(e) => setSubs(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Payouts */}
@@ -6106,27 +6173,62 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
           </div>
         </div>
 
-        {/* Points awarded (per-player) */}
-        <div className="mb-5">
-          <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">POINTS BY PLAYER</div>
-          <div className="text-yellow-100/40 text-xs mb-2">Set 0 or blank to remove the player from this game.</div>
-          <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
-            {attendees.map((pid) => {
-              const p = playersById[pid] || { displayName: pid };
-              return (
-                <div key={pid} className="flex items-center gap-2 p-2 rounded bg-black/30">
-                  <span className="flex-1 text-emerald-100 text-sm truncate">{p.displayName}</span>
-                  <input
-                    type="number"
-                    value={pointsAwarded[pid] || ''}
-                    onChange={(e) => updatePoints(pid, e.target.value)}
-                    className="w-24 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm text-right focus:outline-none focus:border-yellow-500/50"
-                  />
-                </div>
-              );
-            })}
+        {/* Points awarded (per-player) — league only */}
+        {isLeague && (
+          <div className="mb-5">
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">POINTS BY PLAYER</div>
+            <div className="text-yellow-100/40 text-xs mb-2">Set 0 or blank to remove the player from this game.</div>
+            <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
+              {attendees.map((pid) => {
+                const p = playersById[pid] || { displayName: pid };
+                return (
+                  <div key={pid} className="flex items-center gap-2 p-2 rounded bg-black/30">
+                    <span className="flex-1 text-emerald-100 text-sm truncate">{p.displayName}</span>
+                    <input
+                      type="number"
+                      value={pointsAwarded[pid] || ''}
+                      onChange={(e) => updatePoints(pid, e.target.value)}
+                      className="w-24 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm text-right focus:outline-none focus:border-yellow-500/50"
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Finishing order — HR only. Three dropdowns pick the player for
+            each of the top 3 places; picking someone already at another
+            place swaps them so the order remains a valid permutation. */}
+        {!isLeague && (
+          <div className="mb-5">
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">PODIUM</div>
+            <div className="text-yellow-100/40 text-xs mb-2">Pick who finished 1st / 2nd / 3rd. Drives the payouts.</div>
+            <div className="grid grid-cols-3 gap-2">
+              {[0, 1, 2].map((i) => {
+                const medal = ['🥇', '🥈', '🥉'][i];
+                const current = finishOrder[i] || '';
+                return (
+                  <div key={i}>
+                    <div className="font-mono text-xs text-yellow-100/40 mb-1">{medal} {i === 0 ? '1st' : i === 1 ? '2nd' : '3rd'}</div>
+                    <select
+                      value={current}
+                      onChange={(e) => setPlaceTo(i, e.target.value)}
+                      className="w-full px-2 py-1.5 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+                    >
+                      <option value="" style={{ background: '#0a3d1f' }}>—</option>
+                      {attendees.map((pid) => (
+                        <option key={pid} value={pid} style={{ background: '#0a3d1f' }}>
+                          {(playersById[pid]?.displayName) || pid}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {error && <div className="text-red-400 font-mono text-sm mb-3">Error: {error}</div>}
 
@@ -6171,7 +6273,9 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
         {showDeleteConfirm && (
           <ConfirmDialog
             title="Delete game?"
-            message={`This will permanently remove Game ${game.gameNumber} from ${game.seasonId}. Player points and history for this game will be lost.`}
+            message={isLeague
+              ? `This will permanently remove Game ${game.gameNumber} from ${game.seasonId}. Player points and history for this game will be lost.`
+              : `This will permanently remove the High Rollers game from ${game.date || game.id}. Payout history for this game will be lost.`}
             requireType="DELETE"
             onConfirm={doDelete}
             onCancel={() => setShowDeleteConfirm(false)}
