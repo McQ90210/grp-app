@@ -173,6 +173,23 @@ async function bulkImport({ players, seasons, games }) {
   await batch.commit();
 }
 
+// ------ LIVE GAME (in-progress tournament state) ------
+// A single live game at a time, stored at liveGames/current. Holds the full
+// timer state so the tournament can survive a refresh / crash / device swap.
+// Cleared via clearLiveGame() once the game is saved to the games collection.
+async function saveLiveGame(state) {
+  const data = { ...state, savedAt: serverTimestamp() };
+  await setDoc(doc(db, 'liveGames', 'current'), data);
+}
+async function getLiveGame() {
+  const snap = await getDoc(doc(db, 'liveGames', 'current'));
+  if (!snap.exists()) return null;
+  return { ...snap.data() };
+}
+async function clearLiveGame() {
+  try { await deleteDoc(doc(db, 'liveGames', 'current')); } catch (e) {}
+}
+
 // ------ EMAIL / CLOUD FUNCTIONS ------
 // Calls the `resendLatestResults` Cloud Function. Returns { ok, gameId, sent }
 // or throws. Requires the caller to be authenticated.
@@ -212,6 +229,8 @@ window.GRP_DB = {
   getAllSeasons, getActiveSeason, upsertSeason,
   // Games
   getGamesForSeason, getAllLeagueGames, getAllHighRollerGames, getGameById, saveGame, deleteGame, subscribeToSeasonGames,
+  // Live (in-progress) game persistence
+  saveLiveGame, getLiveGame, clearLiveGame,
   // Email
   resendLatestResults,
   // Admin
