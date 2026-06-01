@@ -20,11 +20,17 @@
 // Every send writes to `emailLog/{auto-id}` for audit.
 
 const admin = require('firebase-admin');
+const { setGlobalOptions } = require('firebase-functions/v2');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions/v2');
 const nodemailer = require('nodemailer');
+
+// Default region for every function in this codebase. (Runtime version is
+// pinned in firebase.json's `functions[].runtime`, which is the source of
+// truth that the CLI actually reads.)
+setGlobalOptions({ region: 'europe-west2' });
 
 admin.initializeApp();
 const db = admin.firestore();
