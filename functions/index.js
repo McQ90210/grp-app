@@ -468,7 +468,12 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
 <body style="margin:0;padding:0;background-color:${BG_DARK};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <div style="max-width:520px;margin:0 auto;padding:28px 26px 24px;color:${TEXT_LIGHT};">
 
-    <h1 style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${BRAND_GREEN_LIGHT};letter-spacing:0.05em;font-size:24px;margin:0 0 2px;text-transform:uppercase;">GRP Berkhamsted</h1>
+    <div style="text-align:center;margin:0 0 12px;">
+      <img src="https://mcq90210.github.io/grp-app/logos/email-logo.png"
+           alt="GRP Berkhamsted Poker"
+           width="280"
+           style="display:block;margin:0 auto;max-width:280px;width:100%;height:auto;border:0;outline:none;text-decoration:none;" />
+    </div>
     <div style="color:${BRAND_GREEN};font-size:12px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:20px;">
       ${escape(season.name)} · Game ${game.gameNumber}${isFinal ? ' · FINAL' : ''} · ${escape(game.date)}
     </div>
@@ -607,7 +612,12 @@ function renderHRResultsEmail({ game, players, allHRGames, recap }) {
 <body style="margin:0;padding:0;background-color:${BG_DARK};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <div style="max-width:520px;margin:0 auto;padding:28px 26px 24px;color:${TEXT_LIGHT};">
 
-    <h1 style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${BRAND_GREEN_LIGHT};letter-spacing:0.05em;font-size:24px;margin:0 0 2px;text-transform:uppercase;">GRP Berkhamsted</h1>
+    <div style="text-align:center;margin:0 0 12px;">
+      <img src="https://mcq90210.github.io/grp-app/logos/email-logo.png"
+           alt="GRP Berkhamsted Poker"
+           width="280"
+           style="display:block;margin:0 auto;max-width:280px;width:100%;height:auto;border:0;outline:none;text-decoration:none;" />
+    </div>
     <div style="color:${BRAND_GREEN};font-size:12px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:20px;">
       High Rollers · ${escape(game.date)}
     </div>
