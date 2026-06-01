@@ -3756,6 +3756,7 @@ function HighRollersHistory({ onBack, fbUser }) {
   const [adminMessage, setAdminMessage] = useState(null);
   const [showWipeHRConfirm, setShowWipeHRConfirm] = useState(false);
   const [showResendHRConfirm, setShowResendHRConfirm] = useState(false);
+  const [showManagePlayers, setShowManagePlayers] = useState(false);
 
   const announceAdmin = (kind, text) => {
     setAdminMessage({ kind, text });
@@ -3932,6 +3933,13 @@ function HighRollersHistory({ onBack, fbUser }) {
             </button>
             {showAdminTools && (
               <div className="mt-2 p-3 rounded-lg bg-black/30 border border-yellow-500/15 flex flex-wrap gap-2">
+                <button
+                  onClick={() => setShowManagePlayers(true)}
+                  className="px-3 py-1.5 rounded font-mono text-xs border border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/15"
+                  title="Edit player emails and elimination sounds."
+                >
+                  ✉ MANAGE PLAYERS
+                </button>
                 <button
                   onClick={() => setShowResendHRConfirm(true)}
                   disabled={adminBusy !== null || games.length === 0}
@@ -4121,6 +4129,17 @@ function HighRollersHistory({ onBack, fbUser }) {
             message="Sends the morning-after email for the most recent High Rollers game to every player with an email on file. Uses the same AI recap + podium + running-total format as the auto-send."
             onConfirm={doResendHR}
             onCancel={() => setShowResendHRConfirm(false)}
+          />
+        )}
+
+        {showManagePlayers && (
+          <ManagePlayersModal
+            onClose={() => setShowManagePlayers(false)}
+            onSaved={() => {
+              // Refresh the players list so anything reading roster data on
+              // this page (e.g. running-total names) sees new values.
+              if (window.GRP_DB) window.GRP_DB.getAllPlayers().then(setPlayers).catch(() => {});
+            }}
           />
         )}
 
@@ -5291,7 +5310,8 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
 function ManagePlayersModal({ onClose, onSaved }) {
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [edits, setEdits] = useState({}); // { [id]: { email } } — pending changes
+  const [edits, setEdits] = useState({}); // { [id]: { email?, sound? } } — pending changes
+  const [customSounds, setCustomSounds] = useState({});
   const [saving, setSaving] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
   const [error, setError] = useState(null);
@@ -5315,36 +5335,53 @@ function ManagePlayersModal({ onClose, onSaved }) {
       window.addEventListener('firebase-ready', onReady);
       return () => { cancelled = true; window.removeEventListener('firebase-ready', onReady); };
     }
+    // Load custom sounds in parallel so the dropdown can show them.
+    loadCustomSounds().then((cs) => { if (!cancelled) setCustomSounds(cs || {}); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
-  const setEmail = (id, val) => {
-    setEdits((e) => ({ ...e, [id]: { ...(e[id] || {}), email: val } }));
+  // Generic field setter — same code path for email and sound.
+  const setField = (id, field, val) => {
+    setEdits((e) => ({ ...e, [id]: { ...(e[id] || {}), [field]: val } }));
   };
 
-  const dirtyCount = Object.keys(edits).filter((id) => {
-    const before = (players.find((p) => p.id === id)?.email || '').trim();
-    const after = (edits[id].email || '').trim();
-    return before !== after;
-  }).length;
+  // "Dirty" = the value in `edits` differs from the saved one in `players`.
+  // Need to consider both email and sound now.
+  const isFieldDirty = (id, field, defaultVal = '') => {
+    const ed = edits[id];
+    if (!ed || ed[field] === undefined) return false;
+    const before = (players.find((p) => p.id === id)?.[field] ?? defaultVal);
+    const after = ed[field];
+    if (field === 'email') {
+      return (before || '').trim() !== (after || '').trim();
+    }
+    // sound
+    return (before || 'none') !== (after || 'none');
+  };
+  const isRowDirty = (id) => isFieldDirty(id, 'email') || isFieldDirty(id, 'sound');
+  const dirtyCount = Object.keys(edits).filter(isRowDirty).length;
 
   const save = async () => {
     setError(null);
     setSaving(true);
     setSavedCount(0);
     try {
+      // Validate emails first so nothing partial gets written.
       for (const [id, ed] of Object.entries(edits)) {
-        const v = (ed.email || '').trim();
-        if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
-          throw new Error(`Invalid email for "${id}": ${v}`);
+        if (ed.email !== undefined) {
+          const v = (ed.email || '').trim();
+          if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+            throw new Error(`Invalid email for "${id}": ${v}`);
+          }
         }
       }
       let n = 0;
       for (const [id, ed] of Object.entries(edits)) {
-        const before = (players.find((p) => p.id === id)?.email || '').trim();
-        const after = (ed.email || '').trim();
-        if (before === after) continue;
-        await window.GRP_DB.upsertPlayer({ id, email: after || null });
+        if (!isRowDirty(id)) continue;
+        const update = { id };
+        if (ed.email !== undefined) update.email = (ed.email || '').trim() || null;
+        if (ed.sound !== undefined) update.sound = ed.sound || 'none';
+        await window.GRP_DB.upsertPlayer(update);
         n += 1;
       }
       setSavedCount(n);
@@ -5366,7 +5403,7 @@ function ManagePlayersModal({ onClose, onSaved }) {
         <div className="flex justify-between items-start mb-4">
           <div>
             <div className="font-display text-3xl gold-text">MANAGE PLAYERS</div>
-            <div className="text-yellow-100/60 font-mono text-xs mt-1">Edit email addresses for the morning-after results email.</div>
+            <div className="text-yellow-100/60 font-mono text-xs mt-1">Edit emails (for the morning-after results email) and elimination sounds.</div>
           </div>
           <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
         </div>
@@ -5386,20 +5423,56 @@ function ManagePlayersModal({ onClose, onSaved }) {
 
             <div className="space-y-1 mb-5 max-h-[60vh] overflow-y-auto pr-2">
               {players.map((p) => {
-                const current = edits[p.id]?.email !== undefined ? edits[p.id].email : (p.email || '');
-                const isDirty = (edits[p.id]?.email !== undefined) && ((p.email || '').trim() !== current.trim());
+                const currentEmail = edits[p.id]?.email !== undefined ? edits[p.id].email : (p.email || '');
+                const currentSound = edits[p.id]?.sound !== undefined ? edits[p.id].sound : (p.sound || 'none');
+                const isDirty = isRowDirty(p.id);
                 return (
-                  <div key={p.id} className={`flex items-center gap-2 px-2 py-1.5 rounded border ${isDirty ? 'bg-yellow-500/10 border-yellow-500/40' : 'border-transparent'}`}>
+                  <div
+                    key={p.id}
+                    className={`flex flex-wrap items-center gap-2 px-2 py-1.5 rounded border ${isDirty ? 'bg-yellow-500/10 border-yellow-500/40' : 'border-transparent'}`}
+                  >
                     <div className="w-32 font-mono text-sm text-emerald-100 truncate" title={p.realName || p.displayName}>
                       {p.displayName}
                     </div>
                     <input
                       type="email"
-                      value={current}
-                      onChange={(e) => setEmail(p.id, e.target.value)}
+                      value={currentEmail}
+                      onChange={(e) => setField(p.id, 'email', e.target.value)}
                       placeholder="player@example.com"
-                      className="flex-1 px-2 py-1 rounded bg-black/40 border border-yellow-500/15 text-yellow-50 placeholder-yellow-100/30 font-mono text-xs focus:outline-none focus:border-yellow-500/40"
+                      className="flex-1 min-w-[180px] px-2 py-1 rounded bg-black/40 border border-yellow-500/15 text-yellow-50 placeholder-yellow-100/30 font-mono text-xs focus:outline-none focus:border-yellow-500/40"
                     />
+                    <select
+                      value={currentSound}
+                      onChange={(e) => setField(p.id, 'sound', e.target.value)}
+                      className="w-36 px-1.5 py-1 rounded bg-black/40 border border-yellow-500/15 text-yellow-50 font-mono text-xs focus:outline-none focus:border-yellow-500/40"
+                      title="Elimination sound"
+                    >
+                      <option value="none" style={{ background: '#0a3d1f' }}>None</option>
+                      {Object.keys(customSounds).length > 0 && (
+                        <optgroup label="Your sounds">
+                          {Object.entries(customSounds).map(([key, s]) => (
+                            <option key={`c-${key}`} value={key} style={{ background: '#0a3d1f' }}>
+                              {s.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      <optgroup label="Built-in">
+                        {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
+                          <option key={key} value={key} style={{ background: '#0a3d1f' }}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                    <button
+                      onClick={() => playSound(currentSound || 'none', customSounds)}
+                      disabled={!currentSound || currentSound === 'none'}
+                      className="px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 text-xs disabled:opacity-30"
+                      title="Preview sound"
+                    >
+                      <Music size={12} />
+                    </button>
                   </div>
                 );
               })}
