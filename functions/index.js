@@ -712,11 +712,18 @@ async function sendHRResults(game) {
     getAllHRGames(),
   ]);
 
+  // For HR, only email the players who actually attended this game. Sending
+  // results to people who weren't there is noise. (League emails everyone —
+  // the standings shift even when you don't play.)
+  const attendeeSet = new Set(game.attendees || []);
   const recipients = players.filter(
-    (p) => p.active !== false && typeof p.email === 'string' && p.email.includes('@')
+    (p) => p.active !== false
+      && typeof p.email === 'string'
+      && p.email.includes('@')
+      && attendeeSet.has(p.id)
   );
   if (recipients.length === 0) {
-    return { skipped: true, reason: 'No players with email addresses on file.' };
+    return { skipped: true, reason: 'No attendees with email addresses on file.' };
   }
 
   // Build running totals once so generateHRRecap can reference the leaderboard.
