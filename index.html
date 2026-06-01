@@ -3844,20 +3844,30 @@ function HighRollersHistory({ onBack, fbUser }) {
     return games.filter((g) => g.date && g.date >= cutoffStr);
   })();
 
-  // Compute per-player stats across the filtered set of HR games
+  // Compute per-player stats across the filtered set of HR games. Tracks
+  // per-place counts (p1/p2/p3) so the standings can show medals the same
+  // way the morning-after email does.
   const playerStats = {};
   filteredGames.forEach((g) => {
     (g.attendees || []).forEach((pid) => {
-      if (!playerStats[pid]) playerStats[pid] = { gamesPlayed: 0, buyIns: 0, winnings: 0, wins: 0 };
+      if (!playerStats[pid]) playerStats[pid] = { gamesPlayed: 0, buyIns: 0, winnings: 0, p1: 0, p2: 0, p3: 0 };
       playerStats[pid].gamesPlayed += 1;
       playerStats[pid].buyIns += (g.buyIn || 30) * (1 + (g.rebuys?.[pid] || 0));
+    });
+    // Per-place counts come from finishOrder (canonical), winnings from payouts.
+    [1, 2, 3].forEach((place) => {
+      const pid = (g.finishOrder || [])[place - 1];
+      if (pid && playerStats[pid]) {
+        if (place === 1) playerStats[pid].p1 += 1;
+        else if (place === 2) playerStats[pid].p2 += 1;
+        else if (place === 3) playerStats[pid].p3 += 1;
+      }
     });
     Object.entries(g.payouts || {}).forEach(([place, amount]) => {
       const pos = parseInt(place);
       const pid = (g.finishOrder || [])[pos - 1];
       if (pid && playerStats[pid]) {
         playerStats[pid].winnings += amount || 0;
-        if (pos === 1) playerStats[pid].wins += 1;
       }
     });
   });
@@ -3993,14 +4003,22 @@ function HighRollersHistory({ onBack, fbUser }) {
                   <tr className="text-left font-mono text-xs text-emerald-300 uppercase tracking-widest">
                     <th className="py-3 px-4">Player</th>
                     <th className="py-3 px-4 text-right">Games</th>
-                    <th className="py-3 px-4 text-right">Wins</th>
+                    <th className="py-3 px-4 text-right" title="1st place finishes">🥇</th>
+                    <th className="py-3 px-4 text-right" title="2nd place finishes">🥈</th>
+                    <th className="py-3 px-4 text-right" title="3rd place finishes">🥉</th>
                     <th className="py-3 px-4 text-right">Buy-ins</th>
                     <th className="py-3 px-4 text-right">Winnings</th>
                     <th className="py-3 px-4 text-right">Net</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {playerRows.map((r) => (
+                  {playerRows.map((r) => {
+                    // Gold/silver/bronze when the player has at least one
+                    // finish at that place; muted dash otherwise.
+                    const place = (n, colour) => n > 0
+                      ? <span style={{ color: colour, fontWeight: 600 }}>{n}</span>
+                      : <span className="text-yellow-100/20">—</span>;
+                    return (
                     <tr
                       key={r.player.id}
                       onClick={() => setSelectedPlayerId(r.player.id)}
@@ -4008,14 +4026,17 @@ function HighRollersHistory({ onBack, fbUser }) {
                     >
                       <td className="py-3 px-4 text-emerald-100">{r.player.displayName}</td>
                       <td className="py-3 px-4 text-right text-yellow-100/80">{r.gamesPlayed}</td>
-                      <td className="py-3 px-4 text-right text-yellow-100/80">{r.wins}</td>
+                      <td className="py-3 px-4 text-right">{place(r.p1, '#f4d03f')}</td>
+                      <td className="py-3 px-4 text-right">{place(r.p2, '#d4d4d4')}</td>
+                      <td className="py-3 px-4 text-right">{place(r.p3, '#d4924a')}</td>
                       <td className="py-3 px-4 text-right text-yellow-100/80">£{r.buyIns}</td>
                       <td className="py-3 px-4 text-right text-emerald-300">£{Math.round(r.winnings)}</td>
                       <td className={`py-3 px-4 text-right font-bold ${r.net >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
                         {r.net >= 0 ? '+' : ''}£{Math.round(r.net)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
