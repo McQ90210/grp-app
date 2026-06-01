@@ -1,18 +1,23 @@
-// GR Poker league — results-email Cloud Functions
+// GR Poker — results-email Cloud Functions
 //
 // What this does:
-//   1. dailyResultsEmail (scheduled): 09:00 Europe/London every day. Looks for a
-//      league game played "yesterday" (UK calendar date). If found, emails all
-//      active players with an `email` field, BCC'd, via Gmail SMTP.
+//   1. dailyResultsEmail (scheduled): 09:00 Europe/London every day. Looks for
+//      any LEAGUE or HIGH ROLLERS game played "yesterday" (UK calendar date).
+//      If found, emails all active players (BCC'd) via Gmail SMTP. League and
+//      HR get different templates (HR has no points/standings, instead shows
+//      per-player net + an all-time HR running-total leaderboard).
 //   2. resendLatestResults (callable): admin-only. Re-sends the most recent
-//      league game's results email on demand. Used by the "Resend" button on
-//      the league dashboard.
+//      league game's results email. Used by the Resend button on the league
+//      dashboard.
+//   3. resendLatestHRResults (callable): admin-only. Same as above for the
+//      most recent HR game. Used by the Resend button on the HR page.
 //
 // Secrets used (set via `firebase functions:secrets:set GMAIL_USER` etc):
 //   - GMAIL_USER             — full Gmail address (e.g. grpoker.berkhamsted@gmail.com)
 //   - GMAIL_APP_PASSWORD     — 16-char App Password from Google account 2FA settings
+//   - GEMINI_API_KEY         — optional, free-tier Google AI Studio key
 //
-// Both functions write to `emailLog/{auto-id}` for audit.
+// Every send writes to `emailLog/{auto-id}` for audit.
 
 const admin = require('firebase-admin');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
@@ -63,6 +68,21 @@ async function getMostRecentLeagueGame() {
       .filter((g) => g.type === 'league' && g.date)
       .sort((a, b) => (a.date < b.date ? 1 : -1))[0] || null
   );
+}
+
+async function getMostRecentHRGame() {
+  const snap = await db.collection('games').get();
+  const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return (
+    all
+      .filter((g) => g.type === 'highrollers' && g.date)
+      .sort((a, b) => (a.date < b.date ? 1 : -1))[0] || null
+  );
+}
+
+async function getAllHRGames() {
+  const snap = await db.collection('games').where('type', '==', 'highrollers').get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 async function getAllPlayers() {
@@ -254,6 +274,99 @@ Now write the recap (3-4 sentences, 60-100 words):`;
   }
 }
 
+// Per-game profit / loss for a single player.
+//   buyIns   = buyIn × (1 + rebuys[pid])     (matches HR profile page)
+//   winnings = payouts[place] if they finished in a paying spot, else 0
+function netForGame(g, pid) {
+  const buyIn = g.buyIn || 30;
+  const rebuys = (g.rebuys && g.rebuys[pid]) || 0;
+  const buyIns = buyIn * (1 + rebuys);
+  const place = (g.finishOrder || []).indexOf(pid);
+  const winnings = place >= 0 ? (g.payouts && g.payouts[String(place + 1)]) || 0 : 0;
+  return { buyIns, winnings, net: winnings - buyIns, place: place >= 0 ? place + 1 : null };
+}
+
+// HR-specific Gemini recap. Casual tone — no league context, no points, no
+// season standings. Knows about the podium and the headline numbers only.
+async function generateHRRecap({ game, players, runningTotals }) {
+  const key = (() => {
+    try { return GEMINI_API_KEY.value(); } catch { return null; }
+  })();
+  if (!key) return null;
+
+  const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
+  const podium = [1, 2, 3].map((place) => {
+    const pid = (game.finishOrder || [])[place - 1];
+    const name = pid ? playersById[pid]?.displayName || pid : null;
+    const payout = (game.payouts && game.payouts[String(place)]) || 0;
+    return name ? `${place}. ${name} (£${payout})` : null;
+  }).filter(Boolean).join(', ');
+
+  // Pick the biggest winner / loser tonight to give Gemini something concrete.
+  const tonightNets = (game.attendees || []).map((pid) => ({
+    name: playersById[pid]?.displayName || pid,
+    ...netForGame(game, pid),
+  })).sort((a, b) => b.net - a.net);
+  const topNet = tonightNets[0];
+  const bottomNet = tonightNets[tonightNets.length - 1];
+
+  // A short running-total blurb (top 3 leaders by all-time HR net).
+  const leaderboard = Object.entries(runningTotals || {})
+    .map(([pid, n]) => ({ name: playersById[pid]?.displayName || pid, net: n }))
+    .sort((a, b) => b.net - a.net)
+    .slice(0, 3)
+    .map((r, i) => `${i + 1}. ${r.name} (${r.net >= 0 ? '+' : ''}£${r.net})`)
+    .join(', ');
+
+  const prompt = `Write a 3-4 sentence recap (60-100 words) of last night's GR Poker
+"High Rollers" cash side-game, for the morning-after results email. Tone: warm,
+dry-witty, British pub energy. Reference at least TWO specific player nicknames
+and at least ONE specific number (payout, net swing, or running total).
+Never use exclamation marks. Never use hyphens or em-dashes (-, —). Use commas,
+full stops, or rewrite the sentence instead. Never use the words "epic",
+"showdown", "thrilling", "battle", "duel", "clash". Output JUST the prose
+paragraph — no greeting, no sign-off, no markdown, no headers.
+
+Context:
+- This is High Rollers, a casual cash side-game (no league points, no season).
+- Date: ${game.date}
+- ${(game.attendees || []).length} players, pot £${game.pot || 0}, ${game.totalRebuys || 0} rebuys
+- Buy-in: £${game.buyIn || 30}
+- Podium: ${podium || 'no results recorded'}
+- Biggest winner tonight: ${topNet ? `${topNet.name} (+£${topNet.net})` : '—'}
+- Biggest loser tonight: ${bottomNet ? `${bottomNet.name} (${bottomNet.net >= 0 ? '+' : ''}£${bottomNet.net})` : '—'}
+- All-time HR leaderboard: ${leaderboard || '(no history yet)'}
+
+If you mention the next game, just say "next time" — High Rollers has no fixed cadence.
+
+Now write the recap (3-4 sentences, 60-100 words):`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          thinkingConfig: { thinkingBudget: 0 },
+          temperature: 0.8,
+          maxOutputTokens: 400,
+        },
+      }),
+    });
+    if (!res.ok) {
+      logger.warn(`Gemini HR HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      return null;
+    }
+    const json = await res.json();
+    return json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+  } catch (err) {
+    logger.warn('generateHRRecap failed:', err.message);
+    return null;
+  }
+}
+
 // ============================================================================
 // Email rendering (inline-styled HTML for email-client safety)
 // ============================================================================
@@ -402,15 +515,161 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
 </html>`;
 }
 
+// High Rollers email — no season / no league points. Focuses on the podium,
+// per-player net for the night, and the all-time HR running total.
+function renderHRResultsEmail({ game, players, allHRGames, recap }) {
+  const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
+  const finishOrder = (game.finishOrder || []).map((pid) => ({
+    pid,
+    name: playersById[pid]?.displayName || pid,
+  }));
+  const ROW_DIVIDER = 'border-bottom:1px solid rgba(20,163,123,0.12);';
+
+  // Podium (top 3)
+  const podium = [1, 2, 3].map((place) => {
+    const f = finishOrder[place - 1];
+    const payout = (game.payouts && game.payouts[String(place)]) || 0;
+    const last = place === 3 ? '' : ROW_DIVIDER;
+    return f
+      ? `<tr>
+           <td style="padding:10px 4px;font-size:18px;width:32px;${last}">${['🥇', '🥈', '🥉'][place - 1]}</td>
+           <td style="padding:10px 4px;color:${TEXT_LIGHT};font-weight:600;font-size:15px;${last}">${escape(f.name)}</td>
+           <td style="padding:10px 4px;color:${BRAND_GREEN_LIGHT};text-align:right;font-family:monospace;font-size:15px;${last}">£${payout}</td>
+         </tr>`
+      : '';
+  }).join('');
+
+  // Per-player net for the night, sorted biggest winner to biggest loser.
+  const tonightRows = (game.attendees || [])
+    .map((pid) => {
+      const r = netForGame(game, pid);
+      return {
+        pid,
+        name: playersById[pid]?.displayName || pid,
+        ...r,
+      };
+    })
+    .sort((a, b) => b.net - a.net);
+
+  // All-time HR running totals — sum net across every HR game in the database.
+  // Includes tonight's game (it's already saved by the time the email goes out).
+  const runningTotals = {};
+  for (const g of (allHRGames || [])) {
+    for (const pid of (g.attendees || [])) {
+      const r = netForGame(g, pid);
+      runningTotals[pid] = (runningTotals[pid] || 0) + r.net;
+    }
+  }
+  const runningRows = Object.entries(runningTotals)
+    .map(([pid, n]) => ({ pid, name: playersById[pid]?.displayName || pid, net: n }))
+    .sort((a, b) => b.net - a.net);
+
+  const fmtNet = (n) => {
+    const sign = n >= 0 ? '+' : '−';
+    const colour = n >= 0 ? BRAND_GREEN_LIGHT : '#f87171';
+    return `<span style="color:${colour};font-family:monospace;font-weight:600;">${sign}£${Math.abs(Math.round(n))}</span>`;
+  };
+
+  const tonightTable = tonightRows.map((r, i) => {
+    const last = i === tonightRows.length - 1 ? '' : ROW_DIVIDER;
+    return `<tr>
+      <td style="padding:8px 4px;color:${TEXT_LIGHT};${last}">${escape(r.name)}</td>
+      <td style="padding:8px 4px;color:#9ca3af;text-align:right;font-family:monospace;font-size:12px;${last}">£${Math.round(r.buyIns)}</td>
+      <td style="padding:8px 4px;color:#9ca3af;text-align:right;font-family:monospace;font-size:12px;${last}">£${Math.round(r.winnings)}</td>
+      <td style="padding:8px 4px;text-align:right;${last}">${fmtNet(r.net)}</td>
+    </tr>`;
+  }).join('');
+
+  const runningTable = runningRows.map((r, i) => {
+    const last = i === runningRows.length - 1 ? '' : ROW_DIVIDER;
+    const rankColours = ['#f4d03f', '#d4d4d4', '#d4924a'];
+    const rankColour = rankColours[i] || TEXT_LIGHT;
+    return `<tr>
+      <td style="padding:8px 4px;color:${rankColour};font-weight:700;font-family:monospace;width:32px;${last}">${i + 1}</td>
+      <td style="padding:8px 4px;color:${TEXT_LIGHT};${last}">${escape(r.name)}</td>
+      <td style="padding:8px 4px;text-align:right;${last}">${fmtNet(r.net)}</td>
+    </tr>`;
+  }).join('');
+
+  const attendeeCount = (game.attendees || []).length;
+  const rebuys = game.totalRebuys || 0;
+  const pot = game.pot || 0;
+  const buyIn = game.buyIn || 30;
+
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>GRP Berkhamsted · High Rollers</title></head>
+<body style="margin:0;padding:0;background-color:${BG_DARK};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;padding:28px 26px 24px;color:${TEXT_LIGHT};">
+
+    <h1 style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:${BRAND_GREEN_LIGHT};letter-spacing:0.05em;font-size:24px;margin:0 0 2px;text-transform:uppercase;">GRP Berkhamsted</h1>
+    <div style="color:${BRAND_GREEN};font-size:12px;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:20px;">
+      High Rollers · ${escape(game.date)}
+    </div>
+
+    ${
+      recap
+        ? `<div style="padding:0 0 0 14px;margin-bottom:24px;border-left:2px solid ${BRAND_GREEN};color:${TEXT_LIGHT};font-size:15px;line-height:1.55;">
+            ${escape(recap)}
+          </div>`
+        : ''
+    }
+
+    <div style="color:${BRAND_GREEN_LIGHT};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 4px;font-weight:600;">Last night's podium</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:14px;">
+      ${podium || `<tr><td style="padding:12px 0;color:#9ca3af;">No results recorded.</td></tr>`}
+    </table>
+
+    <div style="color:#9ca3af;font-size:12px;font-family:monospace;margin-bottom:28px;">
+      ${attendeeCount} players · ${rebuys} rebuys · £${buyIn} buy-in · £${pot} pot
+    </div>
+
+    <div style="color:${BRAND_GREEN_LIGHT};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 4px;font-weight:600;">Net for the night</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:28px;">
+      <thead>
+        <tr>
+          <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Player</th>
+          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">In</th>
+          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Out</th>
+          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Net</th>
+        </tr>
+      </thead>
+      <tbody>${tonightTable}</tbody>
+    </table>
+
+    <div style="color:${BRAND_GREEN_LIGHT};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 4px;font-weight:600;">All-time High Rollers running total</div>
+    <table style="width:100%;border-collapse:collapse;">
+      <thead>
+        <tr>
+          <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);width:32px;">#</th>
+          <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Player</th>
+          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Net</th>
+        </tr>
+      </thead>
+      <tbody>${runningTable}</tbody>
+    </table>
+
+    <div style="margin-top:28px;padding-top:14px;border-top:1px solid rgba(20,163,123,0.18);color:#6b7280;font-size:11px;text-align:center;letter-spacing:0.05em;">
+      Greene Room Poker, Berkhamsted &nbsp;·&nbsp;
+      <a href="https://mcq90210.github.io/grp-app/" style="color:${BRAND_GREEN_LIGHT};text-decoration:none;">View full history</a>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 // ============================================================================
 // Send-mail core (shared by scheduled and callable functions)
 // ============================================================================
 
 async function sendResultsForGame(game) {
   if (!game) throw new Error('No game provided.');
-  if (game.type !== 'league') {
-    return { skipped: true, reason: `Game ${game.id} is not a league game (type=${game.type}).` };
-  }
+  if (game.type === 'league') return sendLeagueResults(game);
+  if (game.type === 'highrollers') return sendHRResults(game);
+  return { skipped: true, reason: `Unknown game type "${game.type}" for ${game.id}.` };
+}
+
+async function sendLeagueResults(game) {
   if (!game.seasonId) {
     return { skipped: true, reason: `Game ${game.id} has no seasonId.` };
   }
@@ -432,26 +691,53 @@ async function sendResultsForGame(game) {
   }
 
   const standings = computeStandings(seasonGames, players, game.id);
-  // Best-effort AI recap. If Gemini's unavailable, recap is null and the email
-  // still goes out — just without the prose intro.
   const recap = await generateRecap({ game, season, standings, players });
   const html = renderResultsEmail({ game, season, standings, players, recap });
+  const subject = `GRP Berkhamsted: ${season.name} · Game ${game.gameNumber}${
+    game.isFinal ? ' FINAL' : ''
+  } results`;
+  return sendEmailAndLog({ game, subject, html, recipients, extra: { seasonId: game.seasonId, type: 'results' } });
+}
 
+async function sendHRResults(game) {
+  const [players, allHRGames] = await Promise.all([
+    getAllPlayers(),
+    getAllHRGames(),
+  ]);
+
+  const recipients = players.filter(
+    (p) => p.active !== false && typeof p.email === 'string' && p.email.includes('@')
+  );
+  if (recipients.length === 0) {
+    return { skipped: true, reason: 'No players with email addresses on file.' };
+  }
+
+  // Build running totals once so generateHRRecap can reference the leaderboard.
+  const runningTotals = {};
+  for (const g of allHRGames) {
+    for (const pid of (g.attendees || [])) {
+      runningTotals[pid] = (runningTotals[pid] || 0) + netForGame(g, pid).net;
+    }
+  }
+
+  const recap = await generateHRRecap({ game, players, runningTotals });
+  const html = renderHRResultsEmail({ game, players, allHRGames, recap });
+  const subject = `GRP Berkhamsted: High Rollers · ${game.date}`;
+  return sendEmailAndLog({ game, subject, html, recipients, extra: { type: 'hr-results' } });
+}
+
+// Shared tail of league / HR sends — actually deliver the mail and record the
+// audit-log entry. Pulled out so both senders share one configuration path.
+async function sendEmailAndLog({ game, subject, html, recipients, extra }) {
   const user = GMAIL_USER.value();
   const pass = GMAIL_APP_PASSWORD.value();
   if (!user || !pass) {
     throw new Error('Gmail secrets are not configured (GMAIL_USER / GMAIL_APP_PASSWORD).');
   }
-
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user, pass },
   });
-
-  const subject = `GRP Berkhamsted: ${season.name} · Game ${game.gameNumber}${
-    game.isFinal ? ' FINAL' : ''
-  } results`;
-
   await transporter.sendMail({
     from: `"GRP Berkhamsted" <${user}>`,
     to: user, // visible recipient = sender (so individual addresses stay private)
@@ -459,18 +745,14 @@ async function sendResultsForGame(game) {
     subject,
     html,
   });
-
-  // Audit log.
   await db.collection('emailLog').add({
     sentAt: admin.firestore.FieldValue.serverTimestamp(),
     gameId: game.id,
-    seasonId: game.seasonId,
     recipientCount: recipients.length,
     recipientIds: recipients.map((r) => r.id),
     subject,
-    type: 'results',
+    ...(extra || {}),
   });
-
   return { sent: recipients.length, gameId: game.id };
 }
 
@@ -490,18 +772,19 @@ exports.dailyResultsEmail = onSchedule(
   async () => {
     const dateStr = ukYesterdayString();
     const games = await getGamesByDate(dateStr);
-    const leagueGames = games.filter((g) => g.type === 'league');
-    if (leagueGames.length === 0) {
-      logger.info(`No league game on ${dateStr} — nothing to send.`);
+    // Include both league and HR games — each gets its own email template.
+    const toSend = games.filter((g) => g.type === 'league' || g.type === 'highrollers');
+    if (toSend.length === 0) {
+      logger.info(`No league or HR game on ${dateStr} — nothing to send.`);
       return;
     }
-    for (const game of leagueGames) {
+    for (const game of toSend) {
       try {
         const result = await sendResultsForGame(game);
         if (result.skipped) {
           logger.warn(`Skipped game ${game.id}: ${result.reason}`);
         } else {
-          logger.info(`Sent results for game ${game.id} to ${result.sent} recipients.`);
+          logger.info(`Sent ${game.type} results for game ${game.id} to ${result.sent} recipients.`);
         }
       } catch (err) {
         logger.error(`Failed to send for game ${game.id}:`, err);
@@ -532,6 +815,33 @@ exports.resendLatestResults = onCall(
       return { ok: true, gameId: game.id, sent: result.sent };
     } catch (err) {
       logger.error('resendLatestResults failed:', err);
+      throw new HttpsError('internal', err.message || 'Email send failed.');
+    }
+  }
+);
+
+// Callable: admin presses "Resend HR results" → re-emails the most recent HR game.
+exports.resendLatestHRResults = onCall(
+  {
+    region: REGION,
+    secrets: [GMAIL_USER, GMAIL_APP_PASSWORD, GEMINI_API_KEY],
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
+    }
+    const game = await getMostRecentHRGame();
+    if (!game) {
+      throw new HttpsError('not-found', 'No High Rollers games found in the database.');
+    }
+    try {
+      const result = await sendResultsForGame(game);
+      if (result.skipped) {
+        return { ok: false, skipped: true, reason: result.reason, gameId: game.id };
+      }
+      return { ok: true, gameId: game.id, sent: result.sent };
+    } catch (err) {
+      logger.error('resendLatestHRResults failed:', err);
       throw new HttpsError('internal', err.message || 'Email send failed.');
     }
   }

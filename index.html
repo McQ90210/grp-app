@@ -3752,9 +3752,10 @@ function HighRollersHistory({ onBack, fbUser }) {
   const [timeRange, setTimeRange] = useState('all'); // 'all' | '12m' | '6m'
   // Admin tools — only shown when signed in
   const [showAdminTools, setShowAdminTools] = useState(false);
-  const [adminBusy, setAdminBusy] = useState(null); // 'wipeHR' | null
+  const [adminBusy, setAdminBusy] = useState(null); // 'wipeHR' | 'resendHR' | null
   const [adminMessage, setAdminMessage] = useState(null);
   const [showWipeHRConfirm, setShowWipeHRConfirm] = useState(false);
+  const [showResendHRConfirm, setShowResendHRConfirm] = useState(false);
 
   const announceAdmin = (kind, text) => {
     setAdminMessage({ kind, text });
@@ -3775,6 +3776,24 @@ function HighRollersHistory({ onBack, fbUser }) {
       } catch (_) {}
     } catch (e) {
       announceAdmin('err', e.message || 'Wipe failed.');
+    } finally { setAdminBusy(null); }
+  };
+
+  const doResendHR = async () => {
+    setShowResendHRConfirm(false);
+    setAdminBusy('resendHR');
+    setAdminMessage(null);
+    try {
+      const r = await window.GRP_DB.resendLatestHRResults();
+      if (r && r.ok) {
+        announceAdmin('ok', `✓ Resent HR results for ${r.gameId} to ${r.sent} recipients.`);
+      } else if (r && r.skipped) {
+        announceAdmin('err', `Skipped: ${r.reason || 'unknown reason'}`);
+      } else {
+        announceAdmin('err', 'Resend returned an unexpected response.');
+      }
+    } catch (e) {
+      announceAdmin('err', e.message || 'Resend failed.');
     } finally { setAdminBusy(null); }
   };
 
@@ -3913,6 +3932,14 @@ function HighRollersHistory({ onBack, fbUser }) {
             </button>
             {showAdminTools && (
               <div className="mt-2 p-3 rounded-lg bg-black/30 border border-yellow-500/15 flex flex-wrap gap-2">
+                <button
+                  onClick={() => setShowResendHRConfirm(true)}
+                  disabled={adminBusy !== null || games.length === 0}
+                  className="px-3 py-1.5 rounded font-mono text-xs border border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
+                  title="Re-send the morning-after email for the most recent HR game."
+                >
+                  {adminBusy === 'resendHR' ? 'SENDING…' : '✉ RESEND HR RESULTS'}
+                </button>
                 <button
                   onClick={() => setShowWipeHRConfirm(true)}
                   disabled={adminBusy !== null}
@@ -4085,6 +4112,15 @@ function HighRollersHistory({ onBack, fbUser }) {
             requireType="WIPE"
             onConfirm={doWipeHR}
             onCancel={() => setShowWipeHRConfirm(false)}
+          />
+        )}
+
+        {showResendHRConfirm && (
+          <ConfirmDialog
+            title="Resend latest HR results email?"
+            message="Sends the morning-after email for the most recent High Rollers game to every player with an email on file. Uses the same AI recap + podium + running-total format as the auto-send."
+            onConfirm={doResendHR}
+            onCancel={() => setShowResendHRConfirm(false)}
           />
         )}
 

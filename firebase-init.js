@@ -199,6 +199,13 @@ async function resendLatestResults() {
   return res.data;
 }
 
+// Same as resendLatestResults, but for the most recent High Rollers game.
+async function resendLatestHRResults() {
+  const fn = httpsCallable(functions, 'resendLatestHRResults');
+  const res = await fn({});
+  return res.data;
+}
+
 // Admin: rename a season's id + name and migrate all of its games to match.
 // Useful when a season was stored under the wrong id (e.g. "2026-r2" when the
 // data really belongs to Round 1). Returns { ok, migratedGameCount, ... }
@@ -232,7 +239,7 @@ window.GRP_DB = {
   // Live (in-progress) game persistence
   saveLiveGame, getLiveGame, clearLiveGame,
   // Email
-  resendLatestResults,
+  resendLatestResults, resendLatestHRResults,
   // Admin
   bulkImport, migrateSeason, wipeHighRollers, wipeSimData, simulateGames,
 };
