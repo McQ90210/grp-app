@@ -308,12 +308,13 @@ async function generateHRRecap({ game, players, runningTotals }) {
     return name ? `${place}. ${name} (£${payout})` : null;
   }).filter(Boolean).join(', ');
 
-  // Headline winner tonight gives Gemini something concrete to anchor on.
+  // Pick the biggest winner / loser tonight to give Gemini something concrete.
   const tonightNets = (game.attendees || []).map((pid) => ({
     name: playersById[pid]?.displayName || pid,
     ...netForGame(game, pid),
   })).sort((a, b) => b.net - a.net);
   const topNet = tonightNets[0];
+  const bottomNet = tonightNets[tonightNets.length - 1];
 
   // A short running-total blurb (top 3 leaders by all-time HR net).
   const leaderboard = Object.entries(runningTotals || {})
@@ -326,21 +327,20 @@ async function generateHRRecap({ game, players, runningTotals }) {
   const prompt = `Write a 3-4 sentence recap (60-100 words) of last night's GR Poker
 "High Rollers" cash side-game, for the morning-after results email. Tone: warm,
 dry-witty, British pub energy. Reference at least TWO specific player nicknames
-and at least ONE specific number (payout, running total, or pot size).
-Celebrate the winners and the standings; do NOT name or shame anyone who lost
-money on the night — it's a friendly cash game and people might stop turning
-up. Never use exclamation marks. Never use hyphens or em-dashes (-, —). Use
-commas, full stops, or rewrite the sentence instead. Never use the words "epic",
+and at least ONE specific number (payout, net swing, or running total).
+Never use exclamation marks. Never use hyphens or em-dashes (-, —). Use commas,
+full stops, or rewrite the sentence instead. Never use the words "epic",
 "showdown", "thrilling", "battle", "duel", "clash". Output JUST the prose
 paragraph — no greeting, no sign-off, no markdown, no headers.
 
 Context:
 - This is High Rollers, a casual cash side-game (no league points, no season).
 - Date: ${game.date}
-- ${(game.attendees || []).length} players, pot £${game.pot || 0}
+- ${(game.attendees || []).length} players, pot £${game.pot || 0}, ${game.totalRebuys || 0} rebuys
 - Buy-in: £${game.buyIn || 30}
 - Podium: ${podium || 'no results recorded'}
-- Headline winner tonight: ${topNet ? `${topNet.name} took home £${topNet.winnings}` : '—'}
+- Biggest winner tonight: ${topNet ? `${topNet.name} (+£${topNet.net})` : '—'}
+- Biggest loser tonight: ${bottomNet ? `${bottomNet.name} (${bottomNet.net >= 0 ? '+' : ''}£${bottomNet.net})` : '—'}
 - All-time HR leaderboard: ${leaderboard || '(no history yet)'}
 
 If you mention the next game, just say "next time" — High Rollers has no fixed cadence.
@@ -545,16 +545,18 @@ function renderHRResultsEmail({ game, players, allHRGames, recap }) {
       : '';
   }).join('');
 
-  // All-time HR running totals — accumulate buy-ins, winnings, in-the-money
-  // count, and net across every HR game in the database. Includes tonight's
-  // game (it's already saved by the time the email goes out).
-  const runningStats = {}; // { pid: { games, itm, buyIns, winnings, net } }
+  // All-time HR running totals — accumulate buy-ins, winnings, per-place
+  // counts (1st/2nd/3rd), and net across every HR game in the database.
+  // Includes tonight's game (it's already saved by the time the email goes out).
+  const runningStats = {}; // { pid: { games, p1, p2, p3, buyIns, winnings, net } }
   for (const g of (allHRGames || [])) {
     for (const pid of (g.attendees || [])) {
       const r = netForGame(g, pid);
-      const s = runningStats[pid] || { games: 0, itm: 0, buyIns: 0, winnings: 0, net: 0 };
+      const s = runningStats[pid] || { games: 0, p1: 0, p2: 0, p3: 0, buyIns: 0, winnings: 0, net: 0 };
       s.games += 1;
-      if (r.winnings > 0) s.itm += 1;
+      if (r.place === 1) s.p1 += 1;
+      else if (r.place === 2) s.p2 += 1;
+      else if (r.place === 3) s.p3 += 1;
       s.buyIns += r.buyIns;
       s.winnings += r.winnings;
       s.net += r.net;
@@ -571,14 +573,24 @@ function renderHRResultsEmail({ game, players, allHRGames, recap }) {
     return `<span style="color:${colour};font-family:monospace;font-weight:600;">${sign}£${Math.abs(Math.round(n))}</span>`;
   };
 
+  // Subtle medal colours for the per-place columns — same gold/silver/bronze
+  // used elsewhere in the brand, only applied when the player has at least
+  // one finish at that place (otherwise the cell stays muted).
+  const fmtPlaceCount = (n, colour) => n > 0
+    ? `<span style="color:${colour};font-family:monospace;font-weight:600;">${n}</span>`
+    : `<span style="color:#4b5563;font-family:monospace;">—</span>`;
+  const GOLD = '#f4d03f', SILVER = '#d4d4d4', BRONZE = '#d4924a';
+
   const runningTable = runningRows.map((r, i) => {
     const last = i === runningRows.length - 1 ? '' : ROW_DIVIDER;
-    const rankColours = ['#f4d03f', '#d4d4d4', '#d4924a'];
+    const rankColours = [GOLD, SILVER, BRONZE];
     const rankColour = rankColours[i] || TEXT_LIGHT;
     return `<tr>
       <td style="padding:8px 4px;color:${rankColour};font-weight:700;font-family:monospace;width:28px;${last}">${i + 1}</td>
       <td style="padding:8px 4px;color:${TEXT_LIGHT};${last}">${escape(r.name)}</td>
-      <td style="padding:8px 4px;color:#9ca3af;text-align:right;font-family:monospace;font-size:12px;${last}">${r.itm}<span style="color:#4b5563;"> / ${r.games}</span></td>
+      <td style="padding:8px 4px;text-align:right;font-size:12px;${last}">${fmtPlaceCount(r.p1, GOLD)}</td>
+      <td style="padding:8px 4px;text-align:right;font-size:12px;${last}">${fmtPlaceCount(r.p2, SILVER)}</td>
+      <td style="padding:8px 4px;text-align:right;font-size:12px;${last}">${fmtPlaceCount(r.p3, BRONZE)}</td>
       <td style="padding:8px 4px;color:#9ca3af;text-align:right;font-family:monospace;font-size:12px;${last}">£${Math.round(r.buyIns)}</td>
       <td style="padding:8px 4px;color:#9ca3af;text-align:right;font-family:monospace;font-size:12px;${last}">£${Math.round(r.winnings)}</td>
       <td style="padding:8px 4px;text-align:right;${last}">${fmtNet(r.net)}</td>
@@ -623,7 +635,9 @@ function renderHRResultsEmail({ game, players, allHRGames, recap }) {
         <tr>
           <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);width:28px;">#</th>
           <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Player</th>
-          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);" title="In the money / games played">ITM</th>
+          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">🥇</th>
+          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">🥈</th>
+          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">🥉</th>
           <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">In</th>
           <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Out</th>
           <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Net</th>
