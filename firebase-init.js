@@ -215,11 +215,9 @@ async function migrateSeason({ oldSeasonId, newSeasonId, newName }) {
   return res.data;
 }
 
-// Admin: destructive tools + simulation.
-async function wipeHighRollers() {
-  const res = await httpsCallable(functions, 'wipeHighRollers')({});
-  return res.data;
-}
+// Admin: destructive / sandbox tools. The HR wipe was test-data cleanup
+// only — removed once we had real games. The sim helpers are unused by
+// any current UI but kept as break-glass.
 async function wipeSimData() {
   const res = await httpsCallable(functions, 'wipeSimData')({});
   return res.data;
@@ -241,7 +239,7 @@ window.GRP_DB = {
   // Email
   resendLatestResults, resendLatestHRResults,
   // Admin
-  bulkImport, migrateSeason, wipeHighRollers, wipeSimData, simulateGames,
+  bulkImport, migrateSeason, wipeSimData, simulateGames,
 };
 
 window.dispatchEvent(new CustomEvent('firebase-ready'));

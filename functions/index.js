@@ -942,17 +942,16 @@ exports.migrateSeason = onCall(
 );
 
 // ============================================================================
-// Admin tooling — wipe + simulate
+// Admin tooling — sandbox simulation
 // ============================================================================
 //
-// `wipeHighRollers`  — delete every game with type === 'highrollers'.
 // `wipeSimData`      — delete every game and season whose id begins with `sim-`.
 // `simulateGames`    — generate 4 sandbox seasons, 20 league games + 20 HR games,
 //                      using real player IDs and points/payout rules from CLAUDE.md.
 //                      Skill-weighted so Cactus / Duck / Chicken / River Dan
 //                      tend to finish higher.
 //
-// All three require an authenticated caller.
+// Both require an authenticated caller.
 
 // Helper: batched delete (max 500 docs per Firestore batch).
 async function batchDelete(refs) {
@@ -966,19 +965,6 @@ async function batchDelete(refs) {
   }
   return deleted;
 }
-
-exports.wipeHighRollers = onCall(
-  { region: REGION },
-  async (request) => {
-    if (!request.auth) {
-      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
-    }
-    const snap = await db.collection('games').where('type', '==', 'highrollers').get();
-    const deleted = await batchDelete(snap.docs.map((d) => d.ref));
-    logger.info(`wipeHighRollers: removed ${deleted} HR games.`);
-    return { ok: true, deleted };
-  }
-);
 
 exports.wipeSimData = onCall(
   { region: REGION },
