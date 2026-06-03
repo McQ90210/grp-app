@@ -2113,9 +2113,26 @@ const WLED_RECIPES = {
     ],
   },
 
-  // 5-second countdown before the blinds change — breathe the standard
-  // colour ~1 s/cycle so 5 cycles play out before levelChange overrides.
-  countdown: { payload: { on: true, bri: 230, transition: 0, seg: [{ fx: 2, sx: 150, ix: 128, col: [BROWN] }] } },
+  // 5-second countdown — five explicit bright/dim brown pulses, one per
+  // second. Done as a multi-step sequence rather than a single Breathe
+  // POST because the WLED's stored palette (pal:50 by default) can blend
+  // colours into Breathe's interpolation, making a brown breath barely
+  // visible against the brown idle. Sequence below forces fx:0 (Solid),
+  // pal:0 (no blend), and toggles brightness directly.
+  countdown: {
+    steps: [
+      { payload: { on: true, bri: 255, transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 500 },
+      { payload: { on: true, bri: 80,  transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 500 },
+      { payload: { on: true, bri: 255, transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 500 },
+      { payload: { on: true, bri: 80,  transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 500 },
+      { payload: { on: true, bri: 255, transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 500 },
+      { payload: { on: true, bri: 80,  transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 500 },
+      { payload: { on: true, bri: 255, transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 500 },
+      { payload: { on: true, bri: 80,  transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 500 },
+      { payload: { on: true, bri: 255, transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 500 },
+      { payload: { on: true, bri: 80,  transition: 2, seg: [{ fx: 0, pal: 0, col: [BROWN] }] } },
+    ],
+  },
 
   // Elimination — three-stage:
   //   1. Wipe red from the END of the strip (~2 s, 8 frames @ 250 ms each)
@@ -2124,49 +2141,53 @@ const WLED_RECIPES = {
   // Total: ~14 s before returning fully to idle. The sequence-ID guard in
   // sendWledEffect means a second elimination cleanly cancels the first.
   elimination: {
+    // Strip is 300 LEDs (indices 0..299). Wipes use 8 frames of ~37 LEDs
+    // each so the animation looks the same regardless of which end you're
+    // standing at. If the physical strip changes length later, update the
+    // ranges below (or refactor to query /json/info at runtime).
     steps: [
       // Reset baseline so individual-pixel writes layer on top correctly.
-      { payload: { on: true, bri: 220, transition: 0, seg: [{ fx: 0, col: [BROWN] }] }, holdMs: 60 },
-      // Wipe red from the end — 4 LEDs per frame, 32 LEDs total = 8 frames.
-      { payload: { seg: [{ i: [28, 31, RED] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [24, 31, RED] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [20, 31, RED] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [16, 31, RED] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [12, 31, RED] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [8, 31, RED] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [4, 31, RED] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [0, 31, RED] }] }, holdMs: 150 },
+      { payload: { on: true, bri: 220, transition: 0, seg: [{ fx: 0, pal: 0, col: [BROWN] }] }, holdMs: 60 },
+      // Wipe red from the end — ~37 LEDs per frame, 300 LEDs total = 8 frames.
+      { payload: { seg: [{ i: [263, 299, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [225, 299, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [188, 299, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [150, 299, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [113, 299, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [75, 299, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [38, 299, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 299, RED] }] }, holdMs: 150 },
       // Pulse red 10 s — one POST, WLED's Breathe effect cycles ~500 ms.
-      { payload: { on: true, bri: 255, transition: 0, seg: [{ fx: 2, sx: 230, ix: 200, col: [RED] }] }, holdMs: 10000 },
+      { payload: { on: true, bri: 255, transition: 0, seg: [{ fx: 2, pal: 0, sx: 230, ix: 200, col: [RED] }] }, holdMs: 10000 },
       // Stop Breathe, freeze solid red so the brown wipe can layer on top.
-      { payload: { on: true, bri: 220, transition: 0, seg: [{ fx: 0, col: [RED] }] }, holdMs: 60 },
+      { payload: { on: true, bri: 220, transition: 0, seg: [{ fx: 0, pal: 0, col: [RED] }] }, holdMs: 60 },
       // Wipe brown from the start — same 8-frame structure, opposite end.
-      { payload: { seg: [{ i: [0, 3, BROWN] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [0, 7, BROWN] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [0, 11, BROWN] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [0, 15, BROWN] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [0, 19, BROWN] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [0, 23, BROWN] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [0, 27, BROWN] }] }, holdMs: 250 },
-      { payload: { seg: [{ i: [0, 31, BROWN] }] }, holdMs: 150 },
+      { payload: { seg: [{ i: [0, 37, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 74, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 111, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 149, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 186, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 223, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 261, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 299, BROWN] }] }, holdMs: 150 },
       // Clean idle state — reaffirm fx=0 and brown so subsequent effects start clean.
-      { payload: { on: true, bri: 200, transition: 5, seg: [{ fx: 0, col: [BROWN] }] } },
+      { payload: { on: true, bri: 200, transition: 5, seg: [{ fx: 0, pal: 0, col: [BROWN] }] } },
     ],
   },
 
-  // 5 minutes remaining in the level — slow yellow pulse (unchanged from v1).
-  fiveMinWarning: { payload: { on: true, bri: 220, transition: 7, seg: [{ fx: 2, sx: 50, ix: 128, col: [[244, 208, 63]] }] } },
+  // 5 minutes remaining in the level — slow yellow pulse.
+  fiveMinWarning: { payload: { on: true, bri: 220, transition: 7, seg: [{ fx: 2, pal: 0, sx: 50, ix: 128, col: [[244, 208, 63]] }] } },
 
-  // 1 minute remaining — fast yellow pulse (unchanged from v1).
-  oneMinWarning: { payload: { on: true, bri: 220, transition: 3, seg: [{ fx: 2, sx: 200, ix: 200, col: [[244, 208, 63]] }] } },
+  // 1 minute remaining — fast yellow pulse.
+  oneMinWarning: { payload: { on: true, bri: 220, transition: 3, seg: [{ fx: 2, pal: 0, sx: 200, ix: 200, col: [[244, 208, 63]] }] } },
 
-  // Break level — calm blue, slow breathing (unchanged from v1).
-  break: { payload: { on: true, bri: 180, transition: 15, seg: [{ fx: 2, sx: 40, ix: 100, col: [[59, 130, 246]] }] } },
+  // Break level — calm blue, slow breathing.
+  break: { payload: { on: true, bri: 180, transition: 15, seg: [{ fx: 2, pal: 0, sx: 40, ix: 100, col: [[59, 130, 246]] }] } },
 
-  // Final 3 players left — purple theatre chase (unchanged from v1).
-  finalThree: { payload: { on: true, bri: 255, transition: 7, seg: [{ fx: 28, sx: 150, ix: 180, col: [[168, 85, 247], [60, 30, 90], [0, 0, 0]] }] } },
+  // Final 3 players left — purple theatre chase.
+  finalThree: { payload: { on: true, bri: 255, transition: 7, seg: [{ fx: 28, pal: 0, sx: 150, ix: 180, col: [[168, 85, 247], [60, 30, 90], [0, 0, 0]] }] } },
 
-  // Tournament winner — rainbow celebration (unchanged from v1).
+  // Tournament winner — rainbow celebration (palette IS the point here, keep WLED's default rainbow).
   winner: { payload: { on: true, bri: 255, transition: 7, seg: [{ fx: 9, sx: 200, ix: 255 }] } },
 };
 
