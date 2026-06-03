@@ -2076,43 +2076,97 @@ function PlayerPickerModal({ allPlayers, alreadyAdded, onAdd, onClose }) {
 }
 
 // ============ WLED EFFECT RECIPES ============
-// Maps event names to the JSON payload POSTed to WLED's /json/state endpoint.
-// `holdMs` (optional) = how long to leave the effect running before auto-
-// returning to the dim-default `idle` state. Without `holdMs` the effect
-// stays on until something else replaces it.
+// Maps event names to either:
+//   - { payload, holdMs? }  — single POST, optionally auto-return to idle
+//   - { steps: [{ payload, holdMs }, ...] } — multi-step sequence, each step
+//     POSTs its payload then waits holdMs before firing the next step
 //
-// Effect / palette IDs are WLED built-ins (stable across versions):
-//   0  = Solid          2  = Breathe        9  = Rainbow
-//   28 = Chase
-// Colours are [r, g, b] arrays; up to 3 per segment (primary, secondary,
-// background). Brightness `bri` is 0-255. `transition` is in tenths of a
-// second (0 = instant snap, 7 = 700 ms fade).
+// `holdMs` is in milliseconds. The sequence runner cancels itself if a newer
+// effect fires (sequence ID check), so eliminations during eliminations don't
+// stack — the newer one replaces the older.
+//
+// Colours come from Mark's spec:
+//   BROWN  #62462b — standard game colour (idle baseline)
+//   GREEN  #2b6237 — blinds-increase glow
+//   RED    #86000c — elimination
+//
+// WLED effect IDs used (built-in, stable across versions):
+//   0 = Solid    2 = Breathe    9 = Rainbow    28 = Chase
+// `transition` is in tenths of a second on the firmware side (so 20 = 2s
+// fade, 100 = 10s fade). `i` sets specific pixel ranges: [start, end, [r,g,b]].
+const BROWN = [98, 70, 43];
+const GREEN_GLOW = [43, 98, 55];
+const RED = [134, 0, 12];
 const WLED_RECIPES = {
-  // Dim brand green — the resting state between events.
-  idle: { payload: { on: true, bri: 60, transition: 7, seg: [{ fx: 0, col: [[20, 163, 123]] }] } },
+  // Standard game colour — solid brown, the baseline between events.
+  idle: { payload: { on: true, bri: 200, transition: 5, seg: [{ fx: 0, col: [BROWN] }] } },
 
-  // Welcome — slow brand-green pulse, plays during the opening message.
-  gameStart: { payload: { on: true, bri: 200, transition: 7, seg: [{ fx: 2, sx: 60, ix: 128, col: [[20, 163, 123]] }] } },
+  // Welcome — same as idle for now (brown solid).
+  gameStart: { payload: { on: true, bri: 200, transition: 10, seg: [{ fx: 0, col: [BROWN] }] } },
 
-  // Mid-game blind level change — quick white flash, auto-return to idle.
-  levelChange: { payload: { on: true, bri: 255, transition: 0, seg: [{ fx: 0, col: [[255, 255, 255]] }] }, holdMs: 600 },
+  // Blinds increase — fade to forest green over 2 s, then fade back to
+  // brown over 10 s. WLED's native `transition` does the smooth interpolation.
+  levelChange: {
+    steps: [
+      { payload: { on: true, bri: 220, transition: 20, seg: [{ fx: 0, col: [GREEN_GLOW] }] }, holdMs: 2000 },
+      { payload: { on: true, bri: 200, transition: 100, seg: [{ fx: 0, col: [BROWN] }] } },
+    ],
+  },
 
-  // 5 minutes remaining in the level — slow yellow pulse.
+  // 5-second countdown before the blinds change — breathe the standard
+  // colour ~1 s/cycle so 5 cycles play out before levelChange overrides.
+  countdown: { payload: { on: true, bri: 230, transition: 0, seg: [{ fx: 2, sx: 150, ix: 128, col: [BROWN] }] } },
+
+  // Elimination — three-stage:
+  //   1. Wipe red from the END of the strip (~2 s, 8 frames @ 250 ms each)
+  //   2. Pulse red for 10 s (Breathe at fast speed, ~0.5 s cycle)
+  //   3. Wipe brown from the START of the strip (~2 s, 8 frames @ 250 ms)
+  // Total: ~14 s before returning fully to idle. The sequence-ID guard in
+  // sendWledEffect means a second elimination cleanly cancels the first.
+  elimination: {
+    steps: [
+      // Reset baseline so individual-pixel writes layer on top correctly.
+      { payload: { on: true, bri: 220, transition: 0, seg: [{ fx: 0, col: [BROWN] }] }, holdMs: 60 },
+      // Wipe red from the end — 4 LEDs per frame, 32 LEDs total = 8 frames.
+      { payload: { seg: [{ i: [28, 31, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [24, 31, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [20, 31, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [16, 31, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [12, 31, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [8, 31, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [4, 31, RED] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 31, RED] }] }, holdMs: 150 },
+      // Pulse red 10 s — one POST, WLED's Breathe effect cycles ~500 ms.
+      { payload: { on: true, bri: 255, transition: 0, seg: [{ fx: 2, sx: 230, ix: 200, col: [RED] }] }, holdMs: 10000 },
+      // Stop Breathe, freeze solid red so the brown wipe can layer on top.
+      { payload: { on: true, bri: 220, transition: 0, seg: [{ fx: 0, col: [RED] }] }, holdMs: 60 },
+      // Wipe brown from the start — same 8-frame structure, opposite end.
+      { payload: { seg: [{ i: [0, 3, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 7, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 11, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 15, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 19, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 23, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 27, BROWN] }] }, holdMs: 250 },
+      { payload: { seg: [{ i: [0, 31, BROWN] }] }, holdMs: 150 },
+      // Clean idle state — reaffirm fx=0 and brown so subsequent effects start clean.
+      { payload: { on: true, bri: 200, transition: 5, seg: [{ fx: 0, col: [BROWN] }] } },
+    ],
+  },
+
+  // 5 minutes remaining in the level — slow yellow pulse (unchanged from v1).
   fiveMinWarning: { payload: { on: true, bri: 220, transition: 7, seg: [{ fx: 2, sx: 50, ix: 128, col: [[244, 208, 63]] }] } },
 
-  // 1 minute remaining — fast yellow pulse.
+  // 1 minute remaining — fast yellow pulse (unchanged from v1).
   oneMinWarning: { payload: { on: true, bri: 220, transition: 3, seg: [{ fx: 2, sx: 200, ix: 200, col: [[244, 208, 63]] }] } },
 
-  // Break level — calm blue, slow breathing.
+  // Break level — calm blue, slow breathing (unchanged from v1).
   break: { payload: { on: true, bri: 180, transition: 15, seg: [{ fx: 2, sx: 40, ix: 100, col: [[59, 130, 246]] }] } },
 
-  // Player eliminated — bright red flash, auto-return to idle.
-  elimination: { payload: { on: true, bri: 255, transition: 0, seg: [{ fx: 0, col: [[239, 68, 68]] }] }, holdMs: 900 },
-
-  // Final 3 players left — purple theatre chase.
+  // Final 3 players left — purple theatre chase (unchanged from v1).
   finalThree: { payload: { on: true, bri: 255, transition: 7, seg: [{ fx: 28, sx: 150, ix: 180, col: [[168, 85, 247], [60, 30, 90], [0, 0, 0]] }] } },
 
-  // Tournament winner — rainbow celebration.
+  // Tournament winner — rainbow celebration (unchanged from v1).
   winner: { payload: { on: true, bri: 255, transition: 7, seg: [{ fx: 9, sx: 200, ix: 255 }] } },
 };
 
@@ -2200,6 +2254,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // and read its current value from this ref instead. Synced synchronously.
   const timeLeftRef = useRef(timeLeft);
   timeLeftRef.current = timeLeft;
+  // Sequence ID for multi-step WLED effects. Each call increments. Any
+  // pending setTimeout from an older sequence checks this and bails out
+  // if a newer one has taken over.
+  const wledSeqRef = useRef(0);
 
   // WLED settings — hydrate from localStorage on mount, persist on change.
   useEffect(() => {
@@ -2288,13 +2346,35 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }).catch(() => {});
-    post(recipe.payload);
-    if (recipe.holdMs) {
-      setTimeout(() => {
-        // Re-check the gate in case the user disabled LED during the hold.
-        if (!wledEnabled || !wledIp.trim()) return;
-        post(WLED_RECIPES.idle.payload);
-      }, recipe.holdMs);
+
+    // Cancel any in-flight sequence by bumping the sequence ID. Old
+    // setTimeouts compare their captured ID to this and bail.
+    const mySeq = ++wledSeqRef.current;
+    const stillCurrent = () => mySeq === wledSeqRef.current && wledEnabled && wledIp.trim();
+
+    // Single-payload recipe (used by most one-shot effects).
+    if (recipe.payload) {
+      post(recipe.payload);
+      if (recipe.holdMs) {
+        setTimeout(() => {
+          if (!stillCurrent()) return;
+          post(WLED_RECIPES.idle.payload);
+        }, recipe.holdMs);
+      }
+      return;
+    }
+
+    // Multi-step recipe — fire each step at its accumulated offset.
+    if (recipe.steps && recipe.steps.length) {
+      let delay = 0;
+      for (const step of recipe.steps) {
+        const at = delay;
+        setTimeout(() => {
+          if (!stillCurrent()) return;
+          post(step.payload);
+        }, at);
+        delay += (step.holdMs || 0);
+      }
     }
   }, [wledEnabled, wledIp]);
 
@@ -2506,6 +2586,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             } else if (t === 61) {
               speakClip('one-min', 'One minute remaining.');
               sendWledEffect('oneMinWarning');
+            } else if (t === 6) {
+              // 5-second countdown before the blinds change — pulse the
+              // standard colour once per second for the remaining 5 ticks.
+              // Fires at t=6 so the breath starts as "5" is first displayed.
+              sendWledEffect('countdown');
             }
           }
           return t - 1;
