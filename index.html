@@ -2075,6 +2075,47 @@ function PlayerPickerModal({ allPlayers, alreadyAdded, onAdd, onClose }) {
   );
 }
 
+// ============ WLED EFFECT RECIPES ============
+// Maps event names to the JSON payload POSTed to WLED's /json/state endpoint.
+// `holdMs` (optional) = how long to leave the effect running before auto-
+// returning to the dim-default `idle` state. Without `holdMs` the effect
+// stays on until something else replaces it.
+//
+// Effect / palette IDs are WLED built-ins (stable across versions):
+//   0  = Solid          2  = Breathe        9  = Rainbow
+//   28 = Chase
+// Colours are [r, g, b] arrays; up to 3 per segment (primary, secondary,
+// background). Brightness `bri` is 0-255. `transition` is in tenths of a
+// second (0 = instant snap, 7 = 700 ms fade).
+const WLED_RECIPES = {
+  // Dim brand green — the resting state between events.
+  idle: { payload: { on: true, bri: 60, transition: 7, seg: [{ fx: 0, col: [[20, 163, 123]] }] } },
+
+  // Welcome — slow brand-green pulse, plays during the opening message.
+  gameStart: { payload: { on: true, bri: 200, transition: 7, seg: [{ fx: 2, sx: 60, ix: 128, col: [[20, 163, 123]] }] } },
+
+  // Mid-game blind level change — quick white flash, auto-return to idle.
+  levelChange: { payload: { on: true, bri: 255, transition: 0, seg: [{ fx: 0, col: [[255, 255, 255]] }] }, holdMs: 600 },
+
+  // 5 minutes remaining in the level — slow yellow pulse.
+  fiveMinWarning: { payload: { on: true, bri: 220, transition: 7, seg: [{ fx: 2, sx: 50, ix: 128, col: [[244, 208, 63]] }] } },
+
+  // 1 minute remaining — fast yellow pulse.
+  oneMinWarning: { payload: { on: true, bri: 220, transition: 3, seg: [{ fx: 2, sx: 200, ix: 200, col: [[244, 208, 63]] }] } },
+
+  // Break level — calm blue, slow breathing.
+  break: { payload: { on: true, bri: 180, transition: 15, seg: [{ fx: 2, sx: 40, ix: 100, col: [[59, 130, 246]] }] } },
+
+  // Player eliminated — bright red flash, auto-return to idle.
+  elimination: { payload: { on: true, bri: 255, transition: 0, seg: [{ fx: 0, col: [[239, 68, 68]] }] }, holdMs: 900 },
+
+  // Final 3 players left — purple theatre chase.
+  finalThree: { payload: { on: true, bri: 255, transition: 7, seg: [{ fx: 28, sx: 150, ix: 180, col: [[168, 85, 247], [60, 30, 90], [0, 0, 0]] }] } },
+
+  // Tournament winner — rainbow celebration.
+  winner: { payload: { on: true, bri: 255, transition: 7, seg: [{ fx: 9, sx: 200, ix: 255 }] } },
+};
+
 // ============ MAIN TIMER ============
 function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser }) {
   // Resume hydration: when the app boots into an in-progress game, App
@@ -2216,6 +2257,46 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       setWledTestMessage(msg + hint);
     }
   }, [wledIp]);
+
+  // Fire a WLED effect for a game event. Silent no-op when disabled or
+  // unconfigured — never throws, never logs. The helper handles the
+  // optional auto-return-to-idle for "flash" recipes (holdMs).
+  //
+  // Known limitations (v1, accepted trade-offs):
+  //
+  //   1. Flashes always return to `idle`, even if a sustained warning
+  //      (fiveMinWarning / oneMinWarning) was active before the flash.
+  //      So an elimination during the last minute of a level resets the
+  //      LED state — the on-screen timer still shows the real time so
+  //      nothing is *lost*, just the LED state regresses. Could be fixed
+  //      with a `lastSustainedRef` that captures the most recent non-
+  //      flash recipe and gets replayed instead of `idle`.
+  //
+  //   2. Final 3 → elimination → idle → winner has a noticeable gap
+  //      because the winner recipe fires several seconds after the last
+  //      elimination flash returns to idle. Acceptable for v1; could be
+  //      smoothed by gating the auto-return on `remainingAfter > 1`.
+  const sendWledEffect = useCallback((eventType) => {
+    if (!wledEnabled) return;
+    const ip = wledIp.trim();
+    if (!ip) return;
+    const recipe = WLED_RECIPES[eventType];
+    if (!recipe) return;
+    const base = wledBaseUrl(ip);
+    const post = (payload) => fetch(`${base}/json/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+    post(recipe.payload);
+    if (recipe.holdMs) {
+      setTimeout(() => {
+        // Re-check the gate in case the user disabled LED during the hold.
+        if (!wledEnabled || !wledIp.trim()) return;
+        post(WLED_RECIPES.idle.payload);
+      }, recipe.holdMs);
+    }
+  }, [wledEnabled, wledIp]);
 
   // Live-game persistence. Writes the in-progress tournament state to
   // localStorage on every change (always) and to Firestore liveGames/current
@@ -2399,13 +2480,15 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     const lvl = (levelsRef.current || [])[levelIdx];
     if (!lvl) return;
     if (lvl.isBreak) {
+      sendWledEffect('break');
       announceLevel(levelIdx);
       return;
     }
+    sendWledEffect('levelChange');
     await speakClip('blinds-up', 'Blinds up!');
     await new Promise((r) => setTimeout(r, 200));
     announceLevel(levelIdx);
-  }, [speakClip, announceLevel]);
+  }, [speakClip, announceLevel, sendWledEffect]);
 
   useEffect(() => {
     if (!isRunning) return;
@@ -2419,8 +2502,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           if (curLvl && !curLvl.isBreak) {
             if (t === 301 && curLvl.duration > 5) {
               speakClip('five-min', 'Five minutes remaining in this round.');
+              sendWledEffect('fiveMinWarning');
             } else if (t === 61) {
               speakClip('one-min', 'One minute remaining.');
+              sendWledEffect('oneMinWarning');
             }
           }
           return t - 1;
@@ -2470,6 +2555,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     setLevels((prev) => [...prev, newLevel]);
     setCurrentLevel(lvl + 1);
     setTimeLeft(newLevel.duration * 60);
+    sendWledEffect('levelChange');
     setTimeout(async () => {
       try {
         await speakClip('blinds-up', 'Blinds up!');
@@ -2479,7 +2565,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
       } catch (e) { /* ignore */ }
     }, 100);
-  }, [announceLevelTransition, speakClip]);
+  }, [announceLevelTransition, speakClip, sendWledEffect]);
 
   const togglePlay = () => {
     // iOS / Safari requires the very first speak() call to happen synchronously
@@ -2494,6 +2580,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     // Welcome message only on the very first start (level 1, full time, not yet started)
     if (!isRunning && !hasStarted && currentLevel === 0 && timeLeft === levels[0].duration * 60) {
       speakWelcome();
+      sendWledEffect('gameStart');
       setHasStarted(true);
     }
     setIsRunning(!isRunning);
@@ -2520,6 +2607,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     setCurrentLevel(nextIdx);
     setTimeLeft(newLevel.duration * 60);
     if (isRunning) {
+      sendWledEffect('levelChange');
       setTimeout(async () => {
         try {
           await speakClip('blinds-up', 'Blinds up!');
@@ -2620,6 +2708,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     const remainingAfter = activePlayers.length - 1;
     setEliminatedPlayers((prev) => [...prev, player.name]);
 
+    // Red flash on every elimination. Auto-returns to idle after holdMs.
+    // For the final-3 / winner cases, the subsequent LED effect fires later
+    // and overrides idle — so this brief flash is safe to fire unconditionally.
+    sendWledEffect('elimination');
+
     // Always: goodbye + their sound. Capture the player-sound promise so we
     // can chain the winner announcement off it on the final elimination.
     let playerSoundPromise;
@@ -2636,6 +2729,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     if (remainingAfter === 3 && players.length > 3) {
       setTimeout(() => {
         if (voiceEnabled) speakClip('final-3', 'We are down to the final three!');
+        sendWledEffect('finalThree');
       }, 3000);
     }
 
@@ -2649,6 +2743,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         // Small breath between the player's sound ending and the fanfare
         await new Promise((r) => setTimeout(r, 400));
         setWinner(winnerObj);
+        sendWledEffect('winner');
         playSound('fanfare', customSounds);
         // Let fanfare lead for ~2.2s before the winner announcement
         await new Promise((r) => setTimeout(r, 2200));
