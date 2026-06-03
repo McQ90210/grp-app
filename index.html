@@ -2110,6 +2110,23 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const [fullRoster, setFullRoster] = useState([]); // [{ name, sound }, ...] — for late-entry picker
   const [knockedOutBy, setKnockedOutBy] = useState(resume?.knockedOutBy || {}); // { eliminatedPlayerName: knockerOuterName }
   const [pendingKnockout, setPendingKnockout] = useState(null); // player being eliminated, awaiting "who knocked them out?"
+
+  // ---- WLED (optional LED strip controlled by an ESP32 on the local LAN) ----
+  // Settings live in localStorage only — no events are wired up yet, this just
+  // captures the user's config so a future step can fire effects.
+  const [wledEnabled, setWledEnabled] = useState(false);
+  const [wledIp, setWledIp] = useState('');
+  const [wledTestStatus, setWledTestStatus] = useState(null); // null | 'testing' | 'ok' | 'fail'
+  const [wledTestMessage, setWledTestMessage] = useState('');
+  const [wledHelpOpen, setWledHelpOpen] = useState(false);
+
+  // Trim a pasted WLED address down to its bare host[:port] form so the user
+  // can paste "http://192.168.86.164/" straight from the WLED app and it
+  // just works. We always build the actual request as http://${ip}/json/...
+  const normalizeWledIp = (raw) => (raw || '')
+    .replace(/^\s*https?:\/\//i, '')  // strip scheme
+    .replace(/\/+$/, '')              // strip trailing slashes
+    .trim();
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [fullRosterFromDB, setFullRosterFromDB] = useState([]); // raw player docs from Firestore — for bounty calc
 
@@ -2129,6 +2146,61 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // and read its current value from this ref instead. Synced synchronously.
   const timeLeftRef = useRef(timeLeft);
   timeLeftRef.current = timeLeft;
+
+  // WLED settings — hydrate from localStorage on mount, persist on change.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('grp-wled-settings');
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (typeof s.enabled === 'boolean') setWledEnabled(s.enabled);
+      if (typeof s.ip === 'string') setWledIp(s.ip);
+    } catch (_) { /* ignore corrupt blob */ }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'grp-wled-settings',
+        JSON.stringify({ enabled: wledEnabled, ip: wledIp })
+      );
+    } catch (_) {}
+  }, [wledEnabled, wledIp]);
+
+  // Probe the WLED controller's /json/state to confirm reachability.
+  // WLED firmware exposes CORS headers on /json/* so a regular fetch works
+  // when both this page and the controller are on the same LAN. Note: if
+  // the app is served over HTTPS (GitHub Pages does) and the controller is
+  // plain HTTP, browsers will block as mixed content — surface the error
+  // verbatim so we can troubleshoot.
+  const testWLED = useCallback(async () => {
+    const ip = wledIp.trim();
+    if (!ip) return;
+    setWledTestStatus('testing');
+    setWledTestMessage(`Reaching ${ip}…`);
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(`http://${ip}/json/state`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) {
+        setWledTestStatus('fail');
+        setWledTestMessage(`HTTP ${res.status} from ${ip}`);
+        return;
+      }
+      const data = await res.json();
+      setWledTestStatus('ok');
+      setWledTestMessage(`Connected · LEDs are currently ${data.on ? 'ON' : 'OFF'}`);
+    } catch (e) {
+      setWledTestStatus('fail');
+      // Browser mixed-content blocks surface as a generic TypeError; spell
+      // that out so the user knows it's a hosting limitation, not their IP.
+      const msg = (e && e.message) ? e.message : 'Connection failed';
+      const mixedHint = msg.toLowerCase().includes('failed to fetch')
+        ? ' (likely browser blocked HTTP from HTTPS page — open the app over HTTP or proxy via HTTPS)'
+        : '';
+      setWledTestMessage(msg + mixedHint);
+    }
+  }, [wledIp]);
 
   // Live-game persistence. Writes the in-progress tournament state to
   // localStorage on every change (always) and to Firestore liveGames/current
@@ -3194,6 +3266,83 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                   Adam script for everything in-game. The Google US English voice
                   is auto-selected (see useEffect on `voices`) and kept as a
                   runtime fallback for any utterance that doesn't have a clip. */}
+
+              {/* LED LIGHTING — config only for now. No event triggers wired up yet. */}
+              <div className="font-display text-xl gold-text mb-3">LED LIGHTING</div>
+              <div className="space-y-3 mb-6">
+                {/* Enable toggle */}
+                <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-black/30 border border-yellow-500/15">
+                  <div className="min-w-0">
+                    <div className="font-mono text-sm text-emerald-100">Enable LED effects</div>
+                    <div className="font-mono text-[11px] text-yellow-100/40">WLED-controlled WS2812B strip on the local network</div>
+                  </div>
+                  <button
+                    onClick={() => setWledEnabled(!wledEnabled)}
+                    role="switch"
+                    aria-checked={wledEnabled}
+                    className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${wledEnabled ? 'bg-emerald-500/70' : 'bg-black/60 border border-yellow-500/20'}`}
+                  >
+                    <span
+                      className={`absolute top-0.5 w-5 h-5 rounded-full bg-yellow-50 transition-all ${wledEnabled ? 'left-[22px]' : 'left-0.5'}`}
+                    />
+                  </button>
+                </div>
+
+                {/* IP + test */}
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="font-mono text-xs text-yellow-100/40 tracking-widest">WLED IP ADDRESS</div>
+                    <button
+                      onClick={() => setWledHelpOpen(!wledHelpOpen)}
+                      onMouseEnter={() => setWledHelpOpen(true)}
+                      onMouseLeave={() => setWledHelpOpen(false)}
+                      aria-label="Help: where to find your WLED IP"
+                      title="How to find your WLED IP"
+                      className="w-4 h-4 rounded-full bg-yellow-500/20 border border-yellow-500/30 text-yellow-100/70 font-mono text-[10px] leading-none flex items-center justify-center hover:bg-yellow-500/30"
+                    >
+                      ?
+                    </button>
+                  </div>
+                  {wledHelpOpen && (
+                    <div className="mb-2 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/15 font-mono text-[11px] text-yellow-100/70">
+                      Find your WLED IP in your router's connected devices list, or via the WLED app.
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={wledIp}
+                      onChange={(e) => { setWledIp(normalizeWledIp(e.target.value)); setWledTestStatus(null); }}
+                      placeholder="192.168.86.164"
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      className="flex-1 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+                    />
+                    <button
+                      onClick={testWLED}
+                      disabled={!wledIp.trim() || wledTestStatus === 'testing'}
+                      className="px-4 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-100 font-mono text-xs hover:bg-emerald-500/30 disabled:opacity-30"
+                    >
+                      {wledTestStatus === 'testing' ? 'TESTING…' : 'TEST'}
+                    </button>
+                  </div>
+                  {wledTestStatus && (
+                    <div
+                      className={`mt-2 px-3 py-2 rounded-lg font-mono text-xs border ${
+                        wledTestStatus === 'ok'
+                          ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                          : wledTestStatus === 'fail'
+                            ? 'bg-red-950/40 border-red-500/40 text-red-200'
+                            : 'bg-yellow-950/40 border-yellow-500/30 text-yellow-100/80'
+                      }`}
+                    >
+                      {wledTestStatus === 'ok' ? '✓ ' : wledTestStatus === 'fail' ? '✗ ' : '⏳ '}
+                      {wledTestMessage}
+                    </div>
+                  )}
+                </div>
+              </div>
 
               <div className="font-display text-xl gold-text mb-3">BLIND STRUCTURE</div>
               <div className="space-y-2 max-h-80 overflow-y-auto pr-2">
