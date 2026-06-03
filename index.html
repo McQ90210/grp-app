@@ -2120,13 +2120,26 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const [wledTestMessage, setWledTestMessage] = useState('');
   const [wledHelpOpen, setWledHelpOpen] = useState(false);
 
-  // Trim a pasted WLED address down to its bare host[:port] form so the user
-  // can paste "http://192.168.86.164/" straight from the WLED app and it
-  // just works. We always build the actual request as http://${ip}/json/...
-  const normalizeWledIp = (raw) => (raw || '')
-    .replace(/^\s*https?:\/\//i, '')  // strip scheme
-    .replace(/\/+$/, '')              // strip trailing slashes
-    .trim();
+  // Normalise the WLED address field. Two valid shapes:
+  //   - Bare host[:port] (e.g. "192.168.86.164") — we'll prepend http:// at
+  //     fetch time. Only works when the app and the controller are both on
+  //     plain HTTP (i.e. the app served locally — not via GitHub Pages).
+  //   - Full HTTPS URL (e.g. "https://abc.trycloudflare.com") — passed
+  //     through verbatim. Required when the app is on HTTPS because
+  //     browsers block mixed content.
+  // The normaliser strips `http://` (we add it back) and trailing slashes,
+  // but preserves `https://` so HTTPS URLs survive round-trip.
+  const normalizeWledIp = (raw) => {
+    let s = (raw || '').trim();
+    s = s.replace(/^http:\/\//i, '');  // strip plain http only
+    s = s.replace(/\/+$/, '');         // strip trailing slashes
+    return s;
+  };
+
+  // Build the base URL for WLED API calls. Detects whether the stored value
+  // already includes a scheme (https://, http://) and falls back to http://
+  // for bare host values.
+  const wledBaseUrl = (ip) => /^https?:\/\//i.test(ip) ? ip : `http://${ip}`;
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [fullRosterFromDB, setFullRosterFromDB] = useState([]); // raw player docs from Firestore — for bounty calc
 
@@ -2166,12 +2179,12 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     } catch (_) {}
   }, [wledEnabled, wledIp]);
 
-  // Probe the WLED controller's /json/state to confirm reachability.
-  // WLED firmware exposes CORS headers on /json/* so a regular fetch works
-  // when both this page and the controller are on the same LAN. Note: if
-  // the app is served over HTTPS (GitHub Pages does) and the controller is
-  // plain HTTP, browsers will block as mixed content — surface the error
-  // verbatim so we can troubleshoot.
+  // Probe the WLED controller's /json/state to confirm reachability. WLED
+  // firmware exposes CORS headers on /json/* so a regular fetch works. If
+  // the stored value is a bare IP (http) but the app is served over HTTPS
+  // the browser will block as mixed content — set up a Cloudflare Tunnel
+  // (cloudflared tunnel --url http://192.168.x.x) and paste the resulting
+  // https://*.trycloudflare.com URL into the field instead.
   const testWLED = useCallback(async () => {
     const ip = wledIp.trim();
     if (!ip) return;
@@ -2180,7 +2193,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 5000);
-      const res = await fetch(`http://${ip}/json/state`, { signal: ctrl.signal });
+      const res = await fetch(`${wledBaseUrl(ip)}/json/state`, { signal: ctrl.signal });
       clearTimeout(timer);
       if (!res.ok) {
         setWledTestStatus('fail');
@@ -2192,13 +2205,15 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       setWledTestMessage(`Connected · LEDs are currently ${data.on ? 'ON' : 'OFF'}`);
     } catch (e) {
       setWledTestStatus('fail');
-      // Browser mixed-content blocks surface as a generic TypeError; spell
-      // that out so the user knows it's a hosting limitation, not their IP.
       const msg = (e && e.message) ? e.message : 'Connection failed';
-      const mixedHint = msg.toLowerCase().includes('failed to fetch')
-        ? ' (likely browser blocked HTTP from HTTPS page — open the app over HTTP or proxy via HTTPS)'
+      // Mixed-content blocks land as a generic TypeError. Surface the
+      // Cloudflare Tunnel recommendation directly so the user knows what
+      // to do, not just what went wrong.
+      const isMixed = !(/^https:\/\//i.test(ip)) && msg.toLowerCase().includes('failed to fetch');
+      const hint = isMixed
+        ? ' — Browser blocked HTTP from this HTTPS page. Set up a Cloudflare Tunnel and paste the https://*.trycloudflare.com URL here.'
         : '';
-      setWledTestMessage(msg + mixedHint);
+      setWledTestMessage(msg + hint);
     }
   }, [wledIp]);
 
@@ -3304,8 +3319,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                     </button>
                   </div>
                   {wledHelpOpen && (
-                    <div className="mb-2 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/15 font-mono text-[11px] text-yellow-100/70">
-                      Find your WLED IP in your router's connected devices list, or via the WLED app.
+                    <div className="mb-2 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/15 font-mono text-[11px] text-yellow-100/70 space-y-1">
+                      <div>Find your WLED IP in your router's connected devices list, or via the WLED app.</div>
+                      <div className="text-yellow-100/50">For the live app (HTTPS), paste an <span className="text-emerald-300">https://*.trycloudflare.com</span> URL from a Cloudflare Tunnel — plain IPs are blocked from HTTPS pages by the browser.</div>
                     </div>
                   )}
                   <div className="flex gap-2">
