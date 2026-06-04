@@ -2362,11 +2362,25 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     const recipe = WLED_RECIPES[eventType];
     if (!recipe) return;
     const base = wledBaseUrl(ip);
-    const post = (payload) => fetch(`${base}/json/state`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).catch(() => {});
+    // Auto-unfreeze segments unless the payload is using `i` (individual
+    // pixel writes). WLED auto-sets `frz: true` when `i` is used, and any
+    // later effect/colour change is silently ignored until frz is reset.
+    // Bake `frz: false` into every non-`i` payload so callers don't have
+    // to remember.
+    const post = (payload) => {
+      const augmented = { ...payload };
+      if (augmented.seg && Array.isArray(augmented.seg)) {
+        augmented.seg = augmented.seg.map((s) => {
+          const usesI = Array.isArray(s && s.i) && s.i.length > 0;
+          return usesI ? s : { frz: false, ...s };
+        });
+      }
+      return fetch(`${base}/json/state`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(augmented),
+      }).catch(() => {});
+    };
 
     // Cancel any in-flight sequence by bumping the sequence ID. Old
     // setTimeouts compare their captured ID to this and bail.
