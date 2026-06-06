@@ -199,6 +199,91 @@ function computeStandings(games, players, latestGameId) {
 // AI recap — short prose intro generated per email via Gemini (free tier).
 // ============================================================================
 
+// Prompt for a regular (non-final) league game. Treats the night as one of
+// many; references the standings table; looks ahead to "next month".
+function buildRegularRecapPrompt({ game, season, podium, standingsBlurb }) {
+  return `Write a 3-4 sentence recap (60-100 words) of last night's Greene Room Poker
+league game, for the morning-after results email. Tone: warm, dry-witty, British pub
+energy. Reference at least TWO specific player nicknames and AT LEAST ONE specific
+number (place, points, pot, gap in standings, win count). Never use exclamation marks.
+Never use hyphens or em-dashes (-, —). Use commas, full stops, or rewrite the sentence
+instead. Never use the words "epic", "showdown", "thrilling", "battle", "duel", "clash".
+Output JUST the prose paragraph — no greeting, no sign-off, no markdown, no headers.
+
+Context:
+- League: Greene Room Poker, Berkhamsted (pub venue)
+- Cadence: ONE league game per month (not weekly). A round is 5 regular games + 1 final, spread over 6 months.
+- Season: ${season.name}
+- Game ${game.gameNumber} on ${game.date}
+- ${(game.attendees || []).length} players, pot £${game.pot || 0}, ${game.totalRebuys || 0} rebuys
+- Podium: ${podium || 'no results recorded'}
+
+When referring to the next game, say "next month" or "the next game", never "next week" or "tonight".
+
+Top-5 season standings after last night:
+${standingsBlurb || '(no standings yet)'}
+
+Now write the recap (3-4 sentences, 60-100 words):`;
+}
+
+// Prompt for the FINAL game of a round. End-of-season trophy energy: focus
+// on the podium and the prize money, NO talk of league points (none are
+// awarded for finals), one optional callout for where the final's winner
+// finished the season in the table (interesting framing, e.g. "sealed the
+// season win from second on points"), then a forward-looking line about
+// the next round.
+function buildFinalRecapPrompt({ game, season, standings, players, podium, playersById }) {
+  // Where did the final's winner sit in the season-points table?
+  const winnerPid = (game.finishOrder || [])[0];
+  const winnerName = winnerPid ? (playersById[winnerPid]?.displayName || winnerPid) : null;
+  const winnerStandingsIdx = winnerPid ? standings.findIndex((s) => s.pid === winnerPid) : -1;
+  const winnerRank = winnerStandingsIdx >= 0 ? winnerStandingsIdx + 1 : null;
+  const winnerRankLine = winnerRank && winnerName
+    ? `Final winner ${winnerName} finished the season ranked ${winnerRank} on points (out of ${standings.length}). Mention this if it makes the storyline more interesting (e.g. came from behind, sealed the lead, dark-horse winner).`
+    : `(no season-points rank context available for the final winner)`;
+
+  // Pull the next-round phrasing right: Round 1 final ends in June, Round 2 starts in July.
+  // Round 2 final ends in December, Round 1 (of the next year) starts in January.
+  const seasonName = (season && season.name) || '';
+  const isRoundOneFinal = /round\s*1|round\s*one/i.test(seasonName);
+  const nextRoundHint = isRoundOneFinal
+    ? `This was Round 1's final. Round 2 starts next month (July) — feel free to mention "Round 2", "the back half of the year", or "next month's reset".`
+    : `This was Round 2's final, closing out the year. Round 1 of the next year starts in January — phrase the look-ahead as "the new year", "January", or "the next round".`;
+
+  return `Write a 3-4 sentence END-OF-SEASON recap (70-110 words) of last night's
+Greene Room Poker FINAL — the closing game of "${season.name}". This is the
+championship night, the last game of a multi-month round, with the round's
+biggest prize pool on the table. Tone: warm, dry-witty, British pub energy,
+but with a step up in occasion — like writing about a trophy presentation,
+not a regular Tuesday night.
+
+REQUIREMENTS:
+- Focus on the FINAL'S PODIUM and the prize money — name all three finishers
+  by nickname and reference at least ONE specific payout figure.
+- Do NOT mention league points being awarded in the final (none are).
+- Do NOT reference the season-points table beyond, optionally, the one note
+  about the final winner's standing (see below).
+- End with a forward-looking line about the next round, building a bit of
+  anticipation. ${nextRoundHint}
+
+${winnerRankLine}
+
+Never use exclamation marks. Never use hyphens or em-dashes (-, —). Use commas,
+full stops, or rewrite the sentence instead. Never use the words "epic",
+"showdown", "thrilling", "battle", "duel", "clash". Output JUST the prose
+paragraph — no greeting, no sign-off, no markdown, no headers.
+
+Context:
+- League: Greene Room Poker, Berkhamsted (pub venue)
+- Season closing: ${season.name}
+- Played on: ${game.date}
+- ${(game.attendees || []).length} players competing for the trophy
+- Final podium with payouts: ${podium || 'no results recorded'}
+- Pot: £${game.pot || 0}
+
+Now write the recap (3-4 sentences, 70-110 words):`;
+}
+
 // Returns a 2-3 sentence recap string, or null if Gemini is unavailable or
 // returns nothing useful. We never fail the email send if the recap fails —
 // just skip the intro paragraph.
@@ -220,28 +305,11 @@ async function generateRecap({ game, season, standings, players }) {
     `${i + 1}. ${s.displayName} (${s.total.toLocaleString()} pts, ${s.gamesPlayed} games)`
   ).join('\n');
 
-  const prompt = `Write a 3-4 sentence recap (60-100 words) of last night's Greene Room Poker
-league game, for the morning-after results email. Tone: warm, dry-witty, British pub
-energy. Reference at least TWO specific player nicknames and AT LEAST ONE specific
-number (place, points, pot, gap in standings, win count). Never use exclamation marks.
-Never use hyphens or em-dashes (-, —). Use commas, full stops, or rewrite the sentence
-instead. Never use the words "epic", "showdown", "thrilling", "battle", "duel", "clash".
-Output JUST the prose paragraph — no greeting, no sign-off, no markdown, no headers.
-
-Context:
-- League: Greene Room Poker, Berkhamsted (pub venue)
-- Cadence: ONE league game per month (not weekly). A round is 5 regular games + 1 final, spread over 6 months.
-- Season: ${season.name}
-- Game ${game.gameNumber}${game.isFinal ? ' (FINAL — no points awarded)' : ''} on ${game.date}
-- ${(game.attendees || []).length} players, pot £${game.pot || 0}, ${game.totalRebuys || 0} rebuys
-- Podium: ${podium || 'no results recorded'}
-
-When referring to the next game, say "next month" or "the next game", never "next week" or "tonight".
-
-Top-5 season standings after last night:
-${standingsBlurb || '(no standings yet)'}
-
-Now write the recap (3-4 sentences, 60-100 words):`;
+  // Finals get a season-closer treatment — different vibe, no league-points
+  // talk, more focus on the trophy moment + setup for the next round.
+  const prompt = game.isFinal
+    ? buildFinalRecapPrompt({ game, season, standings, players, podium, playersById })
+    : buildRegularRecapPrompt({ game, season, podium, standingsBlurb });
 
   try {
     // gemini-2.5-flash is the current free-tier flagship. If 429s come back,
