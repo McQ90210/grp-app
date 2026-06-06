@@ -2211,6 +2211,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const [newPlayerName, setNewPlayerName] = useState('');
   const [activePanel, setActivePanel] = useState(null);
   const [hasStarted, setHasStarted] = useState(!!resume);
+  // ms-since-epoch when the user first pressed PLAY on this game. Persisted
+  // in the live snapshot so it survives a resume. Used by SaveGameModal to
+  // default the DATE field to the *play* date rather than "today on this
+  // device when SAVE was tapped" — important for late-night games that
+  // end after midnight, where saving on the next calendar day would
+  // otherwise stamp the wrong date (and miss the morning-after cron).
+  const [gameStartedAt, setGameStartedAt] = useState(resume?.gameStartedAt || null);
   const [voices, setVoices] = useState([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState(null);
   const [showHomeConfirm, setShowHomeConfirm] = useState(false);
@@ -2439,6 +2446,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       rebuyCounts,
       knockedOutBy,
       payoutKey,
+      gameStartedAt,
       savedAtClient: Date.now(),
     };
     try { localStorage.setItem('grp-live-game', JSON.stringify(snapshot)); } catch (e) {}
@@ -2447,7 +2455,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         console.error('[grp] live save to Firestore failed:', e);
       });
     }
-  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, payoutKey, fbUser, config]);
+  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, payoutKey, gameStartedAt, fbUser, config]);
 
   // Load the full club roster from Firestore so late-entry can suggest existing names
   useEffect(() => {
@@ -2702,6 +2710,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       speakWelcome();
       sendWledEffect('gameStart');
       setHasStarted(true);
+      // Stamp the game's actual start time so SaveGameModal can default to
+      // the play date (not the device's "today" when SAVE is tapped).
+      if (!gameStartedAt) setGameStartedAt(Date.now());
     }
     setIsRunning(!isRunning);
   };
@@ -3920,6 +3931,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           rebuyCounts={rebuyCounts}
           knockedOutBy={knockedOutBy}
           payoutKey={payoutKey}
+          gameStartedAt={gameStartedAt}
           fbUser={fbUser}
           fullRosterFromDB={fullRosterFromDB}
           onClose={() => setShowSaveModal(false)}
@@ -5927,6 +5939,7 @@ function SaveGameModal({
   rebuyCounts,     // { name: count }
   knockedOutBy,    // { eliminatedName: knockerOuterName }
   payoutKey,
+  gameStartedAt,   // ms-since-epoch when first PLAY was pressed (or null)
   // UI
   fbUser,
   fullRosterFromDB,
@@ -5946,7 +5959,16 @@ function SaveGameModal({
   };
 
   const isFinal = leagueContext?.isFinal === true;
-  const today = new Date().toISOString().slice(0, 10);
+  // Default the DATE field to the date the game *started* in UK time, not
+  // the device's "today" when SAVE was tapped. Important for late-night
+  // games that finish after midnight — saving at 1 AM Saturday should
+  // still stamp the game as Friday (when it was actually played). en-CA
+  // locale gives YYYY-MM-DD format directly; the Europe/London timeZone
+  // keeps the date right across UTC midnight rollovers.
+  const today = new Date(gameStartedAt || Date.now()).toLocaleDateString(
+    'en-CA',
+    { timeZone: 'Europe/London' }
+  );
 
   // Auto-compute defaults from live game state
   const initialAttendees = players.map((p) => resolvePid(p.name));
@@ -6922,6 +6944,7 @@ function App() {
         eliminatedPlayers: liveResume.eliminatedPlayers || [],
         rebuyCounts: liveResume.rebuyCounts || {},
         knockedOutBy: liveResume.knockedOutBy || {},
+        gameStartedAt: liveResume.gameStartedAt || null,
       },
     });
     setLiveResume(null);
