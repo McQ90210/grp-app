@@ -997,6 +997,36 @@ function computeBountyHolders(playersRoster, gameDate) {
     .map((p) => p.id);
 }
 
+// ============ TEST MODE ============
+// When on (toggle in Admin Tools), no Firestore writes happen anywhere:
+// - Live-game state stays in localStorage but isn't synced to Firestore
+// - Final SAVE GAME button becomes FINISH TEST — closes without writing
+// - LeagueContextScreen does NOT auto-create new seasons (uses the most
+//   recent season as a stand-in so admin can still set up a game)
+// A persistent banner sits across the top of every screen while it's on.
+// Toggle persists in localStorage; tabs receive 'grp-test-mode-change' so
+// the banner re-renders.
+function readTestMode() {
+  try { return localStorage.getItem('grp-test-mode') === '1'; } catch (_) { return false; }
+}
+function writeTestMode(on) {
+  try {
+    if (on) localStorage.setItem('grp-test-mode', '1');
+    else localStorage.removeItem('grp-test-mode');
+  } catch (_) {}
+  try { window.dispatchEvent(new CustomEvent('grp-test-mode-change', { detail: { on: !!on } })); } catch (_) {}
+}
+// Hook so components react when the toggle flips elsewhere in the app.
+function useTestMode() {
+  const [on, setOn] = useState(readTestMode());
+  useEffect(() => {
+    const onChange = (e) => setOn(!!(e && e.detail && e.detail.on));
+    window.addEventListener('grp-test-mode-change', onChange);
+    return () => window.removeEventListener('grp-test-mode-change', onChange);
+  }, []);
+  return [on, (v) => writeTestMode(v)];
+}
+
 // Slugify a display name the same way the database does, so we can map between
 // in-game display names and Firestore player IDs.
 function slugifyName(name) {
@@ -1246,29 +1276,36 @@ function LeagueContextScreen({ onConfirm, onBack, fbUser }) {
         }
         let workingSeasons = allSeasons;
         if (!chosen) {
-          if (!fbUser) {
+          if (readTestMode()) {
+            // Test mode: don't create real seasons. Fall back to the most
+            // recent one as a stand-in. Save flow won't write anyway, so the
+            // gameNumber being "already played" doesn't matter — the admin
+            // can override via the change panel.
+            chosen = allSeasons[0];
+          } else if (!fbUser) {
             // No active/upcoming season and not signed in — surface a prompt.
             setNeedsSignInForNew(true);
             setSeasons(allSeasons);
             setLoading(false);
             return;
-          }
-          // Auto-create. Latest season = first entry (allSeasons is sorted
-          // by startDate desc in firebase-init.js).
-          const latest = allSeasons[0];
-          const next = computeNextSeasonDefaults(latest);
-          try {
-            await window.GRP_DB.upsertSeason(next);
-            workingSeasons = [next, ...allSeasons];
-            chosen = next;
-            if (!cancelled) setJustCreated({ id: next.id, name: next.name });
-          } catch (e) {
-            if (!cancelled) {
-              setError('Could not start the next season: ' + e.message);
-              setSeasons(allSeasons);
-              setLoading(false);
+          } else {
+            // Auto-create. Latest season = first entry (allSeasons is sorted
+            // by startDate desc in firebase-init.js).
+            const latest = allSeasons[0];
+            const next = computeNextSeasonDefaults(latest);
+            try {
+              await window.GRP_DB.upsertSeason(next);
+              workingSeasons = [next, ...allSeasons];
+              chosen = next;
+              if (!cancelled) setJustCreated({ id: next.id, name: next.name });
+            } catch (e) {
+              if (!cancelled) {
+                setError('Could not start the next season: ' + e.message);
+                setSeasons(allSeasons);
+                setLoading(false);
+              }
+              return;
             }
-            return;
           }
         }
 
@@ -2718,7 +2755,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       savedAtClient: Date.now(),
     };
     try { localStorage.setItem('grp-live-game', JSON.stringify(snapshot)); } catch (e) {}
-    if (fbUser && window.GRP_DB && window.GRP_DB.saveLiveGame) {
+    // Skip the Firestore sync entirely in test mode — localStorage is enough
+    // to survive a refresh, and we don't want test games leaking into the
+    // cross-device resume snapshot.
+    if (!readTestMode() && fbUser && window.GRP_DB && window.GRP_DB.saveLiveGame) {
       window.GRP_DB.saveLiveGame(snapshot).catch((e) => {
         console.error('[grp] live save to Firestore failed:', e);
       });
@@ -4692,6 +4732,7 @@ function HighRollersHistory({ onBack, fbUser }) {
                 >
                   {adminBusy === 'resendHR' ? 'SENDING…' : '✉ RESEND HR RESULTS'}
                 </button>
+                <TestModeToggle />
               </div>
             )}
             {adminMessage && (
@@ -5478,6 +5519,7 @@ function LeagueDashboard({ onBack, fbUser }) {
                 >
                   ✉ MANAGE PLAYERS
                 </button>
+                <TestModeToggle />
               </div>
             )}
           </div>
@@ -6427,6 +6469,10 @@ function SaveGameModal({
   const [savedOk, setSavedOk] = useState(false);
   const [savedId, setSavedId] = useState(null);
   const [showSignIn, setShowSignIn] = useState(false);
+  // Capture test-mode state when the modal mounts. Sticky for the lifetime
+  // of the modal — toggling test mode mid-save shouldn't change behaviour
+  // once FINISH TEST / SAVE has been tapped.
+  const testMode = readTestMode();
 
   // Compute game ID. League games are deterministic from season+game number.
   // HR games use the date — if multiple games are played the same day, a
@@ -6452,6 +6498,20 @@ function SaveGameModal({
   };
 
   const save = async () => {
+    // Test mode shortcut: skip all Firestore writes, clear the live-game
+    // snapshot, and land on the savedOk screen with a "TEST RUN COMPLETE"
+    // message. No auth required for test runs.
+    if (testMode) {
+      setBusy(true);
+      try { localStorage.removeItem('grp-live-game'); } catch (_) {}
+      if (window.GRP_DB && window.GRP_DB.clearLiveGame) {
+        window.GRP_DB.clearLiveGame().catch(() => {});
+      }
+      setSavedId(gameId);
+      setSavedOk(true);
+      setBusy(false);
+      return;
+    }
     if (!fbUser) {
       setError('You must be signed in to save games.');
       return;
@@ -6538,19 +6598,35 @@ function SaveGameModal({
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
         <div className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-8 max-w-md w-full text-center">
-          <div className="font-display text-4xl gold-text mb-3">✓ SAVED</div>
-          <div className="text-emerald-100 mb-2">
-            Game <span className="font-mono text-emerald-300">{savedId || gameId}</span> recorded.
-          </div>
-          <div className="text-yellow-100/60 text-sm mb-6">
-            {gameType === 'league'
-              ? 'League standings will reflect this game.'
-              : 'High Rollers history updated.'}
-          </div>
+          {testMode ? (
+            <>
+              <div className="font-display text-4xl text-red-300 mb-3">🧪 TEST COMPLETE</div>
+              <div className="text-yellow-100/80 mb-2">
+                Nothing was saved to the database.
+              </div>
+              <div className="text-yellow-100/50 text-sm mb-6">
+                Points, knockouts, bounty claims and payouts were all computed using the live rules — but the game doc was discarded.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="font-display text-4xl gold-text mb-3">✓ SAVED</div>
+              <div className="text-emerald-100 mb-2">
+                Game <span className="font-mono text-emerald-300">{savedId || gameId}</span> recorded.
+              </div>
+              <div className="text-yellow-100/60 text-sm mb-6">
+                {gameType === 'league'
+                  ? 'League standings will reflect this game.'
+                  : 'High Rollers history updated.'}
+              </div>
+            </>
+          )}
           <button
             onClick={onSaved}
             className="w-full px-6 py-3 rounded-full font-display text-xl text-black"
-            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+            style={{ background: testMode
+              ? 'linear-gradient(135deg, #ef4444, #b91c1c)'
+              : 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
           >
             DONE
           </button>
@@ -6564,18 +6640,20 @@ function SaveGameModal({
       <div className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[92vh] overflow-y-auto">
         <div className="flex justify-between items-start mb-4">
           <div>
-            <div className="font-display text-3xl gold-text">
-              SAVE {gameType === 'league' ? 'LEAGUE' : 'HIGH ROLLERS'} GAME
+            <div className={`font-display text-3xl ${testMode ? 'text-red-300' : 'gold-text'}`}>
+              {testMode ? '🧪 TEST ' : 'SAVE '}{gameType === 'league' ? 'LEAGUE' : 'HIGH ROLLERS'} GAME
             </div>
             <div className="text-yellow-100/40 font-mono text-xs mt-1">
-              Will save as <span className="text-emerald-300">{gameId}</span>
+              {testMode
+                ? <>Nothing will be saved · would have been <span className="text-emerald-300">{gameId}</span></>
+                : <>Will save as <span className="text-emerald-300">{gameId}</span></>}
               {isFinal && <span className="text-yellow-300 ml-2">FINAL — no league points</span>}
             </div>
           </div>
           <button onClick={onClose} disabled={busy} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
         </div>
 
-        {!fbUser && (
+        {!fbUser && !testMode && (
           <div className="mb-4 p-3 rounded-lg bg-red-950/30 border border-red-500/30 flex items-center justify-between gap-3">
             <div className="text-red-200 font-mono text-sm">
               ⚠ You must be signed in as admin to save this game.
@@ -6788,11 +6866,15 @@ function SaveGameModal({
           </button>
           <button
             onClick={save}
-            disabled={busy || !fbUser}
+            disabled={busy || (!testMode && !fbUser)}
             className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
-            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+            style={{ background: testMode
+              ? 'linear-gradient(135deg, #ef4444, #b91c1c)'
+              : 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
           >
-            {busy ? 'SAVING...' : 'SAVE GAME'}
+            {busy
+              ? (testMode ? 'FINISHING...' : 'SAVING...')
+              : (testMode ? 'FINISH TEST' : 'SAVE GAME')}
           </button>
         </div>
       </div>
@@ -7322,6 +7404,50 @@ function ResumeGameBanner({ snap, onResume, onDiscard }) {
   );
 }
 
+// Button used inside Admin Tools panels to flip test mode on/off.
+// Visually red-tinted when on, neutral when off.
+function TestModeToggle() {
+  const [on, setOn] = useTestMode();
+  return (
+    <button
+      onClick={() => setOn(!on)}
+      className={`px-3 py-1.5 rounded font-mono text-xs border ${
+        on
+          ? 'border-red-400/60 bg-red-900/40 text-red-100 hover:bg-red-900/60'
+          : 'border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/15'
+      }`}
+      title={on ? 'Disable test mode — saves resume as normal.' : 'Enable test mode — nothing will be saved to the database.'}
+    >
+      🧪 TEST MODE: {on ? 'ON' : 'OFF'}
+    </button>
+  );
+}
+
+// Sticky banner that floats across the top of every screen when test
+// mode is on. The "TURN OFF" button immediately flips the toggle off.
+// Positioned fixed so it overlaps content rather than reflowing it —
+// keeps every route's layout intact.
+function TestModeBanner() {
+  const [on, setOn] = useTestMode();
+  if (!on) return null;
+  return (
+    <div
+      className="fixed top-0 left-0 right-0 z-[100] px-3 py-2 flex items-center justify-between gap-3"
+      style={{ background: 'linear-gradient(90deg, #7f1d1d, #b91c1c, #7f1d1d)', borderBottom: '1px solid rgba(252, 165, 165, 0.4)', boxShadow: '0 2px 8px rgba(0,0,0,0.4)' }}
+    >
+      <div className="text-red-100 font-mono text-[11px] sm:text-xs tracking-widest truncate">
+        🧪 TEST MODE — nothing will be saved
+      </div>
+      <button
+        onClick={() => setOn(false)}
+        className="px-3 py-1 rounded-full bg-black/40 border border-red-300/40 text-red-50 font-mono text-[10px] sm:text-[11px] hover:bg-black/60 shrink-0"
+      >
+        TURN OFF
+      </button>
+    </div>
+  );
+}
+
 function App() {
   // Route state: 'home' | 'league-context' | 'setup' | 'timer' | 'league-info' | 'highrollers-info'
   const [route, setRoute] = useState('home');
@@ -7425,9 +7551,11 @@ function App() {
     setLeagueContext(null);
   };
 
-  // Home: show picker + sign in
+  // Single render tree so TestModeBanner sits above every route. Each
+  // route assigns to `content` rather than returning directly.
+  let content;
   if (route === 'home') {
-    return (
+    content = (
       <>
         <GameTypePicker onPick={handlePick} />
         {liveResume && <ResumeGameBanner snap={liveResume} onResume={acceptResume} onDiscard={dismissResume} />}
@@ -7452,19 +7580,12 @@ function App() {
         {showSignIn && <SignInModal onClose={() => setShowSignIn(false)} />}
       </>
     );
-  }
-
-  // League info or High Rollers info — different components for each
-  if (route === 'league-info') {
-    return <LeagueDashboard onBack={goHome} fbUser={fbUser} />;
-  }
-  if (route === 'highrollers-info') {
-    return <HighRollersHistory onBack={goHome} fbUser={fbUser} />;
-  }
-
-  // League context confirmation (before setup wizard, for league games only)
-  if (route === 'league-context') {
-    return (
+  } else if (route === 'league-info') {
+    content = <LeagueDashboard onBack={goHome} fbUser={fbUser} />;
+  } else if (route === 'highrollers-info') {
+    content = <HighRollersHistory onBack={goHome} fbUser={fbUser} />;
+  } else if (route === 'league-context') {
+    content = (
       <LeagueContextScreen
         onConfirm={(ctx) => {
           setLeagueContext(ctx);
@@ -7474,26 +7595,32 @@ function App() {
         fbUser={fbUser}
       />
     );
+  } else {
+    content = config
+      ? <PokerTimerMain
+          config={config}
+          customSounds={customSounds}
+          onReset={goHome}
+          onViewLeague={() => { setConfig(null); setRoute('league-info'); }}
+          gameType={gameType}
+          fbUser={fbUser}
+        />
+      : <SetupWizard
+          customSounds={customSounds}
+          gameType={gameType}
+          leagueContext={leagueContext}
+          onStart={setConfig}
+          onBack={goHome}
+          fbUser={fbUser}
+        />;
   }
 
-  // Setup or playing
-  return config
-    ? <PokerTimerMain
-        config={config}
-        customSounds={customSounds}
-        onReset={goHome}
-        onViewLeague={() => { setConfig(null); setRoute('league-info'); }}
-        gameType={gameType}
-        fbUser={fbUser}
-      />
-    : <SetupWizard
-        customSounds={customSounds}
-        gameType={gameType}
-        leagueContext={leagueContext}
-        onStart={setConfig}
-        onBack={goHome}
-        fbUser={fbUser}
-      />;
+  return (
+    <>
+      <TestModeBanner />
+      {content}
+    </>
+  );
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
