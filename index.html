@@ -974,12 +974,15 @@ function roundPayoutsToTens(splits, prizePool, buyIn = 30) {
 
 // Per the locked league rules:
 // - Bounty is in the player's birth month, EXCEPT:
-// - June birthdays are bountied in May (June = R1 final)
-// - December birthdays are bountied in November (December = R2 final)
+// - June birthdays are bountied in May (June = R1 final, no regular June game)
+// - December birthdays USED to shift to November when Dec was the R2 final.
+//   From Round 2 2026 onwards the round has a regular Dec game (Dec 2) AND a
+//   separate Christmas Final (Dec 17), so December birthdays now bounty in
+//   December as normal. The cutoff is birthMonth-only — past games already
+//   have their bountyHolders frozen on the doc.
 function getBountiedMonthFor(birthMonth) {
   if (!birthMonth) return null;
   if (birthMonth === 6) return 5;
-  if (birthMonth === 12) return 11;
   return birthMonth;
 }
 
@@ -1000,32 +1003,157 @@ function slugifyName(name) {
   return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
-// Compute the per-player points for a league game given:
-//   attendees: [{ name, ... }, ...] of players who played
-//   finishOrder: [name, name, ...] in finishing order, 1st first
+// Round-2-2026 was the first season with the new scoring engine. Games dated
+// on/after this cutoff use v2 rules; earlier games keep v1 so re-saving an
+// older game from EditGameModal doesn't silently retro-score it.
+const V2_RULES_START_DATE = '2026-07-01';
+function rulesVersionForGame({ date, rulesVersion }) {
+  if (rulesVersion === 'v2' || rulesVersion === 'v1') return rulesVersion;
+  if (date && date >= V2_RULES_START_DATE) return 'v2';
+  return 'v1';
+}
+
+// v1 (Jan 2025 — Jun 2026, R1):
+//   attendance 2,000 + position [8000, 5000, 3000, 1000, 500] for places 1–5
+//   + bounty 2,000 for knocking out a bountied player
+//
+// v2 (Jul 2026 — R2 onwards):
+//   attendance 2,000
+//   + position [10000, 8000, 6000, 5000, 4000, 3000] for places 1–6
+//   + 1,000 per knockout
+//   + 1,000 first-out bonus
+//   + 2,000 per live bounty claim (knocker gets it if they KO the bountied
+//     player; bountied player self-claims their unresolved respawn at game
+//     end if they survive — see SaveGameModal's bountyClaims compute).
+//
+// Inputs (all v1+v2):
+//   attendees:     [{ name, ... }, ...] who played
+//   finishOrder:   [name, name, ...] in finishing order, 1st first
 //   bountiedNames: Set of names who were bountied at start of game
-//   knockedOutBy: { eliminatedName: knockerOuterName }
-//   isFinal: boolean (finals award no league points)
-// Returns { [name]: pointsTotal }
-function computePointsAwarded({ attendees, finishOrder, bountiedNames, knockedOutBy, isFinal }) {
+//   knockedOutBy:  { eliminatedName: knockerOuterName } (legacy v1 shape;
+//                  back-compat for v2 — first/only known KO per eliminated)
+//   isFinal:       boolean (finals award no league points in either version)
+//
+// v2-only inputs:
+//   knockouts:     [{ eliminated, knocker }] chronological KO log — captures
+//                  multiple knockouts of the same player (each rebuy = a fresh
+//                  bounty respawn, claimable on next KO). Falls back to
+//                  knockedOutBy entries if absent.
+//   bountyClaims:  [{ bountied, claimedBy }] — pre-resolved claims (incl.
+//                  self-claims where bountied === claimedBy). Falls back to
+//                  deriving from knockouts + bountiedNames if absent.
+//   firstOut:      name of first player eliminated (defaults to last in
+//                  finishOrder, fallback if not passed).
+//
+// Returns { [name]: pointsTotal }.
+function computePointsAwarded({
+  attendees,
+  finishOrder,
+  bountiedNames,
+  knockedOutBy,
+  isFinal,
+  date,
+  rulesVersion,
+  knockouts,
+  bountyClaims,
+  firstOut,
+}) {
   if (isFinal) return {}; // Finals don't award league points
+  const version = rulesVersionForGame({ date, rulesVersion });
   const points = {};
-  const POSITION_BONUSES = [8000, 5000, 3000, 1000, 500];
-  // Base 2000 turn-up for everyone who played
   attendees.forEach((p) => { points[p.name] = 2000; });
-  // Add position bonuses for top 5
-  finishOrder.slice(0, 5).forEach((name, i) => {
-    if (points[name] !== undefined) points[name] += POSITION_BONUSES[i];
-  });
-  // Add bounty +2000 for each bountied player who was knocked out
-  if (knockedOutBy && bountiedNames) {
-    Object.entries(knockedOutBy).forEach(([eliminated, knocker]) => {
-      if (bountiedNames.has(eliminated) && knocker && points[knocker] !== undefined) {
-        points[knocker] += 2000;
-      }
+
+  if (version === 'v1') {
+    const POSITION_BONUSES = [8000, 5000, 3000, 1000, 500];
+    finishOrder.slice(0, 5).forEach((name, i) => {
+      if (points[name] !== undefined) points[name] += POSITION_BONUSES[i];
     });
+    if (knockedOutBy && bountiedNames) {
+      Object.entries(knockedOutBy).forEach(([eliminated, knocker]) => {
+        if (bountiedNames.has(eliminated) && knocker && points[knocker] !== undefined) {
+          points[knocker] += 2000;
+        }
+      });
+    }
+    return points;
   }
+
+  // v2
+  const POSITION_BONUSES_V2 = [10000, 8000, 6000, 5000, 4000, 3000];
+  finishOrder.slice(0, 6).forEach((name, i) => {
+    if (points[name] !== undefined) points[name] += POSITION_BONUSES_V2[i];
+  });
+
+  // KO bonus +1,000 per knockout. Prefer the chronological `knockouts` log
+  // (which captures multiple KOs of the same player when they rebuy);
+  // fall back to `knockedOutBy` for older flows.
+  const koList = Array.isArray(knockouts) && knockouts.length
+    ? knockouts
+    : Object.entries(knockedOutBy || {})
+        .filter(([, k]) => !!k)
+        .map(([eliminated, knocker]) => ({ eliminated, knocker }));
+  koList.forEach(({ knocker }) => {
+    if (knocker && points[knocker] !== undefined) points[knocker] += 1000;
+  });
+
+  // Bounty claims: prefer the explicit list (which supports self-claims and
+  // respawn semantics); otherwise derive from KO log + bountied set.
+  const claims = Array.isArray(bountyClaims) && bountyClaims.length
+    ? bountyClaims
+    : koList
+        .filter(({ eliminated, knocker }) =>
+          bountiedNames && bountiedNames.has(eliminated) && knocker
+        )
+        .map(({ eliminated, knocker }) => ({ bountied: eliminated, claimedBy: knocker }));
+  claims.forEach(({ claimedBy }) => {
+    if (claimedBy && points[claimedBy] !== undefined) points[claimedBy] += 2000;
+  });
+
+  // First-out bonus +1,000. Falls back to the last entry of finishOrder
+  // (which by construction is the first player eliminated).
+  const firstOutName = firstOut
+    || (finishOrder.length > 0 ? finishOrder[finishOrder.length - 1] : null);
+  if (firstOutName && points[firstOutName] !== undefined) {
+    points[firstOutName] += 1000;
+  }
+
   return points;
+}
+
+// Resolve the full set of bounty claims for a v2 game — including respawns
+// and self-claims. Used by SaveGameModal and (optionally) the live points
+// readout.
+//
+// Inputs:
+//   bountiedNames: Set of bountied-player names at game start
+//   knockouts:     [{ eliminated, knocker }, ...] chronological KO log
+//   rebuyCounts:   { name: count } — how many times each player rebought
+//   winnerName:    name of the player who won (last one standing)
+//
+// Returns [{ bountied, claimedBy }] with one entry per LIVE bounty (initial
+// + one per rebuy). claimedBy === bountied indicates a self-claim (the
+// bountied player won without being eliminated again before game end).
+function resolveBountyClaims({ bountiedNames, knockouts, rebuyCounts, winnerName }) {
+  if (!bountiedNames || !bountiedNames.size) return [];
+  const claims = [];
+  bountiedNames.forEach((name) => {
+    const lives = 1 + (rebuyCounts?.[name] || 0);
+    const kosOfThem = (knockouts || []).filter((k) => k.eliminated === name);
+    // Each KO of the bountied player consumes one live bounty → knocker.
+    kosOfThem.forEach(({ knocker }) => {
+      if (knocker) claims.push({ bountied: name, claimedBy: knocker });
+    });
+    // Any unresolved bounty at game end self-claims, but ONLY if the player
+    // is still standing at the end (= the winner). If they got eliminated
+    // the unresolved bounty just vanishes (shouldn't happen — a KO always
+    // claims, but be defensive).
+    const unresolved = lives - kosOfThem.length;
+    if (unresolved > 0 && name === winnerName) {
+      // At most one live bounty exists at any moment, so cap at 1.
+      claims.push({ bountied: name, claimedBy: name });
+    }
+  });
+  return claims;
 }
 
 // Compute a season's status from its date range and (optionally) its games,
@@ -1051,7 +1179,37 @@ function computeSeasonStatus(season, gamesForSeason) {
 // ============ LEAGUE CONTEXT SCREEN ============
 // Shown before the setup wizard for league games. Auto-detects active season
 // and next game number, lets user confirm or override.
-function LeagueContextScreen({ onConfirm, onBack }) {
+// Given the most recent season doc, compute sensible defaults for the next
+// one. R1 → R2 (same year, Jul–Dec). R2 → next year's R1 (Jan–Jun). Falls
+// back to current-year R1 if the latest ID doesn't match the pattern.
+// totalGames defaults to 7 (the new standard from Round 2 2026 onwards).
+function computeNextSeasonDefaults(lastSeason) {
+  const m = (lastSeason?.id || '').match(/^(\d{4})-r(\d+)$/);
+  let year, round;
+  if (m) {
+    year = parseInt(m[1]);
+    round = parseInt(m[2]);
+  } else {
+    year = new Date().getFullYear();
+    round = 0; // → next will be year R1
+  }
+  let nextYear, nextRound;
+  if (round === 1) { nextYear = year; nextRound = 2; }
+  else { nextYear = (round === 0 ? year : year + 1); nextRound = 1; }
+  const startDate = nextRound === 1 ? `${nextYear}-01-01` : `${nextYear}-07-01`;
+  const endDate   = nextRound === 1 ? `${nextYear}-06-30` : `${nextYear}-12-31`;
+  return {
+    id: `${nextYear}-r${nextRound}`,
+    name: `${nextYear} — Round ${nextRound}`,
+    startDate,
+    endDate,
+    totalGames: 7,
+    finalGameIndex: 7,
+    status: 'active',
+  };
+}
+
+function LeagueContextScreen({ onConfirm, onBack, fbUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [seasons, setSeasons] = useState([]);
@@ -1060,6 +1218,8 @@ function LeagueContextScreen({ onConfirm, onBack }) {
   const [seasonId, setSeasonId] = useState(null);
   const [gameNumber, setGameNumber] = useState(1);
   const [editing, setEditing] = useState(false); // false: confirm mode, true: override mode
+  const [justCreated, setJustCreated] = useState(null); // {id, name} when we auto-rolled into a new season this load
+  const [needsSignInForNew, setNeedsSignInForNew] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1070,22 +1230,58 @@ function LeagueContextScreen({ onConfirm, onBack }) {
           window.GRP_DB.getAllPlayers(),
         ]);
         if (cancelled) return;
-        setSeasons(allSeasons);
         setPlayers(allPlayers);
-        // Pick the season that's currently active by date — ignoring the
-        // stored `status` field, since it can drift out of sync.
-        const active = allSeasons.find(s => computeSeasonStatus(s) === 'active') || allSeasons[0];
-        if (active) {
-          setSeasonId(active.id);
-          const seasonGames = await window.GRP_DB.getGamesForSeason(active.id);
-          if (cancelled) return;
-          setGames(seasonGames);
-          // Next un-played game number
-          const played = new Set(seasonGames.map(g => g.gameNumber));
-          let next = 1;
-          while (played.has(next) && next <= active.totalGames) next++;
-          setGameNumber(Math.min(next, active.totalGames));
+
+        // 1) Prefer an active season (today is in range, games remain).
+        // 2) Else: an upcoming one (e.g. R2 pre-seeded for July).
+        // 3) Else: auto-create the next season so we land on Game 1 ready
+        //    to go. Writing requires sign-in — fall back to a prompt if not.
+        const today = new Date().toISOString().slice(0, 10);
+        let chosen = allSeasons.find(s => computeSeasonStatus(s) === 'active');
+        if (!chosen) {
+          const upcoming = allSeasons
+            .filter(s => s.startDate && s.startDate > today)
+            .sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+          if (upcoming.length > 0) chosen = upcoming[0];
         }
+        let workingSeasons = allSeasons;
+        if (!chosen) {
+          if (!fbUser) {
+            // No active/upcoming season and not signed in — surface a prompt.
+            setNeedsSignInForNew(true);
+            setSeasons(allSeasons);
+            setLoading(false);
+            return;
+          }
+          // Auto-create. Latest season = first entry (allSeasons is sorted
+          // by startDate desc in firebase-init.js).
+          const latest = allSeasons[0];
+          const next = computeNextSeasonDefaults(latest);
+          try {
+            await window.GRP_DB.upsertSeason(next);
+            workingSeasons = [next, ...allSeasons];
+            chosen = next;
+            if (!cancelled) setJustCreated({ id: next.id, name: next.name });
+          } catch (e) {
+            if (!cancelled) {
+              setError('Could not start the next season: ' + e.message);
+              setSeasons(allSeasons);
+              setLoading(false);
+            }
+            return;
+          }
+        }
+
+        setSeasons(workingSeasons);
+        setSeasonId(chosen.id);
+        const seasonGames = await window.GRP_DB.getGamesForSeason(chosen.id);
+        if (cancelled) return;
+        setGames(seasonGames);
+        // Next un-played game number
+        const played = new Set(seasonGames.map(g => g.gameNumber));
+        let next = 1;
+        while (played.has(next) && next <= chosen.totalGames) next++;
+        setGameNumber(Math.min(next, chosen.totalGames));
         setLoading(false);
       } catch (e) {
         if (!cancelled) {
@@ -1185,6 +1381,17 @@ function LeagueContextScreen({ onConfirm, onBack }) {
           <div className="text-center py-12 text-emerald-200/60 font-mono">Loading...</div>
         ) : error ? (
           <div className="text-center py-12 text-red-400 font-mono">{error}</div>
+        ) : needsSignInForNew ? (
+          <div className="gold-border rounded-2xl p-6 bg-gradient-to-br from-emerald-950 to-black text-center">
+            <div className="font-display text-2xl gold-text mb-3">ROUND COMPLETE</div>
+            <div className="text-yellow-100/80 mb-2">All seasons on record are finished.</div>
+            <div className="text-yellow-100/50 text-sm mb-4">
+              Sign in as admin to start the next round automatically.
+            </div>
+            <div className="text-yellow-100/40 text-xs font-mono">
+              The app will create the new season with sensible defaults — you can edit it after.
+            </div>
+          </div>
         ) : seasons.length === 0 ? (
           <div className="gold-border rounded-2xl p-6 bg-gradient-to-br from-emerald-950 to-black text-center">
             <div className="text-yellow-100/80 mb-2">No seasons set up yet.</div>
@@ -1194,6 +1401,16 @@ function LeagueContextScreen({ onConfirm, onBack }) {
           </div>
         ) : (
           <>
+            {justCreated && (
+              <div className="rounded-2xl p-4 mb-4 bg-emerald-900/30 border border-emerald-400/40 text-center">
+                <div className="font-mono text-[11px] text-emerald-300/80 tracking-widest mb-1">✨ NEW SEASON STARTED</div>
+                <div className="font-display text-xl text-emerald-100">{justCreated.name}</div>
+                <div className="text-emerald-200/60 text-xs font-mono mt-1">
+                  Auto-created from the previous round. Defaults to 6 league games + 1 final. Tap CHANGE below to adjust.
+                </div>
+              </div>
+            )}
+
             <div className="gold-border rounded-2xl p-6 bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur mb-6">
               {!editing ? (
                 <>
@@ -1313,6 +1530,9 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   const [step, setStep] = useState(0);
   const [buyIn, setBuyIn] = useState(gameType === 'highrollers' ? '40' : '30');
   const [stackSize, setStackSize] = useState(gameType === 'highrollers' ? '6000' : '10000');
+  // Format: 'rebuy' (default for league + HR) or 'freezeout' (no rebuys
+  // allowed once busted). Finals are always freezeout.
+  const [format, setFormat] = useState(isFinal ? 'freezeout' : 'rebuy');
   const [roster, setRoster] = useState([]); // currently displayed list
   const [allGrpPlayers, setAllGrpPlayers] = useState([]); // full GRP roster — picker source
   const [hrRegulars, setHrRegulars] = useState([]); // names on the HR regulars allowlist
@@ -1582,6 +1802,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       players: playersArray,
       duration: parseInt(duration),
       levels,
+      format: isFinal ? 'freezeout' : format,
       leagueContext, // pass through so the main timer & save flow know which season/game
     });
   };
@@ -1684,6 +1905,45 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                     <button key={v} onClick={() => setBuyIn(v)} className="px-4 py-1.5 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50">£{v}</button>
                   ))}
                 </div>
+                {/* Format toggle — league + HR. Finals are auto-locked to
+                    freezeout (no rebuys allowed). */}
+                {!isFinal && (
+                  <div className="mt-8 max-w-xs mx-auto">
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 text-center">FORMAT</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setFormat('rebuy')}
+                        className={`px-4 py-2 rounded-lg font-display text-base ${
+                          format === 'rebuy'
+                            ? 'bg-emerald-600/30 border border-emerald-400/70 text-emerald-100'
+                            : 'bg-black/30 border border-yellow-500/20 text-yellow-100/60 hover:border-yellow-500/50'
+                        }`}
+                      >
+                        REBUY
+                      </button>
+                      <button
+                        onClick={() => setFormat('freezeout')}
+                        className={`px-4 py-2 rounded-lg font-display text-base ${
+                          format === 'freezeout'
+                            ? 'bg-emerald-600/30 border border-emerald-400/70 text-emerald-100'
+                            : 'bg-black/30 border border-yellow-500/20 text-yellow-100/60 hover:border-yellow-500/50'
+                        }`}
+                      >
+                        FREEZEOUT
+                      </button>
+                    </div>
+                    <div className="text-center mt-2 text-yellow-100/40 font-mono text-[11px]">
+                      {format === 'freezeout' ? 'No rebuys — once busted, you\'re out.' : 'Players can buy back in after busting.'}
+                    </div>
+                  </div>
+                )}
+                {isFinal && (
+                  <div className="mt-6 text-center">
+                    <div className="inline-block px-3 py-1 rounded-full bg-emerald-600/20 border border-emerald-400/40 text-emerald-200 font-mono text-xs">
+                      FINAL · FREEZEOUT (no rebuys)
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -2231,8 +2491,14 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     return active.length === 1 ? active[0] : null;
   });
   const [fullRoster, setFullRoster] = useState([]); // [{ name, sound }, ...] — for late-entry picker
-  const [knockedOutBy, setKnockedOutBy] = useState(resume?.knockedOutBy || {}); // { eliminatedPlayerName: knockerOuterName }
-  const [pendingKnockout, setPendingKnockout] = useState(null); // player being eliminated, awaiting "who knocked them out?"
+  const [knockedOutBy, setKnockedOutBy] = useState(resume?.knockedOutBy || {}); // { eliminatedPlayerName: knockerOuterName } — back-compat, last knocker per name
+  // Chronological KO log — supports multiple knockouts of the same player
+  // when they rebuy. v2 scoring (Round 2 2026+) uses this for KO bonuses
+  // and bounty respawn resolution. Each entry: { eliminated, knocker, rebought }
+  // where `rebought: true` means the player bought back in immediately
+  // (so they stayed in the active pool — not in eliminatedPlayers).
+  const [knockouts, setKnockouts] = useState(resume?.knockouts || []);
+  const [pendingKnockout, setPendingKnockout] = useState(null); // { player, intent: 'out' | 'rebuy' } — awaiting "who knocked them out?"
 
   // ---- WLED (optional LED strip controlled by an ESP32 on the local LAN) ----
   // Settings live in localStorage only — no events are wired up yet, this just
@@ -2436,6 +2702,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         buyIn: config.buyIn,
         stackSize: config.stackSize,
         playerStartingStacks: config.playerStartingStacks || null,
+        format: config.format || 'rebuy',
       },
       levels,
       players,
@@ -2445,6 +2712,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       eliminatedPlayers,
       rebuyCounts,
       knockedOutBy,
+      knockouts,
       payoutKey,
       gameStartedAt,
       savedAtClient: Date.now(),
@@ -2455,7 +2723,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         console.error('[grp] live save to Firestore failed:', e);
       });
     }
-  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, payoutKey, gameStartedAt, fbUser, config]);
+  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, knockouts, payoutKey, gameStartedAt, fbUser, config]);
 
   // Load the full club roster from Firestore so late-entry can suggest existing names
   useEffect(() => {
@@ -2572,7 +2840,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // Read levels via levelsRef rather than closure so a stale-closure capture
   // (e.g. timer's interval set up before a manual level edit) doesn't read
   // out the previous BB/SB values after the user changed them.
-  const announceLevel = useCallback((levelIdx) => {
+  //
+  // opts.silentIfNoClip: when true and we don't have a pre-recorded clip for
+  // this specific blind level (e.g. a mid-game custom edit), skip the Web
+  // Speech read-out. Used by announceLevelTransition where "Blinds up!" has
+  // already played as a standalone clip — robotically reading out arbitrary
+  // numbers afterwards sounds worse than just stopping there.
+  const announceLevel = useCallback((levelIdx, opts = {}) => {
     const level = (levelsRef.current || [])[levelIdx];
     if (!level) return;
     if (level.isBreak) {
@@ -2580,7 +2854,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     } else {
       const anteText = level.ante > 0 ? `, with an ante of ${level.ante}` : '';
       const key = level.ante > 0 ? `blinds-${level.bb}-ante` : `blinds-${level.bb}`;
-      speakClip(key, `Blinds are now ${level.sb} and ${level.bb}${anteText}.`);
+      const fallback = opts.silentIfNoClip
+        ? ''
+        : `Blinds are now ${level.sb} and ${level.bb}${anteText}.`;
+      speakClip(key, fallback);
     }
   }, [speakClip]);
 
@@ -2610,7 +2887,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     sendWledEffect('levelChange');
     await speakClip('blinds-up', 'Blinds up!');
     await new Promise((r) => setTimeout(r, 200));
-    announceLevel(levelIdx);
+    // silentIfNoClip: "Blinds up!" was the main announcement — if we don't
+    // have a recorded clip for this exact blind level (mid-game edits often
+    // create non-standard amounts), don't read the numbers via Web Speech.
+    announceLevel(levelIdx, { silentIfNoClip: true });
   }, [speakClip, announceLevel, sendWledEffect]);
 
   useEffect(() => {
@@ -2792,9 +3072,31 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
 
   const removePlayer = (idx) => setPlayers(players.filter((_, i) => i !== idx));
 
-  // Rebuy: add 1 to rebuy count for this player and announce.
-  const addRebuy = (name) => {
+  // Rebuy: a player who'd lost all chips is buying back in. For league
+  // games, route through the knocker picker first — the previous stack
+  // had a knocker who's now entitled to the +1k KO bonus (and the +2k
+  // bounty if the player was bountied). HR games skip the picker and
+  // just bump the count, since HR doesn't track KO / bounty points.
+  const requestRebuy = (player) => {
+    setShowEliminate(false);
+    if (config.gameType === 'league') {
+      setPendingKnockout({ player, intent: 'rebuy' });
+    } else {
+      applyRebuy(player.name, null);
+    }
+  };
+
+  // Apply the rebuy: increment count, log the KO event (with optional
+  // knocker), announce. Player stays in the active pool.
+  const applyRebuy = (name, knockerOuterName) => {
     setRebuyCounts((prev) => ({ ...prev, [name]: (prev[name] || 0) + 1 }));
+    if (knockerOuterName) {
+      setKnockedOutBy((prev) => ({ ...prev, [name]: knockerOuterName }));
+    }
+    setKnockouts((prev) => [
+      ...prev,
+      { eliminated: name, knocker: knockerOuterName || null, rebought: true },
+    ]);
     if (voiceEnabled) speakClip(`rebuy-${slugifyName(name)}`, `Rebuy for ${name}.`);
   };
 
@@ -2804,6 +3106,21 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       const cur = next[name] || 0;
       if (cur <= 1) delete next[name];
       else next[name] = cur - 1;
+      return next;
+    });
+    // Also drop the most recent rebuy entry for this player from the
+    // chronological log (so KO-bonus / bounty-claim accounting stays
+    // honest if an admin un-does a rebuy).
+    setKnockouts((prev) => {
+      let removed = false;
+      const next = [];
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (!removed && prev[i].eliminated === name && prev[i].rebought) {
+          removed = true;
+          continue;
+        }
+        next.unshift(prev[i]);
+      }
       return next;
     });
   };
@@ -2818,20 +3135,30 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const requestEliminate = (player) => {
     setShowEliminate(false);
     if (config.gameType === 'league') {
-      setPendingKnockout(player);
+      setPendingKnockout({ player, intent: 'out' });
     } else {
       doEliminate(player);
     }
   };
 
-  // Step 2: user has chosen a knocker-outer (or skipped). Now actually eliminate.
+  // Step 2: user has chosen a knocker-outer (or skipped). Apply the right
+  // action depending on whether they tapped OUT or REBUY.
   const confirmEliminate = (knockerOuterName) => {
-    const player = pendingKnockout;
-    if (!player) return;
+    const pending = pendingKnockout;
+    if (!pending) return;
     setPendingKnockout(null);
+    const { player, intent } = pending;
+    if (intent === 'rebuy') {
+      applyRebuy(player.name, knockerOuterName);
+      return;
+    }
     if (knockerOuterName) {
       setKnockedOutBy((prev) => ({ ...prev, [player.name]: knockerOuterName }));
     }
+    setKnockouts((prev) => [
+      ...prev,
+      { eliminated: player.name, knocker: knockerOuterName || null, rebought: false },
+    ]);
     doEliminate(player);
   };
 
@@ -3161,6 +3488,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {activePlayers.length > 0 ? avgStack.toLocaleString() : '—'}
                 </div>
+                <div className="font-mono text-[11px] text-yellow-300/50 mt-1">
+                  {totalChipsInPlay.toLocaleString()} in play
+                </div>
               </div>
               <div className="text-center">
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-300/80 tracking-widest mb-1">POT</div>
@@ -3247,7 +3577,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                   {nextLvl && (
                     <div>
                       <div className="font-mono text-sm sm:text-base text-yellow-500/50 tracking-widest mb-2">NEXT</div>
-                      <div className="font-mono text-yellow-100/80 text-xl sm:text-2xl">
+                      <div className="font-display text-3xl sm:text-5xl text-yellow-100/90 leading-none">
                         {nextLvl.isBreak ? `${nextLvl.duration} min break` : `${nextLvl.sb} / ${nextLvl.bb}${nextLvl.ante > 0 ? ` (ante ${nextLvl.ante})` : ''}`}
                       </div>
                     </div>
@@ -3255,7 +3585,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                   {endProjection && (
                     <div title={`Based on chip stack, blind level, level times, and players remaining. Worst case (all levels run in full): ${endProjection.latest}`}>
                       <div className="font-mono text-sm sm:text-base text-yellow-500/50 tracking-widest mb-2">EST. FINISH</div>
-                      <div className="font-mono text-yellow-100/80 text-xl sm:text-2xl">~{endProjection.likely}</div>
+                      <div className="font-display text-3xl sm:text-5xl text-yellow-100/90 leading-none">~{endProjection.likely}</div>
                     </div>
                   )}
                 </div>
@@ -3361,23 +3691,32 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       <span className={`flex-1 ${isOut ? 'line-through text-red-300/60' : 'text-emerald-100'}`}>
                         {player.name}
                       </span>
-                      {/* Rebuy controls */}
-                      <div className="flex items-center gap-1 bg-black/30 rounded-full px-1">
-                        <button
-                          onClick={() => removeRebuy(player.name)}
-                          disabled={rebuys === 0}
-                          className="w-7 h-7 rounded-full text-yellow-100/60 hover:text-yellow-100 disabled:opacity-20 text-sm"
-                          title="Remove rebuy"
-                        >−</button>
-                        <span className="text-xs font-mono text-yellow-100 w-8 text-center">
-                          {rebuys > 0 ? `+${rebuys}` : '—'}
-                        </span>
-                        <button
-                          onClick={() => addRebuy(player.name)}
-                          className="w-7 h-7 rounded-full text-yellow-100/60 hover:text-yellow-100 text-sm"
-                          title="Add rebuy"
-                        >+</button>
-                      </div>
+                      {/* Rebuy controls — hidden for freezeout games. The +
+                          button routes league rebuys through the knocker
+                          picker (same flow as REBUY in the eliminate modal)
+                          so KO + bounty credit stays honest. HR rebuys
+                          bypass the picker (no bounties / KO points). */}
+                      {config.format !== 'freezeout' && (
+                        <div className="flex items-center gap-1 bg-black/30 rounded-full px-1">
+                          <button
+                            onClick={() => removeRebuy(player.name)}
+                            disabled={rebuys === 0}
+                            className="w-7 h-7 rounded-full text-yellow-100/60 hover:text-yellow-100 disabled:opacity-20 text-sm"
+                            title="Remove rebuy"
+                          >−</button>
+                          <span className="text-xs font-mono text-yellow-100 w-8 text-center">
+                            {rebuys > 0 ? `+${rebuys}` : '—'}
+                          </span>
+                          <button
+                            onClick={() => {
+                              if (config.gameType === 'league') requestRebuy(player);
+                              else applyRebuy(player.name, null);
+                            }}
+                            className="w-7 h-7 rounded-full text-yellow-100/60 hover:text-yellow-100 text-sm"
+                            title="Add rebuy"
+                          >+</button>
+                        </div>
+                      )}
                       {/* Restore (if eliminated) */}
                       {isOut && (
                         <button onClick={() => restorePlayer(player.name)} className="text-emerald-300/60 hover:text-emerald-200" title="Restore">
@@ -3716,8 +4055,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               <button onClick={() => setShowEliminate(false)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
             </div>
             <div className="text-yellow-100/60 text-sm mb-4">
-              Tap <span className="text-emerald-300 font-bold">REBUY</span> to put them back in,
-              or <span className="text-red-300 font-bold">OUT</span> to eliminate.
+              {config.format === 'freezeout' ? (
+                <>Tap <span className="text-red-300 font-bold">OUT</span> to eliminate. No rebuys this game.</>
+              ) : (
+                <>Tap <span className="text-emerald-300 font-bold">REBUY</span> to put them back in, or <span className="text-red-300 font-bold">OUT</span> to eliminate.</>
+              )}
             </div>
             <div className="space-y-2 overflow-y-auto flex-1 pr-1">
               {activePlayers.length === 0 ? (
@@ -3744,13 +4086,15 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                           )}
                         </div>
                       </div>
-                      <button
-                        onClick={() => addRebuy(player.name)}
-                        className="px-5 py-2 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-100 font-display text-base hover:bg-yellow-500/25 min-w-[90px]"
-                        title="Rebuy"
-                      >
-                        REBUY
-                      </button>
+                      {config.format !== 'freezeout' && (
+                        <button
+                          onClick={() => requestRebuy(player)}
+                          className="px-5 py-2 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-100 font-display text-base hover:bg-yellow-500/25 min-w-[90px]"
+                          title="Rebuy"
+                        >
+                          REBUY
+                        </button>
+                      )}
                       <button
                         onClick={() => eliminatePlayer(player)}
                         className="px-5 py-2 rounded-lg bg-red-900/30 border border-red-500/40 text-red-100 font-display text-base hover:bg-red-700/40 min-w-[80px]"
@@ -3763,15 +4107,23 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 })
               )}
             </div>
-            <div className="text-xs text-yellow-100/40 mt-3 font-mono text-center">
-              REBUY puts £{config.buyIn} back in the pot.
-            </div>
+            {config.format !== 'freezeout' && (
+              <div className="text-xs text-yellow-100/40 mt-3 font-mono text-center">
+                REBUY puts £{config.buyIn} back in the pot.
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Knocker-outer picker — shown after tapping OUT, before actual elimination */}
-      {pendingKnockout && (
+      {/* Knocker-outer picker — shown after tapping OUT or REBUY, before
+          the elimination/rebuy is applied. The intent ('out' vs 'rebuy')
+          drives the title + footer copy so the admin knows what they're
+          confirming. The picker itself is identical either way. */}
+      {pendingKnockout && (() => {
+        const { player: pendingPlayer, intent: pendingIntent } = pendingKnockout;
+        const isRebuyIntent = pendingIntent === 'rebuy';
+        return (
         <div
           onClick={() => confirmEliminate(null)}
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
@@ -3780,10 +4132,16 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             onClick={(e) => e.stopPropagation()}
             className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[85vh] flex flex-col"
           >
-            <div className="font-display text-2xl gold-text mb-1">WHO KNOCKED OUT</div>
-            <div className="font-display text-3xl text-red-300 mb-4">{pendingKnockout.name}?</div>
+            <div className="font-display text-2xl gold-text mb-1">
+              {isRebuyIntent ? 'WHO KNOCKED THEM OUT BEFORE THIS REBUY?' : 'WHO KNOCKED OUT'}
+            </div>
+            <div className={`font-display text-3xl mb-4 ${isRebuyIntent ? 'text-yellow-200' : 'text-red-300'}`}>
+              {pendingPlayer.name}{isRebuyIntent ? '' : '?'}
+            </div>
             <div className="text-yellow-100/60 text-sm mb-4 font-mono">
-              For bounty tracking. Tap a player or SKIP if unsure.
+              {isRebuyIntent
+                ? 'They lost their stack — credit the knockout + bounty before they buy back in. SKIP if unsure.'
+                : 'For bounty + knockout tracking. Tap a player or SKIP if unsure.'}
             </div>
             <div className="space-y-1.5 overflow-y-auto flex-1 pr-1">
               {(() => {
@@ -3796,7 +4154,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                     .map((p) => p.displayName)
                 );
                 return activePlayers
-                  .filter((p) => p.name !== pendingKnockout.name)
+                  .filter((p) => p.name !== pendingPlayer.name)
                   .map((p) => (
                     <button
                       key={p.name}
@@ -3819,7 +4177,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* WINNER OVERLAY */}
       {winner && (
@@ -3930,6 +4289,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           totalRebuys={totalRebuys}
           rebuyCounts={rebuyCounts}
           knockedOutBy={knockedOutBy}
+          knockouts={knockouts}
           payoutKey={payoutKey}
           gameStartedAt={gameStartedAt}
           fbUser={fbUser}
@@ -5937,7 +6297,8 @@ function SaveGameModal({
   finishOrder,     // [name, name, ...] in finishing order, 1st first
   totalRebuys,
   rebuyCounts,     // { name: count }
-  knockedOutBy,    // { eliminatedName: knockerOuterName }
+  knockedOutBy,    // { eliminatedName: knockerOuterName } — legacy single-shot map
+  knockouts,       // [{ eliminated, knocker, rebought }] — chronological log (v2)
   payoutKey,
   gameStartedAt,   // ms-since-epoch when first PLAY was pressed (or null)
   // UI
@@ -5982,13 +6343,48 @@ function SaveGameModal({
     fullRosterFromDB.filter((p) => bountyIds.includes(p.id)).map((p) => p.displayName)
   );
 
+  // Rules version for this game (v1 for pre-Jul-2026 games, v2 onwards).
+  const rulesVersion = rulesVersionForGame({ date: today });
+
+  // First out = last name in finishOrder (1st-place is first, so last = first eliminated).
+  // null if no one was eliminated (shouldn't happen — winner overlay requires it).
+  const firstOutName = finishOrder.length > 0 ? finishOrder[finishOrder.length - 1] : null;
+  const winnerName = finishOrder.length > 0 ? finishOrder[0] : null;
+
+  // Resolve bounty claims (v2): each live bounty (initial + one per rebuy)
+  // either claimed by a knocker or self-claimed by the bountied player if
+  // they survived to game end. v1 games derive claims from knockedOutBy
+  // inside computePointsAwarded.
+  const initialBountyClaimsByName = rulesVersion === 'v2'
+    ? resolveBountyClaims({
+        bountiedNames: bountyNames,
+        knockouts,
+        rebuyCounts,
+        winnerName,
+      })
+    : (() => {
+        // v1: each KO of a bountied player by a known knocker = one claim.
+        const out = [];
+        Object.entries(knockedOutBy || {}).forEach(([eliminated, knocker]) => {
+          if (bountyNames.has(eliminated) && knocker) {
+            out.push({ bountied: eliminated, claimedBy: knocker });
+          }
+        });
+        return out;
+      })();
+
   // Compute points
   const initialPointsByName = computePointsAwarded({
     attendees: players,
     finishOrder,
     bountiedNames: bountyNames,
     knockedOutBy,
+    knockouts,
+    bountyClaims: initialBountyClaimsByName,
+    firstOut: firstOutName,
     isFinal,
+    date: today,
+    rulesVersion,
   });
   // Convert to PIDs
   const initialPoints = {};
@@ -6020,19 +6416,12 @@ function SaveGameModal({
   const [subs, setSubs] = useState(isLeague ? String(initialPlayerCount * 3) : '0');
   const [pointsAwarded, setPointsAwarded] = useState(initialPoints);
   const [payouts, setPayouts] = useState(initialPayouts);
-  const [bountyClaims, setBountyClaims] = useState(() => {
-    // Auto-credit knockouts of bountied players
-    const claims = [];
-    Object.entries(knockedOutBy || {}).forEach(([eliminated, knocker]) => {
-      if (bountyNames.has(eliminated) && knocker) {
-        claims.push({
-          bountied: resolvePid(eliminated),
-          claimedBy: resolvePid(knocker),
-        });
-      }
-    });
-    return claims;
-  });
+  const [bountyClaims, setBountyClaims] = useState(() =>
+    initialBountyClaimsByName.map((c) => ({
+      bountied: resolvePid(c.bountied),
+      claimedBy: resolvePid(c.claimedBy),
+    }))
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [savedOk, setSavedOk] = useState(false);
@@ -6093,6 +6482,14 @@ function SaveGameModal({
         }
       }
 
+      // Convert in-game knockouts log (names) to PID form for storage. Each
+      // entry: { eliminated: pid, knocker: pid|null, rebought: bool }.
+      const knockoutsByPid = (knockouts || []).map((k) => ({
+        eliminated: resolvePid(k.eliminated),
+        knocker: k.knocker ? resolvePid(k.knocker) : null,
+        rebought: !!k.rebought,
+      }));
+
       const gameDoc = {
         id: finalId,
         type: gameType,
@@ -6100,11 +6497,15 @@ function SaveGameModal({
         date,
         gameNumber: isLeague ? leagueContext.gameNumber : null,
         isFinal: isFinal,
+        format: config.format || 'rebuy',
+        rulesVersion,
         buyIn: config.buyIn,
         attendees: isLeague ? Object.keys(pointsAwarded) : initialAttendees,
         rebuys: initialRebuysByPid,
         totalRebuys,
         finishOrder: initialFinishOrder,
+        firstOut: firstOutName ? resolvePid(firstOutName) : null,
+        knockouts: isLeague ? knockoutsByPid : [],
         pot: parseFloat(pot) || 0,
         payouts,
         leagueMoney: isLeague ? (parseFloat(leagueMoney) || 0) : 0,
@@ -6280,13 +6681,67 @@ function SaveGameModal({
               POINTS BY PLAYER
             </div>
             <div className="text-yellow-100/40 text-xs mb-2">
-              Auto-calculated from finish order + bounty awards. Tweak if needed.
+              {rulesVersion === 'v2'
+                ? 'Auto-calculated: 2k attendance + position [10k/8k/6k/5k/4k/3k] + 1k per KO + 1k first-out + 2k per bounty claim. Tweak if needed.'
+                : 'Auto-calculated from finish order + bounty awards. Tweak if needed.'}
             </div>
+
+            {/* v2 breakdown — read-only summary of KOs, first-out, bounty claims */}
+            {rulesVersion === 'v2' && (
+              <div className="mb-3 p-3 rounded-lg bg-emerald-950/30 border border-emerald-500/15 space-y-1.5">
+                {firstOutName && (
+                  <div className="flex items-center gap-2 text-xs font-mono">
+                    <span className="text-yellow-100/40 tracking-widest min-w-[80px]">FIRST OUT</span>
+                    <span className="text-emerald-100">{firstOutName}</span>
+                    <span className="text-yellow-300/60 ml-auto">+1,000</span>
+                  </div>
+                )}
+                {(() => {
+                  // Tally knockouts per knocker for display.
+                  const koCounts = {};
+                  (knockouts || []).forEach((k) => {
+                    if (k.knocker) koCounts[k.knocker] = (koCounts[k.knocker] || 0) + 1;
+                  });
+                  const entries = Object.entries(koCounts).sort((a, b) => b[1] - a[1]);
+                  if (!entries.length) return null;
+                  return (
+                    <div className="flex items-start gap-2 text-xs font-mono">
+                      <span className="text-yellow-100/40 tracking-widest min-w-[80px] pt-0.5">KNOCKOUTS</span>
+                      <div className="flex-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                        {entries.map(([name, n]) => (
+                          <span key={name} className="text-emerald-100">
+                            {name} <span className="text-yellow-300/60">×{n}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {initialBountyClaimsByName.length > 0 && (
+                  <div className="flex items-start gap-2 text-xs font-mono">
+                    <span className="text-yellow-100/40 tracking-widest min-w-[80px] pt-0.5">BOUNTIES</span>
+                    <div className="flex-1 space-y-0.5">
+                      {initialBountyClaimsByName.map((c, i) => (
+                        <div key={i} className="text-emerald-100">
+                          🎯 {c.bountied}
+                          <span className="text-yellow-100/40 mx-1">→</span>
+                          {c.claimedBy === c.bountied
+                            ? <span className="text-yellow-300/80">survived (self-claim)</span>
+                            : <span>{c.claimedBy}</span>}
+                          <span className="text-yellow-300/60 ml-2">+2,000</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
               {Object.keys(pointsAwarded).map((pid) => {
                 const p = playersById[pid] || { displayName: pid };
                 const pos = initialFinishOrder.indexOf(pid);
-                const posLabel = pos >= 0 && pos < 5 ? ['1st', '2nd', '3rd', '4th', '5th'][pos] : '';
+                const posLabel = pos >= 0 && pos < 6 ? ['1st', '2nd', '3rd', '4th', '5th', '6th'][pos] : '';
                 const isBountied = bountyIds.includes(pid);
                 return (
                   <div key={pid} className="flex items-center gap-2 p-2 rounded bg-black/30">
@@ -6932,6 +7387,7 @@ function App() {
       buyIn: oc.buyIn,
       stackSize: oc.stackSize,
       playerStartingStacks: oc.playerStartingStacks || null,
+      format: oc.format || 'rebuy',
       gameType: liveResume.gameType || 'league',
       leagueContext: liveResume.leagueContext || null,
       levels: lvls,
@@ -6944,6 +7400,7 @@ function App() {
         eliminatedPlayers: liveResume.eliminatedPlayers || [],
         rebuyCounts: liveResume.rebuyCounts || {},
         knockedOutBy: liveResume.knockedOutBy || {},
+        knockouts: liveResume.knockouts || [],
         gameStartedAt: liveResume.gameStartedAt || null,
       },
     });
@@ -7014,6 +7471,7 @@ function App() {
           setRoute('setup');
         }}
         onBack={goHome}
+        fbUser={fbUser}
       />
     );
   }
