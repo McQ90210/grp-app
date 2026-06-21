@@ -24,7 +24,19 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <script>
+    // Force the CLASSIC JSX runtime. Newer @babel/preset-react defaults to the
+    // "automatic" runtime, which emits `import {jsx} from "react/jsx-runtime"`.
+    // That bare specifier can't be resolved in module mode (no bundler /
+    // import-map), so the whole script throws and React never mounts — blank
+    // page. Classic runtime emits React.createElement, which is provided by the
+    // React UMD global loaded above. (Babel is also version-pinned above so a
+    // future CDN bump can't silently re-break this.)
+    Babel.registerPreset('react-classic', {
+      presets: [[Babel.availablePresets.react, { runtime: 'classic' }]],
+    });
+  </script>
   <script type="module" src="firebase-init.js"></script>
   <style>
     html, body { background: #020a06; margin: 0; padding: 0; min-height: 100vh; }
@@ -68,7 +80,7 @@
 </head>
 <body class="fonts-pending">
   <div id="root"></div>
-  <script type="text/babel" data-presets="react" data-type="module">
+  <script type="text/babel" data-presets="react-classic" data-type="module">
 // Destructure hooks for in-browser use
 const { useState, useEffect, useRef, useCallback } = React;
 
