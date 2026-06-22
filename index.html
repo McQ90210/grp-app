@@ -6318,9 +6318,6 @@ function ManagePlayersModal({ onClose, onSaved }) {
                   {adding ? 'Adding…' : 'ADD'}
                 </button>
               </div>
-              <div className="text-yellow-100/40 text-[10px] font-mono mt-2">
-                Capitalisation matters — it's what shows everywhere. PID auto-derives as <span className="text-emerald-300">{newName.trim() ? slugifyName(newName) : 'lowercase-name'}</span>.
-              </div>
             </div>
 
             <div className="space-y-1 mb-5 max-h-[60vh] overflow-y-auto pr-2">
@@ -7283,13 +7280,14 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
         </div>
 
         {/* Points awarded (per-player) — league only */}
-        {/* Finishing order — league games. Per-position dropdowns covering
-            every attendee. Picking a player who's already at another place
-            swaps them so the order stays a valid permutation. Drives the
-            per-game position colour on the standings table and is the
-            source of truth for first-out (last entry). Points are NOT
-            auto-recomputed — edit them in POINTS BY PLAYER if needed. */}
-        {isLeague && attendees.length > 0 && (
+        {/* Finishing order — works for league AND HR games. Per-position
+            dropdowns covering every attendee. Picking a player who's
+            already at another place swaps them so the order stays a valid
+            permutation. Top 3 get medal emojis. Drives the per-game
+            position colour on standings + the source of truth for
+            first-out. League points are NOT auto-recomputed — edit them
+            in POINTS BY PLAYER if needed. */}
+        {attendees.length > 0 && (
           <div className="mb-5">
             <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">FINISHING ORDER</div>
             <div className="text-yellow-100/40 text-xs mb-2">
@@ -7300,9 +7298,13 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
                 const place = i + 1;
                 const current = finishOrder[i] || '';
                 const placeLabel = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th'][i] || `${place}th`;
+                const medal = ['🥇', '🥈', '🥉'][i] || null;
                 return (
                   <div key={i} className="flex items-center gap-2 p-2 rounded bg-black/30">
-                    <div className="font-mono text-xs text-yellow-100/40 w-10 shrink-0">{placeLabel}</div>
+                    <div className="font-mono text-xs text-yellow-100/40 w-14 shrink-0 flex items-center gap-1">
+                      {medal && <span className="text-sm">{medal}</span>}
+                      {placeLabel}
+                    </div>
                     <select
                       value={current}
                       onChange={(e) => setPlaceTo(i, e.target.value)}
@@ -7345,38 +7347,6 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
           </div>
         )}
 
-        {/* Finishing order — HR only. Three dropdowns pick the player for
-            each of the top 3 places; picking someone already at another
-            place swaps them so the order remains a valid permutation. */}
-        {!isLeague && (
-          <div className="mb-5">
-            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">PODIUM</div>
-            <div className="text-yellow-100/40 text-xs mb-2">Pick who finished 1st / 2nd / 3rd. Drives the payouts.</div>
-            <div className="grid grid-cols-3 gap-2">
-              {[0, 1, 2].map((i) => {
-                const medal = ['🥇', '🥈', '🥉'][i];
-                const current = finishOrder[i] || '';
-                return (
-                  <div key={i}>
-                    <div className="font-mono text-xs text-yellow-100/40 mb-1">{medal} {i === 0 ? '1st' : i === 1 ? '2nd' : '3rd'}</div>
-                    <select
-                      value={current}
-                      onChange={(e) => setPlaceTo(i, e.target.value)}
-                      className="w-full px-2 py-1.5 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
-                    >
-                      <option value="" style={{ background: '#0a3d1f' }}>—</option>
-                      {attendees.map((pid) => (
-                        <option key={pid} value={pid} style={{ background: '#0a3d1f' }}>
-                          {(playersById[pid]?.displayName) || pid}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         {/* Per-player rebuys — HR only. Each attendee gets a +/- counter so
             the profit/loss math stays accurate (buyIns += buyIn × (1 + rebuys)). */}
