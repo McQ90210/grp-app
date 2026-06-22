@@ -554,7 +554,7 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
         : ''
     }
 
-    <div style="color:${BRAND_GREEN_LIGHT};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 4px;font-weight:600;">Last night's podium</div>
+    <div style="color:${BRAND_GREEN_LIGHT};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 4px;font-weight:600;">Top 3</div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:14px;">
       ${podium || `<tr><td style="padding:12px 0;color:#9ca3af;">No results recorded.</td></tr>`}
     </table>
@@ -699,7 +699,7 @@ function renderHRResultsEmail({ game, players, allHRGames, recap }) {
         : ''
     }
 
-    <div style="color:${BRAND_GREEN_LIGHT};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 4px;font-weight:600;">Last night's podium</div>
+    <div style="color:${BRAND_GREEN_LIGHT};font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 4px;font-weight:600;">Top 3</div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:14px;">
       ${podium || `<tr><td style="padding:12px 0;color:#9ca3af;">No results recorded.</td></tr>`}
     </table>
