@@ -780,18 +780,20 @@ async function sendHRResults(game) {
     getAllHRGames(),
   ]);
 
-  // For HR, only email the players who actually attended this game. Sending
-  // results to people who weren't there is noise. (League emails everyone —
-  // the standings shift even when you don't play.)
-  const attendeeSet = new Set(game.attendees || []);
+  // HR is a fixed crew of ~9 regulars. The email goes to every player
+  // flagged `hrRegular: true` who has an address on file — regardless of
+  // whether they actually showed up to this specific game. Reasoning: the
+  // group treats it like a standing newsletter for the side game; missing
+  // out shouldn't drop you off the distribution. Mark the regulars via
+  // Manage Players → HR checkbox.
   const recipients = players.filter(
     (p) => p.active !== false
+      && p.hrRegular === true
       && typeof p.email === 'string'
       && p.email.includes('@')
-      && attendeeSet.has(p.id)
   );
   if (recipients.length === 0) {
-    return { skipped: true, reason: 'No attendees with email addresses on file.' };
+    return { skipped: true, reason: 'No HR-regular players with email addresses on file.' };
   }
 
   // Build running totals once so generateHRRecap can reference the leaderboard.

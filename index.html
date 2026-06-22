@@ -4930,7 +4930,7 @@ function HighRollersHistory({ onBack, fbUser }) {
         {showResendHRConfirm && (
           <ConfirmDialog
             title="Resend latest HR results email?"
-            message="Sends the morning-after email for the most recent High Rollers game to every player with an email on file. Uses the same AI recap + podium + running-total format as the auto-send."
+            message="Sends the morning-after email for the most recent High Rollers game to every HR-regular player with an email on file (whether or not they attended). Mark regulars via the HR checkbox in Manage Players. Uses the same AI recap + Top 3 + running-total format as the auto-send."
             onConfirm={doResendHR}
             onCancel={() => setShowResendHRConfirm(false)}
           />
@@ -6166,10 +6166,16 @@ function ManagePlayersModal({ onClose, onSaved }) {
     if (field === 'email') {
       return (before || '').trim() !== (after || '').trim();
     }
+    if (field === 'hrRegular') {
+      return (!!before) !== (!!after);
+    }
     // sound
     return (before || 'none') !== (after || 'none');
   };
-  const isRowDirty = (id) => isFieldDirty(id, 'email') || isFieldDirty(id, 'sound');
+  const isRowDirty = (id) =>
+    isFieldDirty(id, 'email') ||
+    isFieldDirty(id, 'sound') ||
+    isFieldDirty(id, 'hrRegular', false);
   const dirtyCount = Object.keys(edits).filter(isRowDirty).length;
 
   // Add a brand-new player. Slug is derived from displayName via the same
@@ -6226,6 +6232,7 @@ function ManagePlayersModal({ onClose, onSaved }) {
         const update = { id };
         if (ed.email !== undefined) update.email = (ed.email || '').trim() || null;
         if (ed.sound !== undefined) update.sound = ed.sound || 'none';
+        if (ed.hrRegular !== undefined) update.hrRegular = !!ed.hrRegular;
         await window.GRP_DB.upsertPlayer(update);
         n += 1;
       }
@@ -6324,6 +6331,7 @@ function ManagePlayersModal({ onClose, onSaved }) {
               {players.map((p) => {
                 const currentEmail = edits[p.id]?.email !== undefined ? edits[p.id].email : (p.email || '');
                 const currentSound = edits[p.id]?.sound !== undefined ? edits[p.id].sound : (p.sound || 'none');
+                const currentHrRegular = edits[p.id]?.hrRegular !== undefined ? edits[p.id].hrRegular : !!p.hrRegular;
                 const isDirty = isRowDirty(p.id);
                 return (
                   <div
@@ -6333,6 +6341,18 @@ function ManagePlayersModal({ onClose, onSaved }) {
                     <div className="w-32 font-mono text-sm text-emerald-100 truncate" title={p.realName || p.displayName}>
                       {p.displayName}
                     </div>
+                    <label
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-black/40 border border-yellow-500/15 cursor-pointer hover:border-yellow-500/40"
+                      title="High Rollers regular — receives the morning-after HR results email"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={currentHrRegular}
+                        onChange={(e) => setField(p.id, 'hrRegular', e.target.checked)}
+                        className="accent-emerald-500"
+                      />
+                      <span className="font-mono text-[10px] text-yellow-100/70 tracking-widest">HR</span>
+                    </label>
                     <input
                       type="email"
                       value={currentEmail}
