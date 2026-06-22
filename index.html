@@ -7062,19 +7062,41 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
   const attendees = isLeague ? Object.keys(pointsAwarded) : (game.attendees || []);
   const playerCount = attendees.length;
 
-  // For HR position editing: swap places. If the dropdown for place P picks
-  // player X who's currently at place Q, we swap them so the order stays a
-  // valid permutation.
+  // True if any PID appears in more than one slot of finishOrder. Used to
+  // flag rows in the UI AND to block Save until the duplicate is resolved.
+  const finishOrderHasDupes = (() => {
+    const seen = new Set();
+    for (const pid of (finishOrder || [])) {
+      if (!pid) continue;
+      if (seen.has(pid)) return true;
+      seen.add(pid);
+    }
+    return false;
+  })();
+
+  // Assign a player to a position. Guarantees the resulting finishOrder
+  // contains the picked player in exactly one slot.
+  //
+  // - newPid not in array → plain set
+  // - newPid in exactly one other slot → swap (the existing player at
+  //   placeIdx moves to where newPid was)
+  // - newPid in multiple other slots (scrambled save data) → existing
+  //   moves into the first duplicate slot; the rest are cleared. Admin
+  //   then fills the empty slots manually.
   const setPlaceTo = (placeIdx, newPid) => {
     if (!newPid) return;
     const next = [...finishOrder];
-    // Ensure slot exists
     while (next.length <= placeIdx) next.push(null);
     const existing = next[placeIdx];
-    const otherIdx = next.indexOf(newPid);
-    if (otherIdx >= 0 && otherIdx !== placeIdx) {
-      // Swap
-      next[otherIdx] = existing;
+    const otherIdxs = [];
+    for (let i = 0; i < next.length; i++) {
+      if (i !== placeIdx && next[i] === newPid) otherIdxs.push(i);
+    }
+    if (otherIdxs.length === 1) {
+      next[otherIdxs[0]] = existing;
+    } else if (otherIdxs.length > 1) {
+      next[otherIdxs[0]] = existing;
+      for (let j = 1; j < otherIdxs.length; j++) next[otherIdxs[j]] = '';
     }
     next[placeIdx] = newPid;
     setFinishOrder(next);
@@ -7287,20 +7309,37 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
             position colour on standings + the source of truth for
             first-out. League points are NOT auto-recomputed — edit them
             in POINTS BY PLAYER if needed. */}
-        {attendees.length > 0 && (
+        {attendees.length > 0 && (() => {
+          // Count occurrences of each PID across the current order so the
+          // UI can flag duplicates and disable Save until they're resolved.
+          const counts = {};
+          (finishOrder || []).forEach((pid) => {
+            if (pid) counts[pid] = (counts[pid] || 0) + 1;
+          });
+          const dupPids = new Set(Object.keys(counts).filter((k) => counts[k] > 1));
+          return (
           <div className="mb-5">
             <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">FINISHING ORDER</div>
             <div className="text-yellow-100/40 text-xs mb-2">
               Pick who finished in each position. Swapping shuffles the existing player into the slot you picked from.
             </div>
+            {dupPids.size > 0 && (
+              <div className="mb-2 px-3 py-2 rounded-lg bg-red-950/40 border border-red-500/40 text-red-200 font-mono text-xs">
+                ⚠ Duplicate{dupPids.size > 1 ? 's' : ''}: {Array.from(dupPids).map((p) => playersById[p]?.displayName || p).join(', ')}. Fix before saving.
+              </div>
+            )}
             <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
               {attendees.map((_, i) => {
                 const place = i + 1;
                 const current = finishOrder[i] || '';
                 const placeLabel = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th'][i] || `${place}th`;
                 const medal = ['🥇', '🥈', '🥉'][i] || null;
+                const isDup = current && dupPids.has(current);
                 return (
-                  <div key={i} className="flex items-center gap-2 p-2 rounded bg-black/30">
+                  <div
+                    key={i}
+                    className={`flex items-center gap-2 p-2 rounded border ${isDup ? 'bg-red-950/30 border-red-500/40' : 'bg-black/30 border-transparent'}`}
+                  >
                     <div className="font-mono text-xs text-yellow-100/40 w-14 shrink-0 flex items-center gap-1">
                       {medal && <span className="text-sm">{medal}</span>}
                       {placeLabel}
@@ -7308,7 +7347,7 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
                     <select
                       value={current}
                       onChange={(e) => setPlaceTo(i, e.target.value)}
-                      className="flex-1 px-2 py-1.5 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+                      className={`flex-1 px-2 py-1.5 rounded bg-black/40 border text-yellow-50 font-mono text-sm focus:outline-none ${isDup ? 'border-red-400/60 focus:border-red-400' : 'border-yellow-500/20 focus:border-yellow-500/50'}`}
                     >
                       <option value="" style={{ background: '#0a3d1f' }}>—</option>
                       {attendees.map((pid) => (
@@ -7322,7 +7361,8 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
               })}
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {isLeague && (
           <div className="mb-5">
@@ -7401,11 +7441,12 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
           </button>
           <button
             onClick={save}
-            disabled={busy}
+            disabled={busy || finishOrderHasDupes}
             className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
             style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+            title={finishOrderHasDupes ? 'Resolve duplicate finishing positions first' : 'Save changes'}
           >
-            {busy ? 'Saving...' : 'SAVE CHANGES'}
+            {busy ? 'Saving...' : finishOrderHasDupes ? 'FIX DUPLICATES TO SAVE' : 'SAVE CHANGES'}
           </button>
         </div>
 
