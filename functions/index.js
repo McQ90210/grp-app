@@ -643,7 +643,9 @@ function renderHRResultsEmail({ game, players, allHRGames, recap }) {
   const fmtNet = (n) => {
     const sign = n >= 0 ? '+' : '−';
     const colour = n >= 0 ? BRAND_GREEN_LIGHT : '#f87171';
-    return `<span style="color:${colour};font-family:monospace;font-weight:600;">${sign}£${Math.abs(Math.round(n))}</span>`;
+    // white-space:nowrap stops the sign and the £ amount from wrapping onto
+    // separate lines when the NET column is narrow on mobile.
+    return `<span style="color:${colour};font-family:monospace;font-weight:600;white-space:nowrap;">${sign}£${Math.abs(Math.round(n))}</span>`;
   };
 
   // Subtle medal colours for the per-place columns — same gold/silver/bronze
@@ -661,12 +663,11 @@ function renderHRResultsEmail({ game, players, allHRGames, recap }) {
     return `<tr>
       <td style="padding:8px 4px;color:${rankColour};font-weight:700;font-family:monospace;width:28px;${last}">${i + 1}</td>
       <td style="padding:8px 4px;color:${TEXT_LIGHT};${last}">${escape(r.name)}</td>
+      <td style="padding:8px 4px;color:#9ca3af;text-align:right;font-family:monospace;font-size:12px;${last}">${r.games || 0}</td>
       <td style="padding:8px 4px;text-align:right;font-size:12px;${last}">${fmtPlaceCount(r.p1, GOLD)}</td>
       <td style="padding:8px 4px;text-align:right;font-size:12px;${last}">${fmtPlaceCount(r.p2, SILVER)}</td>
       <td style="padding:8px 4px;text-align:right;font-size:12px;${last}">${fmtPlaceCount(r.p3, BRONZE)}</td>
-      <td style="padding:8px 4px;color:#9ca3af;text-align:right;font-family:monospace;font-size:12px;${last}">£${Math.round(r.buyIns)}</td>
-      <td style="padding:8px 4px;color:#9ca3af;text-align:right;font-family:monospace;font-size:12px;${last}">£${Math.round(r.winnings)}</td>
-      <td style="padding:8px 4px;text-align:right;${last}">${fmtNet(r.net)}</td>
+      <td style="padding:8px 4px;text-align:right;white-space:nowrap;${last}">${fmtNet(r.net)}</td>
     </tr>`;
   }).join('');
 
@@ -713,11 +714,10 @@ function renderHRResultsEmail({ game, players, allHRGames, recap }) {
         <tr>
           <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);width:28px;">#</th>
           <th style="padding:6px 4px;text-align:left;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Player</th>
+          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Played</th>
           <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">🥇</th>
           <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">🥈</th>
           <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">🥉</th>
-          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">In</th>
-          <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Out</th>
           <th style="padding:6px 4px;text-align:right;color:${BRAND_GREEN};font-size:10px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;border-bottom:1px solid rgba(20,163,123,0.25);">Net</th>
         </tr>
       </thead>
