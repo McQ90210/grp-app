@@ -929,6 +929,60 @@ exports.resendLatestHRResults = onCall(
   }
 );
 
+// Callable: admin tool. Renders the most recent HR results email and sends
+// it to exactly ONE address — bypassing the usual attendee-with-email
+// recipient filter. Subject is prefixed with [TEST] so it's obvious in the
+// inbox. Useful for previewing template changes without spamming the rest
+// of the league.
+//
+// Input:  { email: 'someone@example.com' }
+// Output: { ok, gameId, sent }
+exports.sendTestHRResults = onCall(
+  {
+    region: REGION,
+    secrets: [GMAIL_USER, GMAIL_APP_PASSWORD, GEMINI_API_KEY],
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
+    }
+    const email = ((request.data && request.data.email) || '').trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new HttpsError('invalid-argument', 'Provide a valid recipient email.');
+    }
+    const game = await getMostRecentHRGame();
+    if (!game) {
+      throw new HttpsError('not-found', 'No High Rollers games found.');
+    }
+    try {
+      const [players, allHRGames] = await Promise.all([
+        getAllPlayers(),
+        getAllHRGames(),
+      ]);
+      const runningTotals = {};
+      for (const g of allHRGames) {
+        for (const pid of (g.attendees || [])) {
+          runningTotals[pid] = (runningTotals[pid] || 0) + netForGame(g, pid).net;
+        }
+      }
+      const recap = await generateHRRecap({ game, players, runningTotals });
+      const html = renderHRResultsEmail({ game, players, allHRGames, recap });
+      const subject = `[TEST] GRP Berkhamsted: High Rollers · ${game.date}`;
+      const result = await sendEmailAndLog({
+        game,
+        subject,
+        html,
+        recipients: [{ id: 'test-recipient', email }],
+        extra: { type: 'hr-results-test', testRecipient: email },
+      });
+      return { ok: true, gameId: game.id, sent: result.sent };
+    } catch (err) {
+      logger.error('sendTestHRResults failed:', err);
+      throw new HttpsError('internal', err.message || 'Test email failed.');
+    }
+  }
+);
+
 // Callable: admin tool. Renames a season's document ID + name + cascades to
 // all of its games. Useful when historical seasons were stored under the wrong
 // ID (e.g. "2026-r2" when the data is actually Round 1).
