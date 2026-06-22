@@ -3186,6 +3186,12 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // bounties, so skip straight to elimination.
   const requestEliminate = (player) => {
     setShowEliminate(false);
+    // Guard: once a winner is declared OR the player is already out, ignore
+    // further OUT taps. Stops a stale tap (e.g. admin double-clicking
+    // because the announcement felt slow) from recording the winner as
+    // also eliminated, which would scramble finishOrder.
+    if (winner) return;
+    if (eliminatedPlayers.includes(player.name)) return;
     if (config.gameType === 'league') {
       setPendingKnockout({ player, intent: 'out' });
     } else {
@@ -3215,6 +3221,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   };
 
   const doEliminate = (player) => {
+    // Idempotency guards — see requestEliminate for why these matter.
+    if (winner) return;
+    if (eliminatedPlayers.includes(player.name)) return;
+
     const remainingAfter = activePlayers.length - 1;
     setEliminatedPlayers((prev) => [...prev, player.name]);
 
@@ -3243,16 +3253,19 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       }, 3000);
     }
 
-    // Winner: 1 player left. Wait for the eliminated player's sound to finish
-    // before triggering the fanfare and winner announcement so they don't overlap.
+    // Winner: 1 player left. Show the winner overlay IMMEDIATELY so the
+    // admin has visual confirmation the game is over — long eliminated-
+    // player sounds used to delay this by 5+ seconds, which looked like a
+    // stall and led admins to tap OUT on the actual winner. The sound
+    // chain still plays in the background, just after the overlay is up.
     if (remainingAfter === 1) {
       setIsRunning(false);
       const winnerObj = activePlayers.find((p) => p.name !== player.name);
+      setWinner(winnerObj);
       (async () => {
         try { await playerSoundPromise; } catch (e) { /* ignore */ }
         // Small breath between the player's sound ending and the fanfare
         await new Promise((r) => setTimeout(r, 400));
-        setWinner(winnerObj);
         sendWledEffect('winner');
         playSound('fanfare', customSounds);
         // Let fanfare lead for ~2.2s before the winner announcement
@@ -3661,8 +3674,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           <div className="flex justify-center mb-6">
             <button
               onClick={() => setShowEliminate(true)}
-              disabled={activePlayers.length === 0}
+              disabled={activePlayers.length <= 1 || !!winner}
               className="control-btn px-6 py-2.5 rounded-full bg-red-900/30 border border-red-500/40 text-red-200 font-mono text-sm flex items-center gap-2 hover:bg-red-900/50 disabled:opacity-30"
+              title={activePlayers.length <= 1 ? 'Last player standing — winner declared automatically' : 'Open eliminate panel'}
             >
               <UserMinus size={16} /> ELIMINATE PLAYER
             </button>
@@ -6531,6 +6545,23 @@ function SaveGameModal({
     setBusy(true);
     setError(null);
     try {
+      // Auto-create Firestore player docs for any in-game players not yet
+      // in the database. Late-entries and wizard-adds otherwise save into
+      // the game doc as slug PIDs ("ben") with no matching `players/ben`
+      // — so the dashboard falls back to the raw slug (lowercase) and
+      // Manage Players can't see them. Preserve original capitalisation
+      // and the per-player sound they were assigned in the game.
+      const missingFromDb = players.filter((p) => !playersByName[p.name]);
+      for (const p of missingFromDb) {
+        try {
+          await window.GRP_DB.upsertPlayer({
+            displayName: p.name,
+            sound: p.sound || 'none',
+            active: true,
+          });
+        } catch (_) { /* non-fatal; game save still proceeds */ }
+      }
+
       // Resolve the final game ID. League IDs are deterministic and clash =
       // error (means that season+game number is already saved). HR IDs are
       // date-based and clash = same-day repeat → append -2, -3, ...
