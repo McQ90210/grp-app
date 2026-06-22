@@ -7062,11 +7062,16 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
   const attendees = isLeague ? Object.keys(pointsAwarded) : (game.attendees || []);
   const playerCount = attendees.length;
 
-  // True if any PID appears in more than one slot of finishOrder. Used to
-  // flag rows in the UI AND to block Save until the duplicate is resolved.
+  // True if any PID appears in more than one slot of the VISIBLE
+  // finishOrder. Only scans the first attendees.length entries — a
+  // scrambled save can leave stale trailing entries past the rendered
+  // rows that the admin can't see or fix from the UI; flagging those
+  // as duplicates would be a false positive. The trailing entries are
+  // dropped on save (see save()).
   const finishOrderHasDupes = (() => {
     const seen = new Set();
-    for (const pid of (finishOrder || [])) {
+    const visible = (finishOrder || []).slice(0, attendees.length);
+    for (const pid of visible) {
       if (!pid) continue;
       if (seen.has(pid)) return true;
       seen.add(pid);
@@ -7130,17 +7135,21 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
     setBusy(true);
     setError(null);
     try {
+      // Trim finishOrder to exactly attendees.length so a scrambled save
+      // (with extra trailing entries that the UI couldn't render or fix)
+      // can be cleaned up by re-saving from this modal.
+      const trimmedFinishOrder = (finishOrder || []).slice(0, attendees.length);
       // firstOut is the last entry of finishOrder by construction — the
       // first eliminated player. Keep it in sync so the v2 +1k first-out
       // bonus accounting and any future "first out" displays stay honest.
-      const newFirstOut = finishOrder.length > 0
-        ? finishOrder[finishOrder.length - 1]
+      const newFirstOut = trimmedFinishOrder.length > 0
+        ? trimmedFinishOrder[trimmedFinishOrder.length - 1]
         : null;
       const updates = {
         ...game,
         date,
         payouts,
-        finishOrder,
+        finishOrder: trimmedFinishOrder,
         firstOut: newFirstOut,
       };
       if (isLeague) {
@@ -7310,10 +7319,12 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
             first-out. League points are NOT auto-recomputed — edit them
             in POINTS BY PLAYER if needed. */}
         {attendees.length > 0 && (() => {
-          // Count occurrences of each PID across the current order so the
-          // UI can flag duplicates and disable Save until they're resolved.
+          // Count occurrences of each PID across the VISIBLE order (first
+          // attendees.length slots). Stale trailing entries past the
+          // rendered rows are ignored — admin can't fix what they can't
+          // see, and save() trims them anyway.
           const counts = {};
-          (finishOrder || []).forEach((pid) => {
+          (finishOrder || []).slice(0, attendees.length).forEach((pid) => {
             if (pid) counts[pid] = (counts[pid] || 0) + 1;
           });
           const dupPids = new Set(Object.keys(counts).filter((k) => counts[k] > 1));
