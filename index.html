@@ -6120,6 +6120,12 @@ function ManagePlayersModal({ onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
   const [error, setError] = useState(null);
+  // New-player form: collected separately from `edits` since it doesn't have
+  // an id yet. Cleared on successful add.
+  const [newName, setNewName] = useState('');
+  const [newSound, setNewSound] = useState('none');
+  const [adding, setAdding] = useState(false);
+  const [addJustOk, setAddJustOk] = useState(null); // displayName of last successful add (for confirmation)
 
   useEffect(() => {
     let cancelled = false;
@@ -6165,6 +6171,40 @@ function ManagePlayersModal({ onClose, onSaved }) {
   };
   const isRowDirty = (id) => isFieldDirty(id, 'email') || isFieldDirty(id, 'sound');
   const dirtyCount = Object.keys(edits).filter(isRowDirty).length;
+
+  // Add a brand-new player. Slug is derived from displayName via the same
+  // rule the rest of the app uses, so any in-game PID that was auto-saved
+  // earlier (e.g. game docs referencing `ben`) will line up automatically
+  // once a player doc with the matching displayName exists.
+  const addPlayer = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setError(null);
+    setAdding(true);
+    try {
+      const id = slugifyName(name);
+      if (players.find((p) => p.id === id)) {
+        throw new Error(`A player with id "${id}" already exists.`);
+      }
+      await window.GRP_DB.upsertPlayer({
+        displayName: name,
+        sound: newSound || 'none',
+        active: true,
+      });
+      // Refresh the roster so the new row shows up immediately.
+      const all = await window.GRP_DB.getAllPlayers();
+      all.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+      setPlayers(all);
+      setAddJustOk(name);
+      setNewName('');
+      setNewSound('none');
+      if (onSaved) onSaved(1);
+    } catch (e) {
+      setError(e.message || 'Could not add player.');
+    } finally {
+      setAdding(false);
+    }
+  };
 
   const save = async () => {
     setError(null);
@@ -6225,6 +6265,63 @@ function ManagePlayersModal({ onClose, onSaved }) {
                 ✓ Saved {savedCount} player{savedCount === 1 ? '' : 's'}.
               </div>
             )}
+            {addJustOk && (
+              <div className="mb-3 p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 font-mono text-xs">
+                ✓ Added <span className="text-emerald-100">{addJustOk}</span>.
+              </div>
+            )}
+
+            {/* Add a brand-new player. PID is auto-derived from the display
+                name (lowercase, hyphenated) so any past in-game references
+                to a slug like "ben" will line up once the row is created. */}
+            <div className="mb-5 p-3 rounded-lg bg-emerald-950/30 border border-emerald-500/20">
+              <div className="font-mono text-[11px] text-emerald-300/80 tracking-widest mb-2">+ ADD PLAYER</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => { setNewName(e.target.value); if (addJustOk) setAddJustOk(null); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') addPlayer(); }}
+                  placeholder="Display name (e.g. Ben)"
+                  className="flex-1 min-w-[180px] px-2 py-1.5 rounded bg-black/40 border border-emerald-500/30 text-yellow-50 placeholder-yellow-100/30 font-mono text-xs focus:outline-none focus:border-emerald-400/60"
+                />
+                <select
+                  value={newSound}
+                  onChange={(e) => setNewSound(e.target.value)}
+                  className="w-36 px-1.5 py-1.5 rounded bg-black/40 border border-emerald-500/30 text-yellow-50 font-mono text-xs focus:outline-none focus:border-emerald-400/60"
+                  title="Elimination sound"
+                >
+                  <option value="none" style={{ background: '#0a3d1f' }}>None</option>
+                  {Object.keys(customSounds).length > 0 && (
+                    <optgroup label="Your sounds">
+                      {Object.entries(customSounds).map(([key, s]) => (
+                        <option key={`c-${key}`} value={key} style={{ background: '#0a3d1f' }}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="Built-in">
+                    {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
+                      <option key={key} value={key} style={{ background: '#0a3d1f' }}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+                <button
+                  onClick={addPlayer}
+                  disabled={!newName.trim() || adding}
+                  className="px-4 py-1.5 rounded-full font-display text-sm text-black disabled:opacity-30"
+                  style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+                >
+                  {adding ? 'Adding…' : 'ADD'}
+                </button>
+              </div>
+              <div className="text-yellow-100/40 text-[10px] font-mono mt-2">
+                Capitalisation matters — it's what shows everywhere. PID auto-derives as <span className="text-emerald-300">{newName.trim() ? slugifyName(newName) : 'lowercase-name'}</span>.
+              </div>
+            </div>
 
             <div className="space-y-1 mb-5 max-h-[60vh] overflow-y-auto pr-2">
               {players.map((p) => {
