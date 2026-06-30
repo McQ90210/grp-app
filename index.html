@@ -1826,8 +1826,8 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     setPlayingTonight((prev) => new Set([...prev, ...names]));
     // Seed each newly-added attendee with default paid=true so we don't
     // have to chase consent. Admin un-ticks anyone who walked in owing.
-    setBuyInsPaidByName((m) => { const n = { ...m }; names.forEach((nm) => { n[nm] = true; }); return n; });
-    setSubsPaidByName((m) => { const n = { ...m }; names.forEach((nm) => { n[nm] = true; }); return n; });
+    setBuyInsPaidByName((m) => { const n = { ...m }; names.forEach((nm) => { n[nm] = false; }); return n; });
+    setSubsPaidByName((m) => { const n = { ...m }; names.forEach((nm) => { n[nm] = false; }); return n; });
     setShowPlayerPicker(false);
   };
 
@@ -1842,8 +1842,8 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       setRoster([...roster, { name, sound: 'none' }]);
       setPlayingTonight((prev) => new Set([...prev, name]));
     }
-    setBuyInsPaidByName((m) => ({ ...m, [name]: true }));
-    setSubsPaidByName((m) => ({ ...m, [name]: true }));
+    setBuyInsPaidByName((m) => ({ ...m, [name]: false }));
+    setSubsPaidByName((m) => ({ ...m, [name]: false }));
     setNewPlayer('');
   };
 
@@ -1856,8 +1856,8 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
         setSubsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
       } else {
         next.add(name);
-        setBuyInsPaidByName((m) => ({ ...m, [name]: true }));
-        setSubsPaidByName((m) => ({ ...m, [name]: true }));
+        setBuyInsPaidByName((m) => ({ ...m, [name]: false }));
+        setSubsPaidByName((m) => ({ ...m, [name]: false }));
       }
       return next;
     });
@@ -1894,10 +1894,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   const selectAll = () => {
     const allNames = roster.map((p) => p.name);
     setPlayingTonight(new Set(allNames));
-    const allPaid = {};
-    allNames.forEach((n) => { allPaid[n] = true; });
-    setBuyInsPaidByName(allPaid);
-    setSubsPaidByName(allPaid);
+    const allOwed = {};
+    allNames.forEach((n) => { allOwed[n] = false; });
+    setBuyInsPaidByName(allOwed);
+    setSubsPaidByName(allOwed);
   };
   const selectNone = () => {
     setPlayingTonight(new Set());
@@ -2263,8 +2263,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                                     state as each player arrives. Tap a chip
                                     to flip its state. Subs hidden on finals. */}
                                 {gameType === 'league' && (() => {
-                                  const buyInOk = buyInsPaidByName[player.name] !== false;
-                                  const subsOk = subsPaidByName[player.name] !== false;
+                                  const buyInOk = buyInsPaidByName[player.name] === true;
+                                  const subsOk = subsPaidByName[player.name] === true;
+                                  const upfrontList = leagueContext?.season?.upfrontSubs || [];
+                                  const isUpfront = upfrontList.includes(slugifyName(player.name));
                                   return (
                                     <div className="flex gap-2 mt-2 ml-7 flex-wrap">
                                       <button
@@ -2274,22 +2276,31 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                                             ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-100'
                                             : 'bg-red-900/40 border-red-400/60 text-red-100'
                                         }`}
-                                        title="Toggle whether this player has paid their buy-in"
+                                        title="Tap when this player has paid their buy-in"
                                       >
                                         💷 buy-in {buyInOk ? 'paid' : 'OWES'}
                                       </button>
                                       {!isFinal && (
-                                        <button
-                                          onClick={() => setSubsPaidByName((m) => ({ ...m, [player.name]: !subsOk }))}
-                                          className={`px-2 py-1 rounded text-[11px] font-mono border ${
-                                            subsOk
-                                              ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-100'
-                                              : 'bg-red-900/40 border-red-400/60 text-red-100'
-                                          }`}
-                                          title="Toggle whether this player has paid their £3 subs"
-                                        >
-                                          🪙 subs {subsOk ? 'paid' : 'OWES'}
-                                        </button>
+                                        isUpfront ? (
+                                          <span
+                                            className="px-2 py-1 rounded text-[11px] font-mono border bg-emerald-700/40 border-emerald-300/70 text-emerald-50"
+                                            title="Paid for the whole round upfront via the Subs Ledger"
+                                          >
+                                            🪙 paid for round
+                                          </span>
+                                        ) : (
+                                          <button
+                                            onClick={() => setSubsPaidByName((m) => ({ ...m, [player.name]: !subsOk }))}
+                                            className={`px-2 py-1 rounded text-[11px] font-mono border ${
+                                              subsOk
+                                                ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-100'
+                                                : 'bg-red-900/40 border-red-400/60 text-red-100'
+                                            }`}
+                                            title="Tap when this player has paid their £3 subs"
+                                          >
+                                            🪙 subs {subsOk ? 'paid' : 'OWES'}
+                                          </button>
+                                        )
                                       )}
                                     </div>
                                   );
@@ -3264,8 +3275,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     setNewPlayerName('');
     // Default a late-entry player to "paid" — common case. Admin can
     // un-tick them after the fact via the Subs Ledger.
-    setBuyInsPaidByName((m) => ({ ...m, [name]: true }));
-    setSubsPaidByName((m) => ({ ...m, [name]: true }));
+    setBuyInsPaidByName((m) => ({ ...m, [name]: false }));
+    setSubsPaidByName((m) => ({ ...m, [name]: false }));
     // Late-join welcome announcement. Per-player clip lives at
     // sounds/voice/welcome-{slug}.mp3; falls back to Web Speech if missing.
     if (voiceEnabled && hasStarted) {
@@ -3922,6 +3933,50 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       <span className={`flex-1 ${isOut ? 'line-through text-red-300/60' : 'text-emerald-100'}`}>
                         {player.name}
                       </span>
+                      {/* League-only payment chips — tap to toggle. Mirrors
+                          the wizard's selection-time chips but tighter for
+                          this dense row. Subs hidden on finals. */}
+                      {config.gameType === 'league' && (() => {
+                        const buyInOk = buyInsPaidByName[player.name] === true;
+                        const subsOk = subsPaidByName[player.name] === true;
+                        const isFinalGame = config.leagueContext?.isFinal === true;
+                        const upfrontList = config.leagueContext?.season?.upfrontSubs || [];
+                        const isUpfront = upfrontList.includes(slugifyName(player.name));
+                        const chipCls = (ok) => `px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                          ok
+                            ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-100'
+                            : 'bg-red-900/40 border-red-400/60 text-red-100'
+                        }`;
+                        return (
+                          <div className="flex gap-1 shrink-0">
+                            <button
+                              onClick={() => setBuyInsPaidByName((m) => ({ ...m, [player.name]: !buyInOk }))}
+                              className={chipCls(buyInOk)}
+                              title={buyInOk ? 'Buy-in paid · tap if they owe' : 'OWES buy-in · tap when paid'}
+                            >
+                              💷 {buyInOk ? '✓' : '✗'}
+                            </button>
+                            {!isFinalGame && (
+                              isUpfront ? (
+                                <span
+                                  className="px-1.5 py-0.5 rounded text-[10px] font-mono border bg-emerald-700/40 border-emerald-300/70 text-emerald-50"
+                                  title="Paid for the whole round upfront (Subs Ledger)"
+                                >
+                                  🪙 ⌬
+                                </span>
+                              ) : (
+                              <button
+                                onClick={() => setSubsPaidByName((m) => ({ ...m, [player.name]: !subsOk }))}
+                                className={chipCls(subsOk)}
+                                title={subsOk ? 'Subs paid · tap if they owe' : 'OWES subs · tap when paid'}
+                              >
+                                🪙 {subsOk ? '✓' : '✗'}
+                              </button>
+                              )
+                            )}
+                          </div>
+                        );
+                      })()}
                       {/* Rebuy controls — hidden for freezeout games. The +
                           button routes league rebuys through the knocker
                           picker (same flow as REBUY in the eliminate modal)
@@ -5953,17 +6008,19 @@ function LeagueDashboard({ onBack, fbUser }) {
       {/* Subs Ledger — per-season grid of who paid / who owes */}
       {showSubsLedger && activeSeasonId && (
         <SubsLedgerModal
-          seasonId={activeSeasonId}
-          seasonName={seasons.find((s) => s.id === activeSeasonId)?.name}
+          season={seasons.find((s) => s.id === activeSeasonId)}
           games={games}
           players={players}
           onClose={() => setShowSubsLedger(false)}
           onSaved={() => {
-            // Refresh games so the ledger reflects the saved subsPaid maps
-            // on its next open without a full page reload.
+            // Refresh both games (subsPaid edits) and seasons (upfrontSubs
+            // edits) so the ledger reflects saved state on its next open.
             if (!window.GRP_DB || !activeSeasonId) return;
             window.GRP_DB.getGamesForSeason(activeSeasonId)
               .then(setGames)
+              .catch(() => {});
+            window.GRP_DB.getAllSeasons()
+              .then(setSeasons)
               .catch(() => {});
           }}
         />
@@ -6928,8 +6985,8 @@ function SaveGameModal({
       const subsPaidByPid = {};
       players.forEach((p) => {
         const pid = resolvePid(p.name);
-        buyInsPaidByPid[pid] = (buyInsPaidByName || {})[p.name] !== false;
-        subsPaidByPid[pid] = (subsPaidByName || {})[p.name] !== false;
+        buyInsPaidByPid[pid] = (buyInsPaidByName || {})[p.name] === true;
+        subsPaidByPid[pid] = (subsPaidByName || {})[p.name] === true;
       });
 
       const gameDoc = {
@@ -7753,12 +7810,19 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
 // the player wasn't at that game. Click to toggle. Save writes the
 // updated subsPaid maps back to each affected game doc. Finals are
 // excluded — no subs collected on the final game.
-function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSaved }) {
+function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
   // Edit buffer: { [gameId]: { [pid]: bool } } — only games with changes.
   const [edits, setEdits] = useState({});
+  // Local upfront-paid set — initialized from season.upfrontSubs, mutated
+  // by the per-player toggle, persisted to the season doc on save.
+  const [upfrontSet, setUpfrontSet] = useState(() => new Set(season?.upfrontSubs || []));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [savedAt, setSavedAt] = useState(0);
+
+  const seasonId = season?.id;
+  const seasonName = season?.name;
+  const initialUpfront = useRef(new Set(season?.upfrontSubs || []));
 
   const playersById = {};
   players.forEach((p) => { playersById[p.id] = p; });
@@ -7768,16 +7832,22 @@ function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSave
     .filter((g) => g.seasonId === seasonId && !g.isFinal)
     .sort((a, b) => (a.gameNumber || 0) - (b.gameNumber || 0));
 
-  // Attendee universe — anyone who showed up to at least one regular game.
+  // Attendee universe — anyone who showed up to at least one regular game,
+  // PLUS anyone flagged as upfront-paid for this season (so admin can see
+  // and un-flag them even if they haven't attended any game yet).
   const pidSet = new Set();
   regular.forEach((g) => (g.attendees || []).forEach((pid) => pidSet.add(pid)));
+  upfrontSet.forEach((pid) => pidSet.add(pid));
   const attendees = Array.from(pidSet)
     .map((pid) => ({ pid, name: playersById[pid]?.displayName || pid }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  // Resolve a cell's effective state, accounting for unsaved edits.
+  // Resolve a cell's effective state, accounting for unsaved edits and
+  // round-upfront payment. Upfront players show as paid in every cell
+  // they attended; they don't get a toggleable cell.
   const cellState = (game, pid) => {
     if (!(game.attendees || []).includes(pid)) return 'dnp';
+    if (upfrontSet.has(pid)) return 'upfront';
     const editVal = edits[game.id]?.[pid];
     if (editVal !== undefined) return editVal ? 'paid' : 'owed';
     const stored = (game.subsPaid || {})[pid];
@@ -7785,10 +7855,11 @@ function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSave
     // otherwise every old game would show as fully unpaid the moment
     // the ledger opens. Admin can flip if needed.
     if (Object.keys(game.subsPaid || {}).length === 0) return 'paid';
-    return stored === false ? 'owed' : 'paid';
+    return stored === true ? 'paid' : 'owed';
   };
 
   const toggle = (gameId, pid) => {
+    if (upfrontSet.has(pid)) return; // upfront players are locked
     setEdits((prev) => {
       const game = regular.find((g) => g.id === gameId);
       const current = cellState(game, pid);
@@ -7799,9 +7870,19 @@ function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSave
     });
   };
 
-  // Compute total outstanding £ per player given current edits.
+  const toggleUpfront = (pid) => {
+    setUpfrontSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid); else next.add(pid);
+      return next;
+    });
+  };
+
+  // Compute total outstanding £ per player given current edits. Upfront
+  // payers always owe £0.
   const owedByPid = {};
   attendees.forEach(({ pid }) => {
+    if (upfrontSet.has(pid)) return;
     const owed = regular.reduce((acc, g) => {
       return acc + (cellState(g, pid) === 'owed' ? 1 : 0);
     }, 0);
@@ -7809,6 +7890,14 @@ function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSave
   });
   const totalOwed = Object.values(owedByPid).reduce((a, b) => a + b, 0);
   const editedCount = Object.values(edits).reduce((acc, m) => acc + Object.keys(m).length, 0);
+  // True if the local upfront set differs from what's stored on the season.
+  const upfrontChanged = (() => {
+    const before = initialUpfront.current;
+    if (before.size !== upfrontSet.size) return true;
+    for (const pid of upfrontSet) if (!before.has(pid)) return true;
+    return false;
+  })();
+  const hasChanges = editedCount > 0 || upfrontChanged;
 
   const save = async () => {
     setError(null);
@@ -7819,6 +7908,13 @@ function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSave
         if (!game) continue;
         const merged = { ...(game.subsPaid || {}), ...changes };
         await window.GRP_DB.saveGame({ ...game, subsPaid: merged });
+      }
+      if (upfrontChanged && season) {
+        await window.GRP_DB.upsertSeason({
+          ...season,
+          upfrontSubs: Array.from(upfrontSet),
+        });
+        initialUpfront.current = new Set(upfrontSet);
       }
       setEdits({});
       setSavedAt(Date.now());
@@ -7878,13 +7974,36 @@ function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSave
                 <tbody>
                   {attendees.map(({ pid, name }) => {
                     const owed = owedByPid[pid] || 0;
+                    const isUpfront = upfrontSet.has(pid);
                     return (
                       <tr key={pid} className="border-t border-emerald-500/10">
-                        <td className="p-2 text-emerald-100 sticky left-0 bg-emerald-950/60 z-10">{name}</td>
+                        <td className="p-2 sticky left-0 bg-emerald-950/60 z-10" style={{ minWidth: 180 }}>
+                          <div className="flex items-center gap-2">
+                            <span className="text-emerald-100">{name}</span>
+                            <button
+                              onClick={() => toggleUpfront(pid)}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono border whitespace-nowrap ${
+                                isUpfront
+                                  ? 'bg-emerald-600/40 border-emerald-300/70 text-emerald-50'
+                                  : 'bg-black/40 border-yellow-500/20 text-yellow-100/40 hover:text-yellow-100/80 hover:border-yellow-500/50'
+                              }`}
+                              title={isUpfront ? 'Paid for the whole round upfront — click to undo' : 'Mark as paid upfront for this round'}
+                            >
+                              {isUpfront ? '🪙 upfront' : '+ upfront'}
+                            </button>
+                          </div>
+                        </td>
                         {regular.map((g) => {
                           const state = cellState(g, pid);
                           if (state === 'dnp') {
                             return <td key={g.id} className="text-center p-1 text-yellow-100/20">—</td>;
+                          }
+                          if (state === 'upfront') {
+                            return (
+                              <td key={g.id} className="text-center p-1" title="Covered by upfront round payment">
+                                <span className="inline-block w-7 h-7 rounded border bg-emerald-700/40 border-emerald-300/60 text-emerald-50 text-[11px] leading-7">⌬</span>
+                              </td>
+                            );
                           }
                           const isPaid = state === 'paid';
                           return (
@@ -7903,8 +8022,10 @@ function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSave
                             </td>
                           );
                         })}
-                        <td className={`text-right p-2 font-mono ${owed > 0 ? 'text-red-300' : 'text-yellow-100/30'}`}>
-                          {owed > 0 ? `£${owed}` : '—'}
+                        <td className={`text-right p-2 font-mono ${
+                          isUpfront ? 'text-emerald-300/70' : owed > 0 ? 'text-red-300' : 'text-yellow-100/30'
+                        }`}>
+                          {isUpfront ? 'upfront' : owed > 0 ? `£${owed}` : '—'}
                         </td>
                       </tr>
                     );
@@ -7934,15 +8055,15 @@ function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSave
             disabled={saving}
             className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm disabled:opacity-30"
           >
-            {Object.keys(edits).length > 0 ? 'CANCEL' : 'CLOSE'}
+            {hasChanges ? 'CANCEL' : 'CLOSE'}
           </button>
           <button
             onClick={save}
-            disabled={saving || Object.keys(edits).length === 0}
+            disabled={saving || !hasChanges}
             className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
             style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
           >
-            {saving ? 'SAVING…' : Object.keys(edits).length > 0 ? `SAVE ${editedCount} CHANGE${editedCount === 1 ? '' : 'S'}` : 'NO CHANGES'}
+            {saving ? 'SAVING…' : hasChanges ? 'SAVE CHANGES' : 'NO CHANGES'}
           </button>
         </div>
       </div>
