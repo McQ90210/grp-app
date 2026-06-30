@@ -1267,19 +1267,33 @@ function LeagueContextScreen({ onConfirm, onBack, fbUser }) {
     let cancelled = false;
     const doLoad = async () => {
       try {
-        const [allSeasons, allPlayers] = await Promise.all([
+        const [allSeasons, allPlayers, allLeagueGames] = await Promise.all([
           window.GRP_DB.getAllSeasons(),
           window.GRP_DB.getAllPlayers(),
+          window.GRP_DB.getAllLeagueGames(),
         ]);
         if (cancelled) return;
         setPlayers(allPlayers);
 
-        // 1) Prefer an active season (today is in range, games remain).
+        // Group games by season so computeSeasonStatus can detect the
+        // all-games-played-but-still-inside-the-date-range case. Without
+        // this, a season whose final has been played on (say) the 5th of
+        // its end month still reads as "active" until the month ends —
+        // which leaves the wizard pointing at the already-played final
+        // instead of rolling forward.
+        const gamesBySeasonId = {};
+        for (const g of allLeagueGames) {
+          if (!g.seasonId) continue;
+          (gamesBySeasonId[g.seasonId] = gamesBySeasonId[g.seasonId] || []).push(g);
+        }
+        const statusOf = (s) => computeSeasonStatus(s, gamesBySeasonId[s.id] || []);
+
+        // 1) Prefer an active season (in date range AND has unplayed games).
         // 2) Else: an upcoming one (e.g. R2 pre-seeded for July).
         // 3) Else: auto-create the next season so we land on Game 1 ready
         //    to go. Writing requires sign-in — fall back to a prompt if not.
         const today = new Date().toISOString().slice(0, 10);
-        let chosen = allSeasons.find(s => computeSeasonStatus(s) === 'active');
+        let chosen = allSeasons.find(s => statusOf(s) === 'active');
         if (!chosen) {
           const upcoming = allSeasons
             .filter(s => s.startDate && s.startDate > today)
@@ -1385,6 +1399,38 @@ function LeagueContextScreen({ onConfirm, onBack, fbUser }) {
       .sort((a, b) => b[1] - a[1])
       .map(([pid, total]) => ({ player: playersById[pid] || { displayName: pid, id: pid }, total }));
   })();
+
+  // Skip-ahead button: roll forward to the next season even if the current
+  // one technically still has games unplayed (typical case: round's final
+  // hasn't been played but we want to start the next round's regular games
+  // alongside). If a doc already exists for the computed next ID, just
+  // switch to it; otherwise create it on the fly.
+  const [startingNext, setStartingNext] = useState(false);
+  const startNextRound = async () => {
+    if (!fbUser) return;
+    setStartingNext(true);
+    try {
+      const next = computeNextSeasonDefaults(season || seasons[0]);
+      const existing = seasons.find((s) => s.id === next.id);
+      if (!existing) {
+        await window.GRP_DB.upsertSeason(next);
+        setSeasons((prev) => [next, ...prev]);
+        setJustCreated({ id: next.id, name: next.name });
+      }
+      setSeasonId(next.id);
+      const nextGames = await window.GRP_DB.getGamesForSeason(next.id);
+      setGames(nextGames);
+      const played = new Set(nextGames.map((g) => g.gameNumber));
+      let n = 1;
+      while (played.has(n) && n <= next.totalGames) n++;
+      setGameNumber(Math.min(n, next.totalGames));
+      setEditing(false);
+    } catch (e) {
+      setError('Could not start next round: ' + e.message);
+    } finally {
+      setStartingNext(false);
+    }
+  };
 
   const handleConfirm = () => {
     onConfirm({
@@ -1519,6 +1565,24 @@ function LeagueContextScreen({ onConfirm, onBack, fbUser }) {
                       </div>
                     )}
                   </div>
+                  {fbUser && (
+                    <div className="pt-2 border-t border-emerald-500/15">
+                      <button
+                        onClick={startNextRound}
+                        disabled={startingNext}
+                        className="w-full px-4 py-2 rounded-lg bg-emerald-900/30 border border-emerald-400/40 text-emerald-100 font-mono text-xs hover:bg-emerald-900/50 disabled:opacity-50"
+                        title="Roll forward to the next round (creates the season if it doesn't exist) and start at Game 1."
+                      >
+                        {startingNext ? 'Starting…' : '+ start next round'}
+                      </button>
+                      <div className="text-yellow-100/40 text-[10px] font-mono mt-1 text-center">
+                        Skip to {(() => {
+                          const next = computeNextSeasonDefaults(season || seasons[0]);
+                          return next.name;
+                        })()} · Game 1
+                      </div>
+                    </div>
+                  )}
                   <button
                     onClick={() => setEditing(false)}
                     className="text-emerald-300/80 hover:text-emerald-200 font-mono text-xs underline"
