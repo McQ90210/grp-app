@@ -1,6 +1,6 @@
 // GR Poker service worker — caches the app for offline use.
 
-const CACHE_NAME = 'gr-poker-v7.69';
+const CACHE_NAME = 'gr-poker-v7.70';
 const ASSETS = [
   './',
   './index.html',
