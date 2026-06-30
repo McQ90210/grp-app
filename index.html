@@ -1658,6 +1658,13 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   const [hrRegulars, setHrRegulars] = useState([]); // names on the HR regulars allowlist
   const [showPlayerPicker, setShowPlayerPicker] = useState(false);
   const [playingTonight, setPlayingTonight] = useState(new Set()); // names selected for this game
+  // Per-attendee payment capture — keyed by name during the wizard, mapped
+  // to PIDs at game-save time. Defaults to true when a player is ticked
+  // into the game (the common-case "they paid on arrival"); admin can
+  // un-tick anyone who walked in owing. For finals, subs are skipped
+  // entirely (no subs collected on the final).
+  const [buyInsPaidByName, setBuyInsPaidByName] = useState({});
+  const [subsPaidByName, setSubsPaidByName] = useState({});
   const [newPlayer, setNewPlayer] = useState('');
   const [duration, setDuration] = useState('180');
   const [includeAntes, setIncludeAntes] = useState(false);
@@ -1817,6 +1824,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       });
     setRoster([...roster, ...toAdd]);
     setPlayingTonight((prev) => new Set([...prev, ...names]));
+    // Seed each newly-added attendee with default paid=true so we don't
+    // have to chase consent. Admin un-ticks anyone who walked in owing.
+    setBuyInsPaidByName((m) => { const n = { ...m }; names.forEach((nm) => { n[nm] = true; }); return n; });
+    setSubsPaidByName((m) => { const n = { ...m }; names.forEach((nm) => { n[nm] = true; }); return n; });
     setShowPlayerPicker(false);
   };
 
@@ -1831,14 +1842,23 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       setRoster([...roster, { name, sound: 'none' }]);
       setPlayingTonight((prev) => new Set([...prev, name]));
     }
+    setBuyInsPaidByName((m) => ({ ...m, [name]: true }));
+    setSubsPaidByName((m) => ({ ...m, [name]: true }));
     setNewPlayer('');
   };
 
   const togglePlaying = (name) => {
     setPlayingTonight((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      if (next.has(name)) {
+        next.delete(name);
+        setBuyInsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
+        setSubsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
+      } else {
+        next.add(name);
+        setBuyInsPaidByName((m) => ({ ...m, [name]: true }));
+        setSubsPaidByName((m) => ({ ...m, [name]: true }));
+      }
       return next;
     });
   };
@@ -1864,13 +1884,26 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       next.delete(name);
       return next;
     });
+    setBuyInsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
+    setSubsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
     if (gameType === 'highrollers') {
       setHrRegulars((prev) => prev.filter((n) => n !== name));
     }
   };
 
-  const selectAll = () => setPlayingTonight(new Set(roster.map((p) => p.name)));
-  const selectNone = () => setPlayingTonight(new Set());
+  const selectAll = () => {
+    const allNames = roster.map((p) => p.name);
+    setPlayingTonight(new Set(allNames));
+    const allPaid = {};
+    allNames.forEach((n) => { allPaid[n] = true; });
+    setBuyInsPaidByName(allPaid);
+    setSubsPaidByName(allPaid);
+  };
+  const selectNone = () => {
+    setPlayingTonight(new Set());
+    setBuyInsPaidByName({});
+    setSubsPaidByName({});
+  };
 
   const playersArray = roster.filter((p) => playingTonight.has(p.name));
 
@@ -1923,6 +1956,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       duration: parseInt(duration),
       levels,
       format: isFinal ? 'freezeout' : format,
+      // Per-attendee payment status captured during selection. Keyed by
+      // displayName for now; SaveGameModal converts to PIDs at save time.
+      buyInsPaidByName,
+      subsPaidByName,
       leagueContext, // pass through so the main timer & save flow know which season/game
     });
   };
@@ -2188,39 +2225,76 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                               </button>
                             </div>
                             {playing && (
-                              <div className="flex gap-2 mt-2 ml-7">
-                                <select
-                                  value={player.sound || 'none'}
-                                  onChange={(e) => updatePlayerSound(player.name, e.target.value)}
-                                  className="flex-1 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-100/80 text-xs focus:outline-none focus:border-yellow-500/50"
-                                >
-                                  <option value="none" style={{ background: '#0a3d1f' }}>None</option>
-                                  {Object.keys(customSounds || {}).length > 0 && (
-                                    <optgroup label="Your sounds">
-                                      {Object.entries(customSounds).map(([key, s]) => (
-                                        <option key={`c-${key}`} value={key} style={{ background: '#0a3d1f' }}>
+                              <>
+                                <div className="flex gap-2 mt-2 ml-7">
+                                  <select
+                                    value={player.sound || 'none'}
+                                    onChange={(e) => updatePlayerSound(player.name, e.target.value)}
+                                    className="flex-1 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-100/80 text-xs focus:outline-none focus:border-yellow-500/50"
+                                  >
+                                    <option value="none" style={{ background: '#0a3d1f' }}>None</option>
+                                    {Object.keys(customSounds || {}).length > 0 && (
+                                      <optgroup label="Your sounds">
+                                        {Object.entries(customSounds).map(([key, s]) => (
+                                          <option key={`c-${key}`} value={key} style={{ background: '#0a3d1f' }}>
+                                            {s.label}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    )}
+                                    <optgroup label="Built-in (synth or file)">
+                                      {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
+                                        <option key={key} value={key} style={{ background: '#0a3d1f' }}>
                                           {s.label}
                                         </option>
                                       ))}
                                     </optgroup>
-                                  )}
-                                  <optgroup label="Built-in (synth or file)">
-                                    {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
-                                      <option key={key} value={key} style={{ background: '#0a3d1f' }}>
-                                        {s.label}
-                                      </option>
-                                    ))}
-                                  </optgroup>
-                                </select>
-                                <button
-                                  onClick={() => playSound(player.sound || 'none', customSounds)}
-                                  disabled={!player.sound || player.sound === 'none'}
-                                  className="px-3 py-1 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 text-xs disabled:opacity-30"
-                                  title="Preview sound"
-                                >
-                                  <Music size={12} />
-                                </button>
-                              </div>
+                                  </select>
+                                  <button
+                                    onClick={() => playSound(player.sound || 'none', customSounds)}
+                                    disabled={!player.sound || player.sound === 'none'}
+                                    className="px-3 py-1 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 text-xs disabled:opacity-30"
+                                    title="Preview sound"
+                                  >
+                                    <Music size={12} />
+                                  </button>
+                                </div>
+                                {/* League-only: capture buy-in + subs payment
+                                    state as each player arrives. Tap a chip
+                                    to flip its state. Subs hidden on finals. */}
+                                {gameType === 'league' && (() => {
+                                  const buyInOk = buyInsPaidByName[player.name] !== false;
+                                  const subsOk = subsPaidByName[player.name] !== false;
+                                  return (
+                                    <div className="flex gap-2 mt-2 ml-7 flex-wrap">
+                                      <button
+                                        onClick={() => setBuyInsPaidByName((m) => ({ ...m, [player.name]: !buyInOk }))}
+                                        className={`px-2 py-1 rounded text-[11px] font-mono border ${
+                                          buyInOk
+                                            ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-100'
+                                            : 'bg-red-900/40 border-red-400/60 text-red-100'
+                                        }`}
+                                        title="Toggle whether this player has paid their buy-in"
+                                      >
+                                        💷 buy-in {buyInOk ? 'paid' : 'OWES'}
+                                      </button>
+                                      {!isFinal && (
+                                        <button
+                                          onClick={() => setSubsPaidByName((m) => ({ ...m, [player.name]: !subsOk }))}
+                                          className={`px-2 py-1 rounded text-[11px] font-mono border ${
+                                            subsOk
+                                              ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-100'
+                                              : 'bg-red-900/40 border-red-400/60 text-red-100'
+                                          }`}
+                                          title="Toggle whether this player has paid their £3 subs"
+                                        >
+                                          🪙 subs {subsOk ? 'paid' : 'OWES'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                              </>
                             )}
                           </div>
                         );
@@ -2618,6 +2692,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // where `rebought: true` means the player bought back in immediately
   // (so they stayed in the active pool — not in eliminatedPlayers).
   const [knockouts, setKnockouts] = useState(resume?.knockouts || []);
+  // Per-attendee payment status (keyed by displayName). Seeded from the
+  // setup wizard's captured state; late-entry players default to paid
+  // (admin can correct via the Subs Ledger after the fact).
+  const [buyInsPaidByName, setBuyInsPaidByName] = useState(resume?.buyInsPaidByName || config.buyInsPaidByName || {});
+  const [subsPaidByName, setSubsPaidByName] = useState(resume?.subsPaidByName || config.subsPaidByName || {});
   const [pendingKnockout, setPendingKnockout] = useState(null); // { player, intent: 'out' | 'rebuy' } — awaiting "who knocked them out?"
 
   // ---- WLED (optional LED strip controlled by an ESP32 on the local LAN) ----
@@ -2833,6 +2912,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       rebuyCounts,
       knockedOutBy,
       knockouts,
+      buyInsPaidByName,
+      subsPaidByName,
       payoutKey,
       gameStartedAt,
       savedAtClient: Date.now(),
@@ -2846,7 +2927,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         console.error('[grp] live save to Firestore failed:', e);
       });
     }
-  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, knockouts, payoutKey, gameStartedAt, fbUser, config]);
+  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, knockouts, buyInsPaidByName, subsPaidByName, payoutKey, gameStartedAt, fbUser, config]);
 
   // Load the full club roster from Firestore so late-entry can suggest existing names
   useEffect(() => {
@@ -3181,6 +3262,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     }
     setPlayers([...players, { name, sound }]);
     setNewPlayerName('');
+    // Default a late-entry player to "paid" — common case. Admin can
+    // un-tick them after the fact via the Subs Ledger.
+    setBuyInsPaidByName((m) => ({ ...m, [name]: true }));
+    setSubsPaidByName((m) => ({ ...m, [name]: true }));
     // Late-join welcome announcement. Per-player clip lives at
     // sounds/voice/welcome-{slug}.mp3; falls back to Web Speech if missing.
     if (voiceEnabled && hasStarted) {
@@ -4436,6 +4521,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           rebuyCounts={rebuyCounts}
           knockedOutBy={knockedOutBy}
           knockouts={knockouts}
+          buyInsPaidByName={buyInsPaidByName}
+          subsPaidByName={subsPaidByName}
           payoutKey={payoutKey}
           gameStartedAt={gameStartedAt}
           fbUser={fbUser}
@@ -5316,6 +5403,7 @@ function LeagueDashboard({ onBack, fbUser }) {
   // Sandbox / admin tooling
   const [showAdminTools, setShowAdminTools] = useState(false);
   const [showManagePlayers, setShowManagePlayers] = useState(false);
+  const [showSubsLedger, setShowSubsLedger] = useState(false);
 
   const doResend = async () => {
     setShowResendConfirm(false);
@@ -5642,6 +5730,14 @@ function LeagueDashboard({ onBack, fbUser }) {
                 >
                   ✉ MANAGE PLAYERS
                 </button>
+                <button
+                  onClick={() => setShowSubsLedger(true)}
+                  disabled={!activeSeasonId}
+                  className="px-3 py-1.5 rounded font-mono text-xs border border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
+                  title="View / edit who's paid £3 subs across this season's regular games."
+                >
+                  🪙 SUBS LEDGER
+                </button>
                 <TestModeToggle />
               </div>
             )}
@@ -5850,6 +5946,25 @@ function LeagueDashboard({ onBack, fbUser }) {
           onSaved={() => {
             // Refresh local players list so any other UI reflects new emails immediately.
             if (window.GRP_DB) window.GRP_DB.getAllPlayers().then(setPlayers).catch(() => {});
+          }}
+        />
+      )}
+
+      {/* Subs Ledger — per-season grid of who paid / who owes */}
+      {showSubsLedger && activeSeasonId && (
+        <SubsLedgerModal
+          seasonId={activeSeasonId}
+          seasonName={seasons.find((s) => s.id === activeSeasonId)?.name}
+          games={games}
+          players={players}
+          onClose={() => setShowSubsLedger(false)}
+          onSaved={() => {
+            // Refresh games so the ledger reflects the saved subsPaid maps
+            // on its next open without a full page reload.
+            if (!window.GRP_DB || !activeSeasonId) return;
+            window.GRP_DB.getGamesForSeason(activeSeasonId)
+              .then(setGames)
+              .catch(() => {});
           }}
         />
       )}
@@ -6578,6 +6693,8 @@ function SaveGameModal({
   rebuyCounts,     // { name: count }
   knockedOutBy,    // { eliminatedName: knockerOuterName } — legacy single-shot map
   knockouts,       // [{ eliminated, knocker, rebought }] — chronological log (v2)
+  buyInsPaidByName, // { displayName: bool } — per-attendee buy-in paid (league)
+  subsPaidByName,   // { displayName: bool } — per-attendee subs paid (league, non-final)
   payoutKey,
   gameStartedAt,   // ms-since-epoch when first PLAY was pressed (or null)
   // UI
@@ -6804,6 +6921,17 @@ function SaveGameModal({
         rebought: !!k.rebought,
       }));
 
+      // Per-attendee payment status — convert name-keyed maps to PID-keyed
+      // maps so they line up with attendees/finishOrder/etc. Stored on the
+      // game doc; admin can edit later via the Subs Ledger.
+      const buyInsPaidByPid = {};
+      const subsPaidByPid = {};
+      players.forEach((p) => {
+        const pid = resolvePid(p.name);
+        buyInsPaidByPid[pid] = (buyInsPaidByName || {})[p.name] !== false;
+        subsPaidByPid[pid] = (subsPaidByName || {})[p.name] !== false;
+      });
+
       const gameDoc = {
         id: finalId,
         type: gameType,
@@ -6820,6 +6948,11 @@ function SaveGameModal({
         finishOrder: initialFinishOrder,
         firstOut: firstOutName ? resolvePid(firstOutName) : null,
         knockouts: isLeague ? knockoutsByPid : [],
+        // League-only payment tracking. Falsy maps for HR + finals'
+        // subs are still written (as empty objects) so the read-side
+        // always sees a defined shape.
+        buyInsPaid: isLeague ? buyInsPaidByPid : {},
+        subsPaid: (isLeague && !isFinal) ? subsPaidByPid : {},
         pot: parseFloat(pot) || 0,
         payouts,
         leagueMoney: isLeague ? (parseFloat(leagueMoney) || 0) : 0,
@@ -7614,6 +7747,209 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
   );
 }
 
+// ============ SUBS LEDGER MODAL (Admin only) ============
+// Per-attendee × per-game grid of subs paid status, scoped to the current
+// league season. Cells are ticked when paid, blank when owed, dashed when
+// the player wasn't at that game. Click to toggle. Save writes the
+// updated subsPaid maps back to each affected game doc. Finals are
+// excluded — no subs collected on the final game.
+function SubsLedgerModal({ seasonId, seasonName, games, players, onClose, onSaved }) {
+  // Edit buffer: { [gameId]: { [pid]: bool } } — only games with changes.
+  const [edits, setEdits] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [savedAt, setSavedAt] = useState(0);
+
+  const playersById = {};
+  players.forEach((p) => { playersById[p.id] = p; });
+
+  // Regular games only, sorted by gameNumber. Finals exempt.
+  const regular = (games || [])
+    .filter((g) => g.seasonId === seasonId && !g.isFinal)
+    .sort((a, b) => (a.gameNumber || 0) - (b.gameNumber || 0));
+
+  // Attendee universe — anyone who showed up to at least one regular game.
+  const pidSet = new Set();
+  regular.forEach((g) => (g.attendees || []).forEach((pid) => pidSet.add(pid)));
+  const attendees = Array.from(pidSet)
+    .map((pid) => ({ pid, name: playersById[pid]?.displayName || pid }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Resolve a cell's effective state, accounting for unsaved edits.
+  const cellState = (game, pid) => {
+    if (!(game.attendees || []).includes(pid)) return 'dnp';
+    const editVal = edits[game.id]?.[pid];
+    if (editVal !== undefined) return editVal ? 'paid' : 'owed';
+    const stored = (game.subsPaid || {})[pid];
+    // Treat missing data as paid for legacy games (no subsPaid map) —
+    // otherwise every old game would show as fully unpaid the moment
+    // the ledger opens. Admin can flip if needed.
+    if (Object.keys(game.subsPaid || {}).length === 0) return 'paid';
+    return stored === false ? 'owed' : 'paid';
+  };
+
+  const toggle = (gameId, pid) => {
+    setEdits((prev) => {
+      const game = regular.find((g) => g.id === gameId);
+      const current = cellState(game, pid);
+      if (current === 'dnp') return prev;
+      const next = { ...(prev[gameId] || {}) };
+      next[pid] = current !== 'paid'; // owed → paid; paid → owed
+      return { ...prev, [gameId]: next };
+    });
+  };
+
+  // Compute total outstanding £ per player given current edits.
+  const owedByPid = {};
+  attendees.forEach(({ pid }) => {
+    const owed = regular.reduce((acc, g) => {
+      return acc + (cellState(g, pid) === 'owed' ? 1 : 0);
+    }, 0);
+    if (owed > 0) owedByPid[pid] = owed * 3;
+  });
+  const totalOwed = Object.values(owedByPid).reduce((a, b) => a + b, 0);
+  const editedCount = Object.values(edits).reduce((acc, m) => acc + Object.keys(m).length, 0);
+
+  const save = async () => {
+    setError(null);
+    setSaving(true);
+    try {
+      for (const [gameId, changes] of Object.entries(edits)) {
+        const game = regular.find((g) => g.id === gameId);
+        if (!game) continue;
+        const merged = { ...(game.subsPaid || {}), ...changes };
+        await window.GRP_DB.saveGame({ ...game, subsPaid: merged });
+      }
+      setEdits({});
+      setSavedAt(Date.now());
+      if (onSaved) onSaved();
+    } catch (e) {
+      setError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-4xl w-full max-h-[92vh] overflow-y-auto">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="font-display text-3xl gold-text">SUBS LEDGER</div>
+            <div className="text-yellow-100/60 font-mono text-xs mt-1">
+              {seasonName || seasonId} · £3/game · finals excluded · tap a cell to toggle
+            </div>
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        </div>
+
+        {error && (
+          <div className="mb-3 p-3 rounded-lg bg-red-950/40 border border-red-500/40 text-red-200 font-mono text-xs">{error}</div>
+        )}
+        {savedAt > 0 && Object.keys(edits).length === 0 && (
+          <div className="mb-3 p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 font-mono text-xs">
+            ✓ Saved. Ledger up to date.
+          </div>
+        )}
+
+        {regular.length === 0 ? (
+          <div className="text-yellow-100/60 font-mono text-sm text-center py-8">
+            No regular games saved in this season yet.
+          </div>
+        ) : attendees.length === 0 ? (
+          <div className="text-yellow-100/60 font-mono text-sm text-center py-8">
+            No attendees recorded yet.
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto mb-4 border border-emerald-500/15 rounded-lg">
+              <table className="w-full font-mono text-xs">
+                <thead>
+                  <tr className="bg-black/40">
+                    <th className="text-left p-2 text-yellow-100/60 sticky left-0 bg-black/60 z-10" style={{ minWidth: 120 }}>Player</th>
+                    {regular.map((g) => (
+                      <th key={g.id} className="text-center p-2 text-emerald-300 whitespace-nowrap" style={{ minWidth: 60 }}>
+                        G{g.gameNumber}
+                      </th>
+                    ))}
+                    <th className="text-right p-2 text-yellow-300 whitespace-nowrap" style={{ minWidth: 70 }}>Owed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attendees.map(({ pid, name }) => {
+                    const owed = owedByPid[pid] || 0;
+                    return (
+                      <tr key={pid} className="border-t border-emerald-500/10">
+                        <td className="p-2 text-emerald-100 sticky left-0 bg-emerald-950/60 z-10">{name}</td>
+                        {regular.map((g) => {
+                          const state = cellState(g, pid);
+                          if (state === 'dnp') {
+                            return <td key={g.id} className="text-center p-1 text-yellow-100/20">—</td>;
+                          }
+                          const isPaid = state === 'paid';
+                          return (
+                            <td key={g.id} className="text-center p-1">
+                              <button
+                                onClick={() => toggle(g.id, pid)}
+                                className={`w-7 h-7 rounded border text-[11px] ${
+                                  isPaid
+                                    ? 'bg-emerald-600/30 border-emerald-400/60 text-emerald-100'
+                                    : 'bg-red-900/40 border-red-400/60 text-red-100'
+                                }`}
+                                title={isPaid ? 'Paid — click to mark owed' : 'Owed — click to mark paid'}
+                              >
+                                {isPaid ? '✓' : '□'}
+                              </button>
+                            </td>
+                          );
+                        })}
+                        <td className={`text-right p-2 font-mono ${owed > 0 ? 'text-red-300' : 'text-yellow-100/30'}`}>
+                          {owed > 0 ? `£${owed}` : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mb-4 p-3 rounded-lg bg-black/30 border border-yellow-500/15 font-mono text-sm">
+              <div className="text-yellow-100/60 text-xs tracking-widest mb-1">OUTSTANDING TOTAL</div>
+              <div className="text-2xl font-display text-yellow-100">£{totalOwed}</div>
+              {Object.keys(owedByPid).length > 0 && (
+                <div className="text-yellow-100/50 text-xs mt-2">
+                  {Object.entries(owedByPid)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([pid, owed]) => `${playersById[pid]?.displayName || pid} £${owed}`)
+                    .join(' · ')}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm disabled:opacity-30"
+          >
+            {Object.keys(edits).length > 0 ? 'CANCEL' : 'CLOSE'}
+          </button>
+          <button
+            onClick={save}
+            disabled={saving || Object.keys(edits).length === 0}
+            className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            {saving ? 'SAVING…' : Object.keys(edits).length > 0 ? `SAVE ${editedCount} CHANGE${editedCount === 1 ? '' : 'S'}` : 'NO CHANGES'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============ IMPORT MODAL (Admin only) ============
 function ImportModal({ onClose, onDone }) {
   const [busy, setBusy] = useState(false);
@@ -7852,6 +8188,8 @@ function App() {
         rebuyCounts: liveResume.rebuyCounts || {},
         knockedOutBy: liveResume.knockedOutBy || {},
         knockouts: liveResume.knockouts || [],
+        buyInsPaidByName: liveResume.buyInsPaidByName || {},
+        subsPaidByName: liveResume.subsPaidByName || {},
         gameStartedAt: liveResume.gameStartedAt || null,
       },
     });
