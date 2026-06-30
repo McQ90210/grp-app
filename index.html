@@ -3619,13 +3619,6 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12 mb-6">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
               <div className="text-center">
-                <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">LEVEL</div>
-                <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
-                  {(currentLevel + 1).toString().padStart(2, '0')}
-                  <span className="text-2xl sm:text-3xl text-yellow-500/40"> / {levels.length}</span>
-                </div>
-              </div>
-              <div className="text-center">
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">REMAINING</div>
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {activePlayers.length.toString().padStart(2, '0')}
@@ -3637,8 +3630,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
                   {activePlayers.length > 0 ? avgStack.toLocaleString() : '—'}
                 </div>
-                <div className="font-mono text-[11px] text-yellow-300/50 mt-1">
-                  {totalChipsInPlay.toLocaleString()} in play
+              </div>
+              <div className="text-center">
+                <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">CHIPS</div>
+                <div className="font-display text-5xl sm:text-6xl gold-text leading-none">
+                  {totalChipsInPlay.toLocaleString()}
                 </div>
               </div>
               <div className="text-center">
@@ -5349,16 +5345,33 @@ function LeagueDashboard({ onBack, fbUser }) {
 
     const doLoad = async () => {
       try {
-        const [allSeasons, allPlayers] = await Promise.all([
+        const [allSeasons, allPlayers, allLeagueGames] = await Promise.all([
           window.GRP_DB.getAllSeasons(),
           window.GRP_DB.getAllPlayers(),
+          window.GRP_DB.getAllLeagueGames(),
         ]);
         if (cancelled) return;
         setSeasons(allSeasons);
         setPlayers(allPlayers);
-        // Pick the season currently active by date (ignoring stored status).
-        const active = allSeasons.find(s => computeSeasonStatus(s) === 'active') || allSeasons[0];
-        if (active) setActiveSeasonId(active.id);
+        // Pass per-season games to the status check so a season whose
+        // final has been played mid-month reads as `complete` even
+        // though today's still inside its date range — otherwise the
+        // dashboard would keep defaulting to last round when the user
+        // arrives here straight after finishing a game in the new one.
+        const gamesBySeasonId = {};
+        for (const g of allLeagueGames) {
+          if (!g.seasonId) continue;
+          (gamesBySeasonId[g.seasonId] = gamesBySeasonId[g.seasonId] || []).push(g);
+        }
+        const statusOf = (s) => computeSeasonStatus(s, gamesBySeasonId[s.id] || []);
+        // Selection priority: live round first → upcoming round (so a
+        // newly-created season with no games yet still wins over a
+        // complete one) → most recent with games → fall back to latest.
+        let chosen = allSeasons.find(s => statusOf(s) === 'active');
+        if (!chosen) chosen = allSeasons.find(s => statusOf(s) === 'upcoming');
+        if (!chosen) chosen = allSeasons.find(s => (gamesBySeasonId[s.id] || []).length > 0);
+        if (!chosen) chosen = allSeasons[0];
+        if (chosen) setActiveSeasonId(chosen.id);
         setLoading(false);
       } catch (e) {
         if (!cancelled) {
