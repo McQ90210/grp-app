@@ -2296,9 +2296,9 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                                                 ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-100'
                                                 : 'bg-red-900/40 border-red-400/60 text-red-100'
                                             }`}
-                                            title="Tap when this player has paid their £3 subs"
+                                            title="Tap when this player has paid their £3 subs for tonight (separate from upfront round payment, which is set in the Subs Ledger)"
                                           >
-                                            🪙 subs {subsOk ? 'paid' : 'OWES'}
+                                            🪙 £3 subs {subsOk ? 'paid' : 'OWES'}
                                           </button>
                                         )
                                       )}
@@ -2709,6 +2709,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const [buyInsPaidByName, setBuyInsPaidByName] = useState(resume?.buyInsPaidByName || config.buyInsPaidByName || {});
   const [subsPaidByName, setSubsPaidByName] = useState(resume?.subsPaidByName || config.subsPaidByName || {});
   const [pendingKnockout, setPendingKnockout] = useState(null); // { player, intent: 'out' | 'rebuy' } — awaiting "who knocked them out?"
+  // Confirmation gate for the trash-can in the players panel. Removing a
+  // player wipes all the per-attendee state (rebuys, payment chips,
+  // elimination order) so this needs a tap-twice guardrail.
+  const [pendingRemove, setPendingRemove] = useState(null); // { idx, name } | null
 
   // ---- WLED (optional LED strip controlled by an ESP32 on the local LAN) ----
   // Settings live in localStorage only — no events are wired up yet, this just
@@ -4009,7 +4013,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                           <RotateCcw size={14} />
                         </button>
                       )}
-                      <button onClick={() => removePlayer(idx)} className="text-yellow-100/40 hover:text-red-400" title="Remove from game">
+                      <button onClick={() => setPendingRemove({ idx, name: player.name })} className="text-yellow-100/40 hover:text-red-400" title="Remove from game (confirm)">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -4406,6 +4410,14 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           the elimination/rebuy is applied. The intent ('out' vs 'rebuy')
           drives the title + footer copy so the admin knows what they're
           confirming. The picker itself is identical either way. */}
+      {pendingRemove && (
+        <ConfirmDialog
+          title="REMOVE PLAYER?"
+          message={`This will take ${pendingRemove.name} out of tonight's game entirely — their rebuys, payment chips and elimination order are wiped. (Use OUT to mark them eliminated without removing.)`}
+          onCancel={() => setPendingRemove(null)}
+          onConfirm={() => { removePlayer(pendingRemove.idx); setPendingRemove(null); }}
+        />
+      )}
       {pendingKnockout && (() => {
         const { player: pendingPlayer, intent: pendingIntent } = pendingKnockout;
         const isRebuyIntent = pendingIntent === 'rebuy';
