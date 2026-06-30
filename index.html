@@ -1659,12 +1659,34 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   const [showPlayerPicker, setShowPlayerPicker] = useState(false);
   const [playingTonight, setPlayingTonight] = useState(new Set()); // names selected for this game
   // Per-attendee payment capture — keyed by name during the wizard, mapped
-  // to PIDs at game-save time. Defaults to true when a player is ticked
-  // into the game (the common-case "they paid on arrival"); admin can
-  // un-tick anyone who walked in owing. For finals, subs are skipped
+  // to PIDs at game-save time. Default state is "OWES" (false); admin
+  // taps to flip green as money's collected. For finals, subs are skipped
   // entirely (no subs collected on the final).
   const [buyInsPaidByName, setBuyInsPaidByName] = useState({});
   const [subsPaidByName, setSubsPaidByName] = useState({});
+  // Locally-mirrored upfront-paid set so the wizard can flip players into
+  // / out of season.upfrontSubs inline. Persists to the season doc on
+  // every toggle (admin-only), so the Subs Ledger and any later wizard
+  // open see the same truth without manual refetch.
+  const [localUpfrontSet, setLocalUpfrontSet] = useState(
+    () => new Set(leagueContext?.season?.upfrontSubs || [])
+  );
+  const toggleUpfrontFor = async (pid) => {
+    const current = Array.from(localUpfrontSet);
+    const has = current.includes(pid);
+    const next = has ? current.filter((x) => x !== pid) : [...current, pid];
+    setLocalUpfrontSet(new Set(next));
+    if (fbUser && leagueContext?.season && window.GRP_DB) {
+      try {
+        await window.GRP_DB.upsertSeason({
+          ...leagueContext.season,
+          upfrontSubs: next,
+        });
+      } catch (e) {
+        console.error('[grp] upfront toggle failed:', e);
+      }
+    }
+  };
   const [newPlayer, setNewPlayer] = useState('');
   const [duration, setDuration] = useState('180');
   const [includeAntes, setIncludeAntes] = useState(false);
@@ -2265,8 +2287,8 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                                 {gameType === 'league' && (() => {
                                   const buyInOk = buyInsPaidByName[player.name] === true;
                                   const subsOk = subsPaidByName[player.name] === true;
-                                  const upfrontList = leagueContext?.season?.upfrontSubs || [];
-                                  const isUpfront = upfrontList.includes(slugifyName(player.name));
+                                  const playerPid = slugifyName(player.name);
+                                  const isUpfront = localUpfrontSet.has(playerPid);
                                   return (
                                     <div className="flex gap-2 mt-2 ml-7 flex-wrap">
                                       <button
@@ -2282,24 +2304,39 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                                       </button>
                                       {!isFinal && (
                                         isUpfront ? (
-                                          <span
-                                            className="px-2 py-1 rounded text-[11px] font-mono border bg-emerald-700/40 border-emerald-300/70 text-emerald-50"
-                                            title="Paid for the whole round upfront via the Subs Ledger"
+                                          <button
+                                            onClick={() => fbUser && toggleUpfrontFor(playerPid)}
+                                            disabled={!fbUser}
+                                            className="px-2 py-1 rounded text-[11px] font-mono border bg-emerald-700/40 border-emerald-300/70 text-emerald-50 disabled:opacity-60"
+                                            title={fbUser
+                                              ? 'Paid £18 upfront for the whole round — tap to undo'
+                                              : 'Paid for the whole round upfront (sign in as admin to edit)'}
                                           >
                                             🪙 paid for round
-                                          </span>
-                                        ) : (
-                                          <button
-                                            onClick={() => setSubsPaidByName((m) => ({ ...m, [player.name]: !subsOk }))}
-                                            className={`px-2 py-1 rounded text-[11px] font-mono border ${
-                                              subsOk
-                                                ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-100'
-                                                : 'bg-red-900/40 border-red-400/60 text-red-100'
-                                            }`}
-                                            title="Tap when this player has paid their £3 subs for tonight (separate from upfront round payment, which is set in the Subs Ledger)"
-                                          >
-                                            🪙 £3 subs {subsOk ? 'paid' : 'OWES'}
                                           </button>
+                                        ) : (
+                                          <>
+                                            <button
+                                              onClick={() => setSubsPaidByName((m) => ({ ...m, [player.name]: !subsOk }))}
+                                              className={`px-2 py-1 rounded text-[11px] font-mono border ${
+                                                subsOk
+                                                  ? 'bg-emerald-600/25 border-emerald-400/50 text-emerald-100'
+                                                  : 'bg-red-900/40 border-red-400/60 text-red-100'
+                                              }`}
+                                              title="Tap when this player has paid their £3 subs for tonight only"
+                                            >
+                                              🪙 £3 subs {subsOk ? 'paid' : 'OWES'}
+                                            </button>
+                                            {fbUser && (
+                                              <button
+                                                onClick={() => toggleUpfrontFor(playerPid)}
+                                                className="px-2 py-1 rounded text-[11px] font-mono border border-yellow-500/30 text-yellow-100/60 hover:bg-yellow-500/10 hover:border-yellow-500/60 hover:text-yellow-100"
+                                                title="Mark this player as having paid £18 for the whole round upfront. Locks the £3 chip and applies to every regular game in this round."
+                                              >
+                                                + round paid
+                                              </button>
+                                            )}
+                                          </>
                                         )
                                       )}
                                     </div>
