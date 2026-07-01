@@ -12,6 +12,9 @@ import {
 import {
   getFunctions, httpsCallable,
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
+import {
+  getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObject,
+} from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBMaR3kHYp1zqLyYE4Pra6jnKtRQkPxH9Y",
@@ -27,6 +30,10 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 // Cloud Functions live in europe-west2 (same region as Firestore — see CLAUDE.md).
 const functions = getFunctions(app, 'europe-west2');
+// Firebase Storage — used for per-player custom elimination sounds uploaded
+// from the Manage Players modal. Bucket lives at sounds/players/{pid}.mp3.
+// Public read, admin write (see storage.rules).
+const storage = getStorage(app);
 
 window.GRP_FIREBASE = {
   app, db, auth, functions,
@@ -190,6 +197,43 @@ async function clearLiveGame() {
   try { await deleteDoc(doc(db, 'liveGames', 'current')); } catch (e) {}
 }
 
+// ------ PLAYER SOUND UPLOAD (Firebase Storage) ------
+// Uploads an audio file for a player. Stores it at sounds/players/{pid}.{ext}
+// (extension inferred from the file), retrieves the public download URL,
+// and stamps it on the player doc as `customSoundUrl`. Returns the URL.
+// Requires admin auth (Storage rules gate write).
+async function uploadPlayerSound(pid, file) {
+  if (!pid || !file) throw new Error('uploadPlayerSound: pid and file are required.');
+  const nameParts = (file.name || '').split('.');
+  const ext = (nameParts.length > 1 ? nameParts.pop() : 'mp3').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp3';
+  const path = `sounds/players/${pid}.${ext}`;
+  const ref = storageRef(storage, path);
+  await uploadBytes(ref, file, { contentType: file.type || `audio/${ext}` });
+  const url = await getDownloadURL(ref);
+  await setDoc(
+    doc(db, 'players', pid),
+    { customSoundUrl: url, customSoundPath: path },
+    { merge: true }
+  );
+  return url;
+}
+
+// Removes a player's custom sound: deletes the Storage object (best-effort;
+// non-fatal if it's already gone) and clears the fields on the player doc.
+async function removePlayerSound(pid) {
+  if (!pid) throw new Error('removePlayerSound: pid is required.');
+  const snap = await getDoc(doc(db, 'players', pid));
+  const path = snap.exists() ? snap.data().customSoundPath : null;
+  if (path) {
+    try { await deleteObject(storageRef(storage, path)); } catch (_) { /* already gone */ }
+  }
+  await setDoc(
+    doc(db, 'players', pid),
+    { customSoundUrl: null, customSoundPath: null },
+    { merge: true }
+  );
+}
+
 // ------ EMAIL / CLOUD FUNCTIONS ------
 // Calls the `resendLatestResults` Cloud Function. Returns { ok, gameId, sent }
 // or throws. Requires the caller to be authenticated.
@@ -230,6 +274,7 @@ async function simulateGames() {
 window.GRP_DB = {
   // Players
   getAllPlayers, getPlayer, upsertPlayer, subscribeToPlayers,
+  uploadPlayerSound, removePlayerSound,
   // Seasons
   getAllSeasons, getActiveSeason, upsertSeason,
   // Games

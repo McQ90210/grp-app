@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Firebase Storage rules for GR Poker.
+//
+// sounds/players/{fileName} — per-player elimination audio uploaded via
+// Manage Players. Reads are public (the app plays these to anyone in
+// range, so no auth for playback); writes require an authenticated
+// admin session (there's only one admin account on this project).
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /sounds/players/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    // Nothing else is writable from the client. If we grow other
+    // Storage-backed features, add explicit match blocks per prefix
+    // rather than opening the root.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

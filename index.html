@@ -801,8 +801,14 @@ const SOUND_LIBRARY = {
 // chain follow-up actions like winner announcements without overlap).
 // Synthesised fallbacks resolve after a 3s heuristic since they don't expose
 // a precise duration.
-async function playSound(soundKey, customSounds = {}) {
-  if (!soundKey || soundKey === 'none') return;
+// playSound(soundKey, customSounds, customUrl?)
+//   soundKey     — library or sounds.json key (or 'none')
+//   customSounds — the { key: {label, file} } map loaded from sounds.json
+//   customUrl    — optional. A per-player uploaded Storage URL that takes
+//                  priority over `soundKey`. When set, always plays that
+//                  URL if it loads; falls through to soundKey only if the
+//                  URL fetch fails.
+async function playSound(soundKey, customSounds = {}, customUrl = null) {
   const ctx = getAudioCtx();
   if (!ctx) return;
   if (ctx.state === 'suspended') {
@@ -819,6 +825,16 @@ async function playSound(soundKey, customSounds = {}) {
     src.onended = () => resolve();
     src.start();
   });
+
+  // Per-player upload wins if provided.
+  if (customUrl) {
+    const buffer = await loadAudioBuffer(customUrl);
+    if (buffer) return playBuffer(buffer);
+    // If the URL fetch failed (e.g. offline), fall through to whatever
+    // soundKey the player also had picked.
+  }
+
+  if (!soundKey || soundKey === 'none') return;
 
   // Look in custom sounds (from sounds.json) first
   const custom = customSounds[soundKey];
@@ -1759,6 +1775,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
               name: p.displayName,
               // Local choice wins so picks made without sign-in survive a reload.
               sound: localSounds[p.displayName] || p.sound || 'none',
+              // Per-player uploaded custom sound (via Manage Players). Takes
+              // priority over `sound` when set. Passed through onStart into
+              // the game state so eliminate + preview can find it.
+              customSoundUrl: p.customSoundUrl || null,
             }));
           finalize(members);
           return true;
@@ -2273,7 +2293,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                                     </optgroup>
                                   </select>
                                   <button
-                                    onClick={() => playSound(player.sound || 'none', customSounds)}
+                                    onClick={() => playSound(player.sound || 'none', customSounds, player.customSoundUrl || null)}
                                     disabled={!player.sound || player.sound === 'none'}
                                     className="px-3 py-1 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 text-xs disabled:opacity-30"
                                     title="Preview sound"
@@ -2990,7 +3010,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         if (cancelled) return;
         const active = (allPlayers || [])
           .filter((p) => p.active !== false)
-          .map((p) => ({ name: p.displayName, sound: p.sound || 'none' }));
+          .map((p) => ({
+            name: p.displayName,
+            sound: p.sound || 'none',
+            customSoundUrl: p.customSoundUrl || null,
+          }));
         setFullRoster(active);
         setFullRosterFromDB(allPlayers || []); // raw, for bounty calc
       } catch (e) { /* silent — late-entry falls back to free text */ }
@@ -3447,10 +3471,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     if (voiceEnabled) {
       speakClip(`goodbye-${slugifyName(player.name)}`, `Goodbye, ${player.name}.`);
       playerSoundPromise = new Promise((resolve) => {
-        setTimeout(() => { resolve(playSound(player.sound, customSounds)); }, 1400);
+        setTimeout(() => { resolve(playSound(player.sound, customSounds, player.customSoundUrl || null)); }, 1400);
       });
     } else {
-      playerSoundPromise = playSound(player.sound, customSounds);
+      playerSoundPromise = playSound(player.sound, customSounds, player.customSoundUrl || null);
     }
 
     // Final 3: announcement (only if we just dropped TO 3, and only when starting field was >3)
@@ -6444,6 +6468,41 @@ function ManagePlayersModal({ onClose, onSaved }) {
   const [newSound, setNewSound] = useState('none');
   const [adding, setAdding] = useState(false);
   const [addJustOk, setAddJustOk] = useState(null); // displayName of last successful add (for confirmation)
+  // Per-row custom-sound upload state. { [pid]: 'idle' | 'uploading' | 'error message' }
+  const [uploadState, setUploadState] = useState({});
+
+  // Trigger a per-player MP3/WAV upload. File comes from a hidden <input
+  // type="file"> tied to a click on the "Upload" button. On success the
+  // player doc gets a `customSoundUrl` field and we refresh the local
+  // roster so the row re-renders with the custom-sound indicator.
+  const handleUpload = async (pid, file) => {
+    if (!file) return;
+    setUploadState((s) => ({ ...s, [pid]: 'uploading' }));
+    try {
+      await window.GRP_DB.uploadPlayerSound(pid, file);
+      const all = await window.GRP_DB.getAllPlayers();
+      all.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+      setPlayers(all);
+      setUploadState((s) => { const n = { ...s }; delete n[pid]; return n; });
+      if (onSaved) onSaved(1);
+    } catch (e) {
+      setUploadState((s) => ({ ...s, [pid]: e.message || 'Upload failed' }));
+    }
+  };
+
+  const handleRemoveCustom = async (pid) => {
+    setUploadState((s) => ({ ...s, [pid]: 'uploading' }));
+    try {
+      await window.GRP_DB.removePlayerSound(pid);
+      const all = await window.GRP_DB.getAllPlayers();
+      all.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+      setPlayers(all);
+      setUploadState((s) => { const n = { ...s }; delete n[pid]; return n; });
+      if (onSaved) onSaved(1);
+    } catch (e) {
+      setUploadState((s) => ({ ...s, [pid]: e.message || 'Remove failed' }));
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -6678,38 +6737,77 @@ function ManagePlayersModal({ onClose, onSaved }) {
                       placeholder="player@example.com"
                       className="flex-1 min-w-[180px] px-2 py-1 rounded bg-black/40 border border-yellow-500/15 text-yellow-50 placeholder-yellow-100/30 font-mono text-xs focus:outline-none focus:border-yellow-500/40"
                     />
-                    <select
-                      value={currentSound}
-                      onChange={(e) => setField(p.id, 'sound', e.target.value)}
-                      className="w-36 px-1.5 py-1 rounded bg-black/40 border border-yellow-500/15 text-yellow-50 font-mono text-xs focus:outline-none focus:border-yellow-500/40"
-                      title="Elimination sound"
-                    >
-                      <option value="none" style={{ background: '#0a3d1f' }}>None</option>
-                      {Object.keys(customSounds).length > 0 && (
-                        <optgroup label="Your sounds">
-                          {Object.entries(customSounds).map(([key, s]) => (
-                            <option key={`c-${key}`} value={key} style={{ background: '#0a3d1f' }}>
+                    {p.customSoundUrl ? (
+                      <div className="w-36 flex items-center gap-1 px-1.5 py-1 rounded bg-emerald-700/25 border border-emerald-400/60 text-emerald-100 font-mono text-xs">
+                        <Music size={11} />
+                        <span className="flex-1 truncate">{uploadState[p.id] === 'uploading' ? '...' : 'Custom'}</span>
+                        <button
+                          onClick={() => handleRemoveCustom(p.id)}
+                          disabled={uploadState[p.id] === 'uploading'}
+                          className="text-red-300 hover:text-red-100 disabled:opacity-40"
+                          title="Remove custom sound (reverts to dropdown selection)"
+                        >
+                          <X size={11} />
+                        </button>
+                      </div>
+                    ) : (
+                      <select
+                        value={currentSound}
+                        onChange={(e) => setField(p.id, 'sound', e.target.value)}
+                        className="w-36 px-1.5 py-1 rounded bg-black/40 border border-yellow-500/15 text-yellow-50 font-mono text-xs focus:outline-none focus:border-yellow-500/40"
+                        title="Elimination sound"
+                      >
+                        <option value="none" style={{ background: '#0a3d1f' }}>None</option>
+                        {Object.keys(customSounds).length > 0 && (
+                          <optgroup label="Your sounds">
+                            {Object.entries(customSounds).map(([key, s]) => (
+                              <option key={`c-${key}`} value={key} style={{ background: '#0a3d1f' }}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        <optgroup label="Built-in">
+                          {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
+                            <option key={key} value={key} style={{ background: '#0a3d1f' }}>
                               {s.label}
                             </option>
                           ))}
                         </optgroup>
-                      )}
-                      <optgroup label="Built-in">
-                        {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
-                          <option key={key} value={key} style={{ background: '#0a3d1f' }}>
-                            {s.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    </select>
+                      </select>
+                    )}
                     <button
-                      onClick={() => playSound(currentSound || 'none', customSounds)}
-                      disabled={!currentSound || currentSound === 'none'}
+                      onClick={() => playSound(currentSound || 'none', customSounds, p.customSoundUrl || null)}
+                      disabled={!p.customSoundUrl && (!currentSound || currentSound === 'none')}
                       className="px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 text-xs disabled:opacity-30"
                       title="Preview sound"
                     >
                       <Music size={12} />
                     </button>
+                    {/* Hidden file input driven by the upload button. Wrapped
+                        in a label for a nice tap target on mobile. */}
+                    <label
+                      className="px-2 py-1 rounded bg-black/40 border border-yellow-500/30 text-yellow-100 text-xs cursor-pointer hover:bg-yellow-500/10 whitespace-nowrap"
+                      title="Upload an MP3/WAV for this player (overrides the dropdown)"
+                    >
+                      {uploadState[p.id] === 'uploading' ? '...' : '⬆'}
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        className="hidden"
+                        disabled={uploadState[p.id] === 'uploading'}
+                        onChange={(e) => {
+                          const f = e.target.files && e.target.files[0];
+                          if (f) handleUpload(p.id, f);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                    {uploadState[p.id] && uploadState[p.id] !== 'uploading' && (
+                      <div className="w-full text-red-300 font-mono text-[10px] mt-1">
+                        {uploadState[p.id]}
+                      </div>
+                    )}
                   </div>
                 );
               })}
