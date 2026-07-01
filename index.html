@@ -6470,6 +6470,11 @@ function ManagePlayersModal({ onClose, onSaved }) {
   const [addJustOk, setAddJustOk] = useState(null); // displayName of last successful add (for confirmation)
   // Per-row custom-sound upload state. { [pid]: 'idle' | 'uploading' | 'error message' }
   const [uploadState, setUploadState] = useState({});
+  // Hidden file inputs — one per row keyed by pid, plus one for the ADD
+  // PLAYER form. Populated as rows render. The sound dropdown's
+  // "＋ Upload…" option programmatically clicks the matching input.
+  const rowFileInputs = useRef({});
+  const addFileInput = useRef(null);
 
   // Trigger a per-player MP3/WAV upload. File comes from a hidden <input
   // type="file"> tied to a click on the "Upload" button. On success the
@@ -6671,11 +6676,24 @@ function ManagePlayersModal({ onClose, onSaved }) {
                 />
                 <select
                   value={newSound}
-                  onChange={(e) => setNewSound(e.target.value)}
+                  onChange={(e) => {
+                    if (e.target.value === '__upload__') {
+                      const name = newName.trim();
+                      if (!name) {
+                        setError('Type a display name first, then pick "＋ Upload MP3/WAV…".');
+                        return;
+                      }
+                      setError(null);
+                      addFileInput.current?.click();
+                      return;
+                    }
+                    setNewSound(e.target.value);
+                  }}
                   className="w-36 px-1.5 py-1.5 rounded bg-black/40 border border-emerald-500/30 text-yellow-50 font-mono text-xs focus:outline-none focus:border-emerald-400/60"
                   title="Elimination sound"
                 >
                   <option value="none" style={{ background: '#0a3d1f' }}>None</option>
+                  <option value="__upload__" style={{ background: '#0a3d1f', color: '#f4d03f' }}>＋ Upload MP3/WAV…</option>
                   {Object.keys(customSounds).length > 0 && (
                     <optgroup label="Your sounds">
                       {Object.entries(customSounds).map(([key, s]) => (
@@ -6693,6 +6711,45 @@ function ManagePlayersModal({ onClose, onSaved }) {
                     ))}
                   </optgroup>
                 </select>
+                <input
+                  ref={addFileInput}
+                  type="file"
+                  accept="audio/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files && e.target.files[0];
+                    e.target.value = '';
+                    if (!f) return;
+                    // "＋ Upload…" flow from the ADD form: create the player
+                    // doc with sound=none, then upload the audio for the
+                    // newly-derived PID. Wraps both operations in the same
+                    // busy/error surface as the ordinary ADD button.
+                    const name = newName.trim();
+                    if (!name) { setError('Type a display name first.'); return; }
+                    const id = slugifyName(name);
+                    if (players.find((p) => p.id === id)) {
+                      setError(`A player with id "${id}" already exists.`);
+                      return;
+                    }
+                    setError(null);
+                    setAdding(true);
+                    try {
+                      await window.GRP_DB.upsertPlayer({ displayName: name, sound: 'none', active: true });
+                      await window.GRP_DB.uploadPlayerSound(id, f);
+                      const all = await window.GRP_DB.getAllPlayers();
+                      all.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
+                      setPlayers(all);
+                      setAddJustOk(name);
+                      setNewName('');
+                      setNewSound('none');
+                      if (onSaved) onSaved(1);
+                    } catch (err) {
+                      setError(err.message || 'Add + upload failed.');
+                    } finally {
+                      setAdding(false);
+                    }
+                  }}
+                />
                 <button
                   onClick={addPlayer}
                   disabled={!newName.trim() || adding}
@@ -6753,11 +6810,20 @@ function ManagePlayersModal({ onClose, onSaved }) {
                     ) : (
                       <select
                         value={currentSound}
-                        onChange={(e) => setField(p.id, 'sound', e.target.value)}
+                        onChange={(e) => {
+                          if (e.target.value === '__upload__') {
+                            const input = rowFileInputs.current[p.id];
+                            if (input) input.click();
+                            // Don't touch state — select re-renders with previous value.
+                            return;
+                          }
+                          setField(p.id, 'sound', e.target.value);
+                        }}
                         className="w-36 px-1.5 py-1 rounded bg-black/40 border border-yellow-500/15 text-yellow-50 font-mono text-xs focus:outline-none focus:border-yellow-500/40"
                         title="Elimination sound"
                       >
                         <option value="none" style={{ background: '#0a3d1f' }}>None</option>
+                        <option value="__upload__" style={{ background: '#0a3d1f', color: '#f4d03f' }}>＋ Upload MP3/WAV…</option>
                         {Object.keys(customSounds).length > 0 && (
                           <optgroup label="Your sounds">
                             {Object.entries(customSounds).map(([key, s]) => (
@@ -6784,25 +6850,23 @@ function ManagePlayersModal({ onClose, onSaved }) {
                     >
                       <Music size={12} />
                     </button>
-                    {/* Hidden file input driven by the upload button. Wrapped
-                        in a label for a nice tap target on mobile. */}
-                    <label
-                      className="px-2 py-1 rounded bg-black/40 border border-yellow-500/30 text-yellow-100 text-xs cursor-pointer hover:bg-yellow-500/10 whitespace-nowrap"
-                      title="Upload an MP3/WAV for this player (overrides the dropdown)"
-                    >
-                      {uploadState[p.id] === 'uploading' ? '...' : '⬆'}
-                      <input
-                        type="file"
-                        accept="audio/*"
-                        className="hidden"
-                        disabled={uploadState[p.id] === 'uploading'}
-                        onChange={(e) => {
-                          const f = e.target.files && e.target.files[0];
-                          if (f) handleUpload(p.id, f);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
+                    {/* Hidden file input tied to the "＋ Upload…" dropdown
+                        option for this row. Not itself visible. */}
+                    <input
+                      ref={(el) => { rowFileInputs.current[p.id] = el; }}
+                      type="file"
+                      accept="audio/*"
+                      className="hidden"
+                      disabled={uploadState[p.id] === 'uploading'}
+                      onChange={(e) => {
+                        const f = e.target.files && e.target.files[0];
+                        if (f) handleUpload(p.id, f);
+                        e.target.value = '';
+                      }}
+                    />
+                    {uploadState[p.id] === 'uploading' && (
+                      <span className="font-mono text-[10px] text-yellow-100/60 whitespace-nowrap">uploading…</span>
+                    )}
                     {uploadState[p.id] && uploadState[p.id] !== 'uploading' && (
                       <div className="w-full text-red-300 font-mono text-[10px] mt-1">
                         {uploadState[p.id]}
