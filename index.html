@@ -758,9 +758,26 @@ const SOUND_LIBRARY = {
     },
   },
 
+  bountyClaimed: {
+    label: 'Bounty claimed (cha-ching)',
+    file: 'sounds/bounty-claimed.mp3',
+    system: true, // fires on bountied-player KO, not a per-player pick
+    play: (ctx) => {
+      // Two-note register bell "ding-ding" over a coin scatter.
+      tone(ctx, { type: 'sine', freq: 2637, start: 0, duration: 0.35, gain: 0.35, attack: 0.001, release: 0.28 });
+      tone(ctx, { type: 'sine', freq: 3520, start: 0, duration: 0.35, gain: 0.20, attack: 0.001, release: 0.28 });
+      tone(ctx, { type: 'sine', freq: 3136, start: 0.18, duration: 0.42, gain: 0.35, attack: 0.001, release: 0.32 });
+      tone(ctx, { type: 'sine', freq: 4186, start: 0.18, duration: 0.42, gain: 0.20, attack: 0.001, release: 0.32 });
+      // Register click + coin scatter
+      noise(ctx, { start: 0, duration: 0.03, gain: 0.22, filterType: 'bandpass', filterFreq: 5000, filterQ: 5 });
+      noise(ctx, { start: 0.35, duration: 0.4, gain: 0.14, filterType: 'highpass', filterFreq: 3200, filterQ: 1 });
+    },
+  },
+
   fanfare: {
     label: 'Victory fanfare',
     file: 'sounds/fanfare.mp3',
+    system: true, // played after the final knockout, not a per-player pick
     play: (ctx) => {
       // Triumphant 4-note rising fanfare on brass
       const notes = [
@@ -2344,7 +2361,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                                       </optgroup>
                                     )}
                                     <optgroup label="Built-in (synth or file)">
-                                      {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
+                                      {Object.entries(SOUND_LIBRARY).filter(([k, s]) => k !== 'none' && !s.system).map(([key, s]) => (
                                         <option key={key} value={key} style={{ background: '#0a3d1f' }}>
                                           {s.label}
                                         </option>
@@ -3536,6 +3553,23 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     if (!pending) return;
     setPendingKnockout(null);
     const { player, intent } = pending;
+
+    // Cha-ching if this KO claims a bounty (bountied player + a knocker).
+    // Fires on BOTH rebuy and permanent-out paths — v2 rules credit the
+    // claim regardless of whether the bountied player buys back in.
+    if (knockerOuterName && config.gameType === 'league') {
+      const gameDate = gameStartedAt
+        ? new Date(gameStartedAt).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+      const bountyIds = computeBountyHolders(fullRosterFromDB, gameDate);
+      const isBountied = fullRosterFromDB.some(
+        (p) => bountyIds.includes(p.id) && p.displayName === player.name
+      );
+      if (isBountied) {
+        playSound('bountyClaimed', customSounds);
+      }
+    }
+
     if (intent === 'rebuy') {
       applyRebuy(player.name, knockerOuterName);
       return;
@@ -7030,7 +7064,7 @@ function ManagePlayersModal({ onClose, onSaved }) {
                     </optgroup>
                   )}
                   <optgroup label="Built-in">
-                    {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
+                    {Object.entries(SOUND_LIBRARY).filter(([k, s]) => k !== 'none' && !s.system).map(([key, s]) => (
                       <option key={key} value={key} style={{ background: '#0a3d1f' }}>
                         {s.label}
                       </option>
@@ -7160,7 +7194,7 @@ function ManagePlayersModal({ onClose, onSaved }) {
                           </optgroup>
                         )}
                         <optgroup label="Built-in">
-                          {Object.entries(SOUND_LIBRARY).filter(([k]) => k !== 'none').map(([key, s]) => (
+                          {Object.entries(SOUND_LIBRARY).filter(([k, s]) => k !== 'none' && !s.system).map(([key, s]) => (
                             <option key={key} value={key} style={{ background: '#0a3d1f' }}>
                               {s.label}
                             </option>
