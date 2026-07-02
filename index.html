@@ -1351,6 +1351,14 @@ function LeagueContextScreen({ onConfirm, onBack, fbUser }) {
             const next = computeNextSeasonDefaults(latest);
             try {
               await window.GRP_DB.upsertSeason(next);
+              // Flip the previous season's stored status to 'complete' if
+              // it's still 'active'. Client-side computes status from dates
+              // anyway, but keeping the stored field honest prevents
+              // getActiveSeason() (which queries where status == 'active')
+              // from returning multiple docs.
+              if (latest && latest.status === 'active') {
+                await window.GRP_DB.upsertSeason({ ...latest, status: 'complete' });
+              }
               workingSeasons = [next, ...allSeasons];
               chosen = next;
               if (!cancelled) setJustCreated({ id: next.id, name: next.name });
@@ -1440,11 +1448,19 @@ function LeagueContextScreen({ onConfirm, onBack, fbUser }) {
     if (!fbUser) return;
     setStartingNext(true);
     try {
-      const next = computeNextSeasonDefaults(season || seasons[0]);
+      const previousSeason = season || seasons[0];
+      const next = computeNextSeasonDefaults(previousSeason);
       const existing = seasons.find((s) => s.id === next.id);
       if (!existing) {
         await window.GRP_DB.upsertSeason(next);
-        setSeasons((prev) => [next, ...prev]);
+        // Flip the previous season's stored status to 'complete' when we
+        // hop forward. Same reasoning as the auto-create path.
+        if (previousSeason && previousSeason.status === 'active') {
+          await window.GRP_DB.upsertSeason({ ...previousSeason, status: 'complete' });
+          setSeasons((prev) => [next, ...prev.map((s) => s.id === previousSeason.id ? { ...s, status: 'complete' } : s)]);
+        } else {
+          setSeasons((prev) => [next, ...prev]);
+        }
         setJustCreated({ id: next.id, name: next.name });
       }
       setSeasonId(next.id);
