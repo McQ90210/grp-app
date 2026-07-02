@@ -284,6 +284,29 @@ Context:
 Now write the recap (3-4 sentences, 70-110 words):`;
 }
 
+// Wrap a Gemini API call with a single retry on 503 (the "high demand"
+// throttle). Free-tier gemini-2.5-flash returns 503s reasonably often at
+// peak times (~8am UK = cron time), and a 3-second retry clears most of
+// them. Returns the fetch Response so callers can still inspect status
+// codes for non-retryable errors.
+async function fetchGeminiWithRetry(url, body, { label = 'Gemini' } = {}) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res;
+    if (res.status === 503 && attempt === 0) {
+      logger.warn(`${label} HTTP 503, retrying in 3s…`);
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
+    }
+    return res;
+  }
+  return null; // unreachable
+}
+
 // Returns a 2-3 sentence recap string, or null if Gemini is unavailable or
 // returns nothing useful. We never fail the email send if the recap fails —
 // just skip the intro paragraph.
@@ -316,21 +339,17 @@ async function generateRecap({ game, season, standings, players }) {
     // try gemini-2.5-flash-lite (smaller, more generous quota) or
     // gemini-1.5-flash (legacy, very stable free tier).
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          // Disable Gemini 2.5's internal "thinking" tokens. Without this, the
-          // model spends most of maxOutputTokens reasoning silently and truncates
-          // the actual response mid-sentence.
-          thinkingConfig: { thinkingBudget: 0 },
-          temperature: 0.8,
-          maxOutputTokens: 400,
-        },
-      }),
-    });
+    const res = await fetchGeminiWithRetry(url, {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        // Disable Gemini 2.5's internal "thinking" tokens. Without this, the
+        // model spends most of maxOutputTokens reasoning silently and truncates
+        // the actual response mid-sentence.
+        thinkingConfig: { thinkingBudget: 0 },
+        temperature: 0.8,
+        maxOutputTokens: 400,
+      },
+    }, { label: 'Gemini API' });
     if (!res.ok) {
       logger.warn(`Gemini API HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
       return null;
@@ -417,18 +436,14 @@ Now write the recap (3-4 sentences, 60-100 words):`;
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          thinkingConfig: { thinkingBudget: 0 },
-          temperature: 0.8,
-          maxOutputTokens: 400,
-        },
-      }),
-    });
+    const res = await fetchGeminiWithRetry(url, {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        thinkingConfig: { thinkingBudget: 0 },
+        temperature: 0.8,
+        maxOutputTokens: 400,
+      },
+    }, { label: 'Gemini HR' });
     if (!res.ok) {
       logger.warn(`Gemini HR HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
       return null;
