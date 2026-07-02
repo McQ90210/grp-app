@@ -229,19 +229,29 @@ The query `games where seasonId == X order by gameNumber` requires a composite i
 - Final games **do not award league points**
 
 ### Per-game points
+
+**v1 rules (Jan 2025 – Jun 2026, R1)**:
 - Turn-up: **2,000**
 - Position bonuses: 1st **+8,000**, 2nd **+5,000**, 3rd **+3,000**, 4th **+1,000**, 5th **+500**
-- Birthday bounty (if eligible this month, stacks on top): **+2,000**
+- Bounty: knocker of a bountied player gets **+2,000**
 
-**Totals**:
-| Place | No bounty | With bounty |
-|---|---|---|
-| 1st | 10,000 | 12,000 |
-| 2nd | 7,000 | 9,000 |
-| 3rd | 5,000 | 7,000 |
-| 4th | 3,000 | 5,000 |
-| 5th | 2,500 | 4,500 |
-| DNP | 2,000 | 4,000 |
+**v2 rules (Jul 2026, R2 onwards)**:
+- Turn-up: **2,000**
+- Position bonuses: 1st **+8,000**, 2nd **+6,000**, 3rd **+4,000**, 4th **+3,000**, 5th **+2,000**, 6th **+1,000** (attendance stacks on top)
+- KO: **+1,000** per knockout (goes to knocker)
+- First out: **+1,000** (goes to first player KO'd chronologically, even if they later rebought)
+- Bounty claim: **+2,000** per claim (goes to whoever knocks out a bountied player; bountied player self-claims their respawn if they survive to game end)
+
+**v2 totals**:
+| Place | Total |
+|---|---|
+| 1st | 10,000 |
+| 2nd | 8,000 |
+| 3rd | 6,000 |
+| 4th | 5,000 |
+| 5th | 4,000 |
+| 6th | 3,000 |
+| DNP top 6 | 2,000 |
 
 ### Money
 - Buy-in: **£30** (rebuy same)

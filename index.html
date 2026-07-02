@@ -1102,7 +1102,9 @@ function rulesVersionForGame({ date, rulesVersion }) {
 //
 // v2 (Jul 2026 — R2 onwards):
 //   attendance 2,000
-//   + position [10000, 8000, 6000, 5000, 4000, 3000] for places 1–6
+//   + position [8000, 6000, 4000, 3000, 2000, 1000] for places 1–6
+//     (attendance stacks on top → 1st = 10k, 2nd = 8k, 3rd = 6k, 4th = 5k,
+//      5th = 4k, 6th = 3k, DNP-top-6 = 2k)
 //   + 1,000 per knockout
 //   + 1,000 first-out bonus
 //   + 2,000 per live bounty claim (knocker gets it if they KO the bountied
@@ -1162,7 +1164,7 @@ function computePointsAwarded({
   }
 
   // v2
-  const POSITION_BONUSES_V2 = [10000, 8000, 6000, 5000, 4000, 3000];
+  const POSITION_BONUSES_V2 = [8000, 6000, 4000, 3000, 2000, 1000];
   finishOrder.slice(0, 6).forEach((name, i) => {
     if (points[name] !== undefined) points[name] += POSITION_BONUSES_V2[i];
   });
@@ -1242,7 +1244,7 @@ function computePointsBreakdownForGame(pid, game, playersById = {}) {
 
   const finishOrder = game.finishOrder || [];
   const finishPos = finishOrder.indexOf(pid);
-  const POSITION_BONUSES_V2 = [10000, 8000, 6000, 5000, 4000, 3000];
+  const POSITION_BONUSES_V2 = [8000, 6000, 4000, 3000, 2000, 1000];
   const POSITION_BONUSES_V1 = [8000, 5000, 3000, 1000, 500];
   const bonuses = version === 'v2' ? POSITION_BONUSES_V2 : POSITION_BONUSES_V1;
   if (finishPos >= 0 && finishPos < bonuses.length) {
