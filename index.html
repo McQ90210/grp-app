@@ -8319,6 +8319,14 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
   // or Cancel commits/discards them).
   const [editMode, setEditMode] = useState(false);
   const [showEditConfirm, setShowEditConfirm] = useState(false);
+  // Per-game grid stays collapsed by default — most sessions just need
+  // the aggregate "who owes what" view at the top. Only opened for
+  // deep audit / per-game corrections.
+  const [gridOpen, setGridOpen] = useState(false);
+  // Inline upfront picker state — a search field that filters attendees
+  // not already flagged upfront. Only shown in edit mode.
+  const [upfrontPickerOpen, setUpfrontPickerOpen] = useState(false);
+  const [upfrontQuery, setUpfrontQuery] = useState('');
 
   const seasonId = season?.id;
   const seasonName = season?.name;
@@ -8491,97 +8499,177 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto mb-4 border border-emerald-500/15 rounded-lg">
-              <table className="w-full font-mono text-xs">
-                <thead>
-                  <tr className="bg-black/40">
-                    <th className="text-left p-2 text-yellow-100/60 sticky left-0 bg-black/60 z-10" style={{ minWidth: 120 }}>Player</th>
-                    {regular.map((g) => (
-                      <th key={g.id} className="text-center p-2 text-emerald-300 whitespace-nowrap" style={{ minWidth: 60 }}>
-                        G{g.gameNumber}
-                      </th>
-                    ))}
-                    <th className="text-right p-2 text-yellow-300 whitespace-nowrap" style={{ minWidth: 70 }}>Owed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {attendees.map(({ pid, name }) => {
-                    const owed = owedByPid[pid] || 0;
-                    const isUpfront = upfrontSet.has(pid);
-                    return (
-                      <tr key={pid} className="border-t border-emerald-500/10">
-                        <td className="p-2 sticky left-0 bg-emerald-950/60 z-10" style={{ minWidth: 180 }}>
-                          <div className="flex items-center gap-2">
-                            <span className="text-emerald-100">{name}</span>
-                            <button
-                              onClick={() => toggleUpfront(pid)}
-                              disabled={!editMode}
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono border whitespace-nowrap ${
-                                isUpfront
-                                  ? 'bg-emerald-600/40 border-emerald-300/70 text-emerald-50'
-                                  : 'bg-black/40 border-yellow-500/20 text-yellow-100/40 hover:text-yellow-100/80 hover:border-yellow-500/50'
-                              } ${editMode ? '' : 'opacity-70 cursor-not-allowed'}`}
-                              title={editMode
-                                ? (isUpfront ? 'Paid for the whole round upfront — click to undo' : 'Mark as paid upfront for this round')
-                                : (isUpfront ? 'Paid upfront (locked)' : 'Locked — enable edit mode to change')}
-                            >
-                              {isUpfront ? '🪙 upfront' : '+ upfront'}
-                            </button>
-                          </div>
-                        </td>
-                        {regular.map((g) => {
-                          const state = cellState(g, pid);
-                          if (state === 'dnp') {
-                            return <td key={g.id} className="text-center p-1 text-yellow-100/20">—</td>;
-                          }
-                          if (state === 'upfront') {
-                            return (
-                              <td key={g.id} className="text-center p-1" title="Covered by upfront round payment">
-                                <span className="inline-block w-7 h-7 rounded border bg-emerald-700/40 border-emerald-300/60 text-emerald-50 text-[11px] leading-7">⌬</span>
-                              </td>
-                            );
-                          }
-                          const isPaid = state === 'paid';
-                          return (
-                            <td key={g.id} className="text-center p-1">
-                              <button
-                                onClick={() => toggle(g.id, pid)}
-                                disabled={!editMode}
-                                className={`w-7 h-7 rounded border text-[11px] ${
-                                  isPaid
-                                    ? 'bg-emerald-600/30 border-emerald-400/60 text-emerald-100'
-                                    : 'bg-red-900/40 border-red-400/60 text-red-100'
-                                } ${editMode ? '' : 'opacity-70 cursor-not-allowed'}`}
-                                title={editMode
-                                  ? (isPaid ? 'Paid — click to mark owed' : 'Owed — click to mark paid')
-                                  : (isPaid ? 'Paid (locked — enable edit mode to change)' : 'Owed (locked — enable edit mode to change)')}
-                              >
-                                {isPaid ? '✓' : '□'}
-                              </button>
-                            </td>
-                          );
-                        })}
-                        <td className={`text-right p-2 font-mono ${
-                          isUpfront ? 'text-emerald-300/70' : owed > 0 ? 'text-red-300' : 'text-yellow-100/30'
-                        }`}>
-                          {isUpfront ? 'upfront' : owed > 0 ? `£${owed}` : '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mb-4 p-3 rounded-lg bg-black/30 border border-yellow-500/15 font-mono text-sm">
-              <div className="text-yellow-100/60 text-xs tracking-widest mb-1">OUTSTANDING TOTAL</div>
-              <div className="text-2xl font-display text-yellow-100">£{totalOwed}</div>
-              {Object.keys(owedByPid).length > 0 && (
-                <div className="text-yellow-100/50 text-xs mt-2">
+            {/* --- OUTSTANDING (aggregate — the "at a glance" view) --- */}
+            <div className="mb-4 p-4 rounded-xl bg-black/30 border border-yellow-500/15">
+              <div className="flex items-baseline justify-between gap-3 mb-2">
+                <div className="font-mono text-xs text-yellow-100/60 tracking-widest">OUTSTANDING</div>
+                <div className="font-display text-3xl text-yellow-100">£{totalOwed}</div>
+              </div>
+              {Object.keys(owedByPid).length === 0 ? (
+                <div className="font-mono text-sm text-emerald-300/80">Everyone paid up ✓</div>
+              ) : (
+                <div className="space-y-1">
                   {Object.entries(owedByPid)
                     .sort((a, b) => b[1] - a[1])
-                    .map(([pid, owed]) => `${playersById[pid]?.displayName || pid} £${owed}`)
-                    .join(' · ')}
+                    .map(([pid, owed]) => (
+                      <div key={pid} className="flex justify-between items-center font-mono text-sm py-1">
+                        <span className="text-emerald-100">{playersById[pid]?.displayName || pid}</span>
+                        <span className="text-red-300">£{owed}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            {/* --- UPFRONT ROUND-PAYERS --- */}
+            <div className="mb-4 p-4 rounded-xl bg-black/20 border border-emerald-500/15">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-mono text-xs text-yellow-100/60 tracking-widest">UPFRONT · PAID FOR ROUND</div>
+                {editMode && !upfrontPickerOpen && (
+                  <button
+                    onClick={() => { setUpfrontPickerOpen(true); setUpfrontQuery(''); }}
+                    className="px-2 py-0.5 rounded-full text-[10px] font-mono border border-yellow-500/30 text-yellow-100/80 hover:border-yellow-500/60"
+                  >
+                    + ADD
+                  </button>
+                )}
+              </div>
+              {upfrontSet.size === 0 && !upfrontPickerOpen && (
+                <div className="font-mono text-xs text-yellow-100/40 italic">Nobody has paid upfront for the round.</div>
+              )}
+              {upfrontSet.size > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {Array.from(upfrontSet)
+                    .map((pid) => ({ pid, name: playersById[pid]?.displayName || pid }))
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map(({ pid, name }) => (
+                      <span key={pid} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-mono bg-emerald-700/40 border border-emerald-300/60 text-emerald-50">
+                        🪙 {name}
+                        {editMode && (
+                          <button
+                            onClick={() => toggleUpfront(pid)}
+                            className="text-emerald-50/70 hover:text-red-300"
+                            title="Remove upfront flag"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                </div>
+              )}
+              {upfrontPickerOpen && (() => {
+                const q = upfrontQuery.trim().toLowerCase();
+                const candidates = attendees
+                  .filter(({ pid }) => !upfrontSet.has(pid))
+                  .filter(({ name }) => !q || name.toLowerCase().includes(q));
+                return (
+                  <div className="mt-2 space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        autoFocus
+                        type="text"
+                        value={upfrontQuery}
+                        onChange={(e) => setUpfrontQuery(e.target.value)}
+                        placeholder="Search a player…"
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 text-xs font-mono focus:outline-none focus:border-yellow-500/50"
+                      />
+                      <button
+                        onClick={() => { setUpfrontPickerOpen(false); setUpfrontQuery(''); }}
+                        className="px-3 py-1.5 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-100/70 text-xs font-mono"
+                      >
+                        DONE
+                      </button>
+                    </div>
+                    <div className="max-h-40 overflow-y-auto space-y-1">
+                      {candidates.length === 0 && (
+                        <div className="font-mono text-xs text-yellow-100/40 italic px-2 py-1">
+                          {q ? 'No matches.' : 'Everyone in this season is already flagged upfront.'}
+                        </div>
+                      )}
+                      {candidates.slice(0, 20).map(({ pid, name }) => (
+                        <button
+                          key={pid}
+                          onClick={() => { toggleUpfront(pid); setUpfrontQuery(''); }}
+                          className="w-full text-left px-2 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/20 hover:bg-emerald-900/50 text-emerald-100 text-xs font-mono"
+                        >
+                          + {name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* --- PER-GAME BREAKDOWN (collapsible — for deep audit) --- */}
+            <div className="mb-4">
+              <button
+                onClick={() => setGridOpen((v) => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-black/30 border border-yellow-500/15 hover:border-yellow-500/40 font-mono text-xs text-yellow-100/70"
+              >
+                <span>{gridOpen ? '▼' : '▶'} PER-GAME BREAKDOWN ({regular.length} game{regular.length === 1 ? '' : 's'})</span>
+                <span className="text-yellow-100/40">{editMode ? 'tap cells to correct' : 'view only'}</span>
+              </button>
+              {gridOpen && (
+                <div className="overflow-x-auto mt-2 border border-emerald-500/15 rounded-lg">
+                  <table className="w-full font-mono text-xs">
+                    <thead>
+                      <tr className="bg-black/40">
+                        <th className="text-left p-2 text-yellow-100/60 sticky left-0 bg-black/60 z-10" style={{ minWidth: 140 }}>Player</th>
+                        {regular.map((g) => (
+                          <th key={g.id} className="text-center p-2 text-emerald-300 whitespace-nowrap" style={{ minWidth: 52 }}>
+                            G{g.gameNumber}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attendees.map(({ pid, name }) => {
+                        const isUpfront = upfrontSet.has(pid);
+                        return (
+                          <tr key={pid} className="border-t border-emerald-500/10">
+                            <td className="p-2 sticky left-0 bg-emerald-950/60 z-10" style={{ minWidth: 140 }}>
+                              <span className="text-emerald-100">{name}</span>
+                              {isUpfront && <span className="ml-1 text-emerald-300/70 text-[10px]">🪙</span>}
+                            </td>
+                            {regular.map((g) => {
+                              const state = cellState(g, pid);
+                              if (state === 'dnp') {
+                                return <td key={g.id} className="text-center p-1 text-yellow-100/20">—</td>;
+                              }
+                              if (state === 'upfront') {
+                                return (
+                                  <td key={g.id} className="text-center p-1" title="Covered by upfront round payment">
+                                    <span className="inline-block w-7 h-7 rounded border bg-emerald-700/40 border-emerald-300/60 text-emerald-50 text-[11px] leading-7">⌬</span>
+                                  </td>
+                                );
+                              }
+                              const isPaid = state === 'paid';
+                              return (
+                                <td key={g.id} className="text-center p-1">
+                                  <button
+                                    onClick={() => toggle(g.id, pid)}
+                                    disabled={!editMode}
+                                    className={`w-7 h-7 rounded border text-[11px] ${
+                                      isPaid
+                                        ? 'bg-emerald-600/30 border-emerald-400/60 text-emerald-100'
+                                        : 'bg-red-900/40 border-red-400/60 text-red-100'
+                                    } ${editMode ? '' : 'opacity-70 cursor-not-allowed'}`}
+                                    title={editMode
+                                      ? (isPaid ? 'Paid — click to mark owed' : 'Owed — click to mark paid')
+                                      : (isPaid ? 'Paid' : 'Owed')}
+                                  >
+                                    {isPaid ? '✓' : '□'}
+                                  </button>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
