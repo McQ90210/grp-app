@@ -108,6 +108,7 @@ const Trophy = (p) => <Icon {...p}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path
 const UserMinus = (p) => <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="23" y1="11" x2="17" y2="11"/></Icon>;
 const RotateCcw = (p) => <Icon {...p}><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></Icon>;
 const Music = (p) => <Icon {...p}><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></Icon>;
+const Award = (p) => <Icon {...p}><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></Icon>;
 
 
 
@@ -3798,6 +3799,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               <button onClick={() => setActivePanel(activePanel === 'payouts' ? null : 'payouts')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'payouts' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Payouts">
                 <Trophy size={18} />
               </button>
+              {config.gameType === 'league' && !config.leagueContext?.isFinal && (
+                <button onClick={() => setActivePanel(activePanel === 'bonusPoints' ? null : 'bonusPoints')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'bonusPoints' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Live bonus points">
+                  <Award size={18} />
+                </button>
+              )}
               <button onClick={() => setActivePanel(activePanel === 'settings' ? null : 'settings')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'settings' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Settings & blinds">
                 <Settings size={18} />
               </button>
@@ -4215,6 +4221,94 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               )}
             </div>
           )}
+
+          {activePanel === 'bonusPoints' && (() => {
+            // Live bonus points earned so far this game. Position bonuses
+            // depend on final finish order, so they're intentionally excluded —
+            // this panel shows what's ALREADY locked in from KOs, bounty
+            // claims, first-out, and attendance.
+            const gameDate = gameStartedAt
+              ? new Date(gameStartedAt).toISOString().slice(0, 10)
+              : new Date().toISOString().slice(0, 10);
+            const bountyIds = computeBountyHolders(fullRosterFromDB, gameDate);
+            const bountyNames = new Set(
+              fullRosterFromDB
+                .filter((p) => bountyIds.includes(p.id))
+                .map((p) => p.displayName)
+            );
+            const firstOutName = knockouts.length > 0 ? knockouts[0].eliminated : null;
+
+            // Per-attendee live bonus tally.
+            const rows = players.map((pl) => {
+              const kos = knockouts.filter((k) => k.knocker === pl.name).length;
+              const bountyClaims = knockouts.filter(
+                (k) => k.knocker === pl.name && bountyNames.has(k.eliminated)
+              ).length;
+              const isFirstOut = firstOutName === pl.name;
+              const attendance = 2000;
+              const koPts = kos * 1000;
+              const bountyPts = bountyClaims * 2000;
+              const firstOutPts = isFirstOut ? 1000 : 0;
+              return {
+                name: pl.name,
+                isBountied: bountyNames.has(pl.name),
+                kos,
+                bountyClaims,
+                isFirstOut,
+                attendance,
+                koPts,
+                bountyPts,
+                firstOutPts,
+                lockedIn: attendance + koPts + bountyPts + firstOutPts,
+              };
+            });
+            rows.sort((a, b) => b.lockedIn - a.lockedIn || a.name.localeCompare(b.name));
+
+            return (
+              <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
+                <div className="flex justify-between items-center mb-4">
+                  <div className="font-display text-2xl gold-text">LIVE BONUS POINTS</div>
+                  <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
+                </div>
+                <div className="text-xs font-mono text-yellow-100/50 mb-3">
+                  Locked-in tonight so far. Position bonuses (1st–6th) settle at end of game.
+                </div>
+                <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1 text-xs font-mono px-2 pb-2 border-b border-yellow-500/10 text-yellow-500/60 tracking-widest">
+                  <div>PLAYER</div>
+                  <div className="text-right">KO</div>
+                  <div className="text-right">🎯</div>
+                  <div className="text-right">1ST OUT</div>
+                  <div className="text-right">TOTAL</div>
+                </div>
+                <div className="max-h-96 overflow-y-auto pr-1">
+                  {rows.map((r) => (
+                    <div key={r.name} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1 items-center py-1.5 px-2 border-b border-yellow-500/5">
+                      <div className="text-emerald-100 flex items-center gap-1.5 min-w-0">
+                        <span className="truncate">{r.name}</span>
+                        {r.isBountied && <span title="Bountied this game" className="text-yellow-300/80 shrink-0">🎂</span>}
+                      </div>
+                      <div className={`text-right font-mono text-xs ${r.kos > 0 ? 'text-yellow-100' : 'text-yellow-100/30'}`}>
+                        {r.kos > 0 ? `${r.kos}×1k` : '—'}
+                      </div>
+                      <div className={`text-right font-mono text-xs ${r.bountyClaims > 0 ? 'text-yellow-300' : 'text-yellow-100/30'}`}>
+                        {r.bountyClaims > 0 ? `${r.bountyClaims}×2k` : '—'}
+                      </div>
+                      <div className={`text-right font-mono text-xs ${r.isFirstOut ? 'text-red-300' : 'text-yellow-100/30'}`}>
+                        {r.isFirstOut ? '+1k' : '—'}
+                      </div>
+                      <div className="text-right font-mono text-yellow-100 font-bold">
+                        {r.lockedIn.toLocaleString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-xs font-mono text-yellow-100/40 mt-3 space-y-0.5">
+                  <div>Everyone: +2,000 attendance · KO: +1,000 each · Bounty (🎯): +2,000 each · First-out: +1,000</div>
+                  <div>🎂 = bountied this game</div>
+                </div>
+              </div>
+            );
+          })()}
 
           {activePanel === 'settings' && (
             <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
