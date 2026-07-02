@@ -8103,6 +8103,13 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [savedAt, setSavedAt] = useState(0);
+  // Edit-mode gate. Ledger opens read-only so a stray tap can't flip
+  // someone's paid status. Admin has to explicitly enable edits via
+  // the confirm dialog, then all cells + upfront toggles become
+  // tappable. Exit edit re-locks (unsaved changes kept until Save
+  // or Cancel commits/discards them).
+  const [editMode, setEditMode] = useState(false);
+  const [showEditConfirm, setShowEditConfirm] = useState(false);
 
   const seasonId = season?.id;
   const seasonName = season?.name;
@@ -8143,6 +8150,7 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
   };
 
   const toggle = (gameId, pid) => {
+    if (!editMode) return; // ledger is read-only until admin enables edit
     if (upfrontSet.has(pid)) return; // upfront players are locked
     setEdits((prev) => {
       const game = regular.find((g) => g.id === gameId);
@@ -8155,6 +8163,7 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
   };
 
   const toggleUpfront = (pid) => {
+    if (!editMode) return; // gated by edit mode too
     setUpfrontSet((prev) => {
       const next = new Set(prev);
       if (next.has(pid)) next.delete(pid); else next.add(pid);
@@ -8213,15 +8222,46 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
   return (
     <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
       <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-4xl w-full max-h-[92vh] overflow-y-auto">
-        <div className="flex justify-between items-start mb-4">
-          <div>
+        <div className="flex justify-between items-start mb-4 gap-3">
+          <div className="min-w-0">
             <div className="font-display text-3xl gold-text">SUBS LEDGER</div>
             <div className="text-yellow-100/60 font-mono text-xs mt-1">
-              {seasonName || seasonId} · £3/game · finals excluded · tap a cell to toggle
+              {seasonName || seasonId} · £3/game · finals excluded
+              {editMode
+                ? <span className="text-red-300"> · EDIT MODE — cells tappable</span>
+                : <span className="text-yellow-100/40"> · read-only</span>}
             </div>
           </div>
-          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+          <div className="flex items-center gap-2 shrink-0">
+            {editMode ? (
+              <button
+                onClick={() => setEditMode(false)}
+                className="px-3 py-1.5 rounded-full font-mono text-xs border border-red-400/60 bg-red-900/40 text-red-100 hover:bg-red-900/60"
+                title="Lock the ledger (unsaved changes are kept until Save/Cancel)"
+              >
+                ✕ EXIT EDIT
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowEditConfirm(true)}
+                className="px-3 py-1.5 rounded-full font-mono text-xs border border-yellow-500/30 text-yellow-100/80 hover:bg-yellow-500/10 hover:border-yellow-500/60"
+                title="Unlock the ledger for editing (confirms before enabling)"
+              >
+                ✏️ EDIT
+              </button>
+            )}
+            <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+          </div>
         </div>
+
+        {showEditConfirm && (
+          <ConfirmDialog
+            title="ENABLE EDIT MODE?"
+            message="Cells and upfront toggles will become tappable and any change flips the paid/owed state immediately. Nothing writes to the database until you tap SAVE CHANGES at the bottom. Cancel to keep the ledger locked."
+            onCancel={() => setShowEditConfirm(false)}
+            onConfirm={() => { setEditMode(true); setShowEditConfirm(false); }}
+          />
+        )}
 
         {error && (
           <div className="mb-3 p-3 rounded-lg bg-red-950/40 border border-red-500/40 text-red-200 font-mono text-xs">{error}</div>
@@ -8266,12 +8306,15 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
                             <span className="text-emerald-100">{name}</span>
                             <button
                               onClick={() => toggleUpfront(pid)}
+                              disabled={!editMode}
                               className={`px-1.5 py-0.5 rounded text-[10px] font-mono border whitespace-nowrap ${
                                 isUpfront
                                   ? 'bg-emerald-600/40 border-emerald-300/70 text-emerald-50'
                                   : 'bg-black/40 border-yellow-500/20 text-yellow-100/40 hover:text-yellow-100/80 hover:border-yellow-500/50'
-                              }`}
-                              title={isUpfront ? 'Paid for the whole round upfront — click to undo' : 'Mark as paid upfront for this round'}
+                              } ${editMode ? '' : 'opacity-70 cursor-not-allowed'}`}
+                              title={editMode
+                                ? (isUpfront ? 'Paid for the whole round upfront — click to undo' : 'Mark as paid upfront for this round')
+                                : (isUpfront ? 'Paid upfront (locked)' : 'Locked — enable edit mode to change')}
                             >
                               {isUpfront ? '🪙 upfront' : '+ upfront'}
                             </button>
@@ -8294,12 +8337,15 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
                             <td key={g.id} className="text-center p-1">
                               <button
                                 onClick={() => toggle(g.id, pid)}
+                                disabled={!editMode}
                                 className={`w-7 h-7 rounded border text-[11px] ${
                                   isPaid
                                     ? 'bg-emerald-600/30 border-emerald-400/60 text-emerald-100'
                                     : 'bg-red-900/40 border-red-400/60 text-red-100'
-                                }`}
-                                title={isPaid ? 'Paid — click to mark owed' : 'Owed — click to mark paid'}
+                                } ${editMode ? '' : 'opacity-70 cursor-not-allowed'}`}
+                                title={editMode
+                                  ? (isPaid ? 'Paid — click to mark owed' : 'Owed — click to mark paid')
+                                  : (isPaid ? 'Paid (locked — enable edit mode to change)' : 'Owed (locked — enable edit mode to change)')}
                               >
                                 {isPaid ? '✓' : '□'}
                               </button>
