@@ -6672,6 +6672,40 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
     return sum + (g.payouts?.[String(pos + 1)] || 0);
   }, 0);
 
+  // v2-era stats — tallied from the chronological KO log + bounty claims list.
+  // Older v1 games don't have a full knockouts log, so this collapses to 0 for
+  // pre-v2 games and only starts counting from R2 2026 onwards.
+  const kos = gamesPlayed.reduce(
+    (sum, g) => sum + (g.knockouts || []).filter((k) => k.knocker === playerId).length,
+    0
+  );
+  const bountyClaims = gamesPlayed.reduce(
+    (sum, g) => sum + (g.bountyClaims || []).filter((c) => c.claimedBy === playerId).length,
+    0
+  );
+  const firstOuts = gamesPlayed.reduce((sum, g) => {
+    if (g.isFinal) return sum;
+    const knockouts = g.knockouts || [];
+    const firstOutId = g.firstOut
+      || (knockouts.length > 0 ? knockouts[0].eliminated : null);
+    return firstOutId === playerId ? sum + 1 : sum;
+  }, 0);
+
+  // Position distribution — count how many times this player finished in
+  // each place. Non-final games only (finals skew the histogram since only
+  // 3 positions are meaningful and the field is 6ish).
+  const positionCounts = {};
+  gamesPlayed.forEach((g) => {
+    if (g.isFinal) return;
+    const pos = (g.finishOrder || []).indexOf(playerId);
+    if (pos < 0) return;
+    positionCounts[pos + 1] = (positionCounts[pos + 1] || 0) + 1;
+  });
+  const maxFieldForDist = Math.max(
+    6,
+    ...gamesPlayed.filter((g) => !g.isFinal).map((g) => (g.finishOrder || []).length || 0)
+  );
+
   return (
     <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
       <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -6728,6 +6762,18 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
             <div className="font-display text-2xl text-emerald-200">
               {gamesPlayed.length ? Math.round(totalPoints / gamesPlayed.length).toLocaleString() : '0'}
             </div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">KOs</div>
+            <div className="font-display text-2xl text-emerald-200">{kos}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">🎯 CLAIMS</div>
+            <div className="font-display text-2xl text-yellow-300">{bountyClaims}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">1ST OUT</div>
+            <div className="font-display text-2xl text-red-300">{firstOuts}</div>
           </div>
         </div>
 
@@ -6915,6 +6961,59 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
                   </div>
                 </div>
               )}
+            </div>
+          );
+        })()}
+
+        {/* Position distribution — how often they land in each place. */}
+        {(() => {
+          const totalRegular = Object.values(positionCounts).reduce((a, b) => a + b, 0);
+          if (totalRegular === 0) return null;
+          const maxCount = Math.max(1, ...Object.values(positionCounts));
+          const places = Array.from({ length: maxFieldForDist }, (_, i) => i + 1);
+          const colorFor = (pos) => {
+            if (pos === 1) return 'linear-gradient(180deg, #f4d03f, #d4ac0d)';
+            if (pos === 2) return 'linear-gradient(180deg, #d4d4d4, #9ca3af)';
+            if (pos === 3) return 'linear-gradient(180deg, #d4924a, #a06334)';
+            if (pos === 4) return 'linear-gradient(180deg, #5eead4, #14b8a6)';
+            if (pos === 5) return 'linear-gradient(180deg, #93c5fd, #3b82f6)';
+            return 'linear-gradient(180deg, #14a37b, #0a6e52)';
+          };
+          const ordinal = (n) => {
+            const s = ['th', 'st', 'nd', 'rd'];
+            const v = n % 100;
+            return n + (s[(v - 20) % 10] || s[v] || s[0]);
+          };
+          return (
+            <div className="mb-4 mt-5">
+              <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">POSITION DISTRIBUTION · REGULAR GAMES</div>
+              <div className="flex gap-1.5 h-32 p-3 rounded-lg bg-black/40 border border-emerald-500/10">
+                {places.map((place) => {
+                  const count = positionCounts[place] || 0;
+                  const heightPct = count > 0 ? Math.max(6, Math.round((count / maxCount) * 100)) : 0;
+                  return (
+                    <div key={place} className="flex-1 relative h-full flex flex-col items-center" title={`${ordinal(place)}: ${count} game${count === 1 ? '' : 's'}`}>
+                      {count > 0 && (
+                        <div
+                          className="absolute inset-x-1 rounded-t"
+                          style={{ bottom: 18, height: `calc(${heightPct}% - 18px)`, minHeight: '3px', background: colorFor(place) }}
+                        />
+                      )}
+                      {count > 0 && (
+                        <div
+                          className="absolute inset-x-0 text-center font-mono text-[10px] text-yellow-100/70"
+                          style={{ bottom: `calc(${heightPct}% - 2px)` }}
+                        >
+                          {count}
+                        </div>
+                      )}
+                      <div className="absolute inset-x-0 bottom-0 text-center font-mono text-[10px] text-yellow-100/40">
+                        {ordinal(place)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })()}

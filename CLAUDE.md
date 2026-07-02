@@ -473,8 +473,7 @@ In rough priority order:
 6. **Charts on player profile** — more than the current points-per-game bar chart (e.g. running total over time, position distribution)
 7. **Season management screen** — create new seasons, archive completed ones, configure dates/game counts via UI rather than import data. (Note: `migrateSeason` Cloud Function exists as a backend primitive — could power this screen's rename action.)
 8. **Real-time multi-device sync (deferred)** — phone-as-controller + laptop/TV-as-display via Firebase Realtime Database (Mark wants this "one day", not yet)
-9. **Node.js 22 runtime upgrade** — Node 20 deprecated April 2026, decommissioned **Oct 2026**. Need to bump `functions/package.json` `"engines": {"node": "22"}` and redeploy before then.
-10. **`firebase-functions` package upgrade** — current version warns it's outdated. Low risk; check breaking-changes notes before bumping.
+9. **`firebase-admin` / `nodemailer` major-version bumps** — 13→14 and 6→9 respectively. Both have breaking changes; check release notes before bumping. Not urgent — current versions are stable.
 
 ### Done in previous sessions
 - ~~Roster sync from Firestore into SetupWizard~~ — v7.8
