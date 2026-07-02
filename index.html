@@ -5966,6 +5966,7 @@ function LeagueDashboard({ onBack, fbUser }) {
   const [showAdminTools, setShowAdminTools] = useState(false);
   const [showManagePlayers, setShowManagePlayers] = useState(false);
   const [showSubsLedger, setShowSubsLedger] = useState(false);
+  const [showSeasonManager, setShowSeasonManager] = useState(false);
 
   const doResend = async () => {
     setShowResendConfirm(false);
@@ -6308,6 +6309,13 @@ function LeagueDashboard({ onBack, fbUser }) {
                 >
                   🪙 SUBS LEDGER
                 </button>
+                <button
+                  onClick={() => setShowSeasonManager(true)}
+                  className="px-3 py-1.5 rounded font-mono text-xs border border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/15"
+                  title="Create, edit, rename or archive seasons."
+                >
+                  🗓 SEASONS
+                </button>
                 <TestModeToggle />
               </div>
             )}
@@ -6567,6 +6575,18 @@ function LeagueDashboard({ onBack, fbUser }) {
             window.GRP_DB.getAllSeasons()
               .then(setSeasons)
               .catch(() => {});
+          }}
+        />
+      )}
+
+      {/* Season Manager — create / edit / rename / archive seasons */}
+      {showSeasonManager && (
+        <SeasonManagerModal
+          seasons={seasons}
+          onClose={() => setShowSeasonManager(false)}
+          onChanged={() => {
+            if (!window.GRP_DB) return;
+            window.GRP_DB.getAllSeasons().then(setSeasons).catch(() => {});
           }}
         />
       )}
@@ -9109,6 +9129,442 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============ SEASON MANAGER MODAL (Admin only) ============
+// Create / edit / rename / archive seasons. Each row starts collapsed;
+// tap to expand and edit fields. Rename cascades through migrateSeason
+// (re-IDs the season doc and every attached game).
+function SeasonManagerModal({ seasons, onClose, onChanged }) {
+  const [expandedId, setExpandedId] = useState(null);
+  const [edits, setEdits] = useState({}); // { seasonId: { field: value, ... } }
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [status, setStatus] = useState(null); // { kind: 'ok' | 'err', msg }
+  const [renameFor, setRenameFor] = useState(null); // seasonId when the rename form is open
+  const [creating, setCreating] = useState(false);
+  const [newSeason, setNewSeason] = useState({
+    id: '', name: '', startDate: '', endDate: '', totalGames: 7, finalGameIndex: 7, status: 'active',
+  });
+
+  const orderedSeasons = seasons
+    .slice()
+    .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
+
+  const getField = (season, field) => {
+    if (edits[season.id] && edits[season.id][field] !== undefined) return edits[season.id][field];
+    return season[field] ?? '';
+  };
+  const setField = (season, field, value) => {
+    setEdits((prev) => ({ ...prev, [season.id]: { ...(prev[season.id] || {}), [field]: value } }));
+  };
+  const dirty = (seasonId) => edits[seasonId] && Object.keys(edits[seasonId]).length > 0;
+
+  const saveSeason = async (season) => {
+    setError(null); setBusy(true); setStatus(null);
+    try {
+      const patch = edits[season.id] || {};
+      const merged = { ...season, ...patch };
+      // Coerce numeric fields
+      if (patch.totalGames !== undefined) merged.totalGames = parseInt(patch.totalGames) || 0;
+      if (patch.finalGameIndex !== undefined) merged.finalGameIndex = parseInt(patch.finalGameIndex) || 0;
+      await window.GRP_DB.upsertSeason(merged);
+      setEdits((prev) => { const n = { ...prev }; delete n[season.id]; return n; });
+      setStatus({ kind: 'ok', msg: `Saved ${merged.name}` });
+      if (onChanged) onChanged();
+    } catch (e) {
+      setError(e.message || 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doRename = async (season, newId, newName) => {
+    if (!newId || newId === season.id) { setRenameFor(null); return; }
+    setError(null); setBusy(true); setStatus(null);
+    try {
+      const res = await window.GRP_DB.migrateSeason({
+        oldSeasonId: season.id,
+        newSeasonId: newId,
+        newName: newName || season.name,
+      });
+      setStatus({ kind: 'ok', msg: `Migrated ${season.id} → ${newId} (${res?.migratedGameCount ?? '?'} games updated)` });
+      setRenameFor(null);
+      setExpandedId(newId);
+      if (onChanged) onChanged();
+    } catch (e) {
+      setError(e.message || 'Rename failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createSeason = async () => {
+    if (!newSeason.id.trim() || !newSeason.name.trim()) {
+      setError('New season needs an id and a name.');
+      return;
+    }
+    if (seasons.some((s) => s.id === newSeason.id.trim())) {
+      setError(`Season "${newSeason.id.trim()}" already exists.`);
+      return;
+    }
+    setError(null); setBusy(true); setStatus(null);
+    try {
+      await window.GRP_DB.upsertSeason({
+        id: newSeason.id.trim(),
+        name: newSeason.name.trim(),
+        startDate: newSeason.startDate || '',
+        endDate: newSeason.endDate || '',
+        totalGames: parseInt(newSeason.totalGames) || 0,
+        finalGameIndex: parseInt(newSeason.finalGameIndex) || 0,
+        status: newSeason.status,
+      });
+      setStatus({ kind: 'ok', msg: `Created ${newSeason.name.trim()}` });
+      setCreating(false);
+      setNewSeason({ id: '', name: '', startDate: '', endDate: '', totalGames: 7, finalGameIndex: 7, status: 'active' });
+      if (onChanged) onChanged();
+    } catch (e) {
+      setError(e.message || 'Create failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusPillColor = (s) => {
+    if (s === 'active') return 'bg-emerald-500/25 border-emerald-400/60 text-emerald-100';
+    if (s === 'upcoming') return 'bg-blue-500/20 border-blue-400/50 text-blue-100';
+    return 'bg-yellow-900/40 border-yellow-500/30 text-yellow-100/70'; // complete or unknown
+  };
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[92vh] overflow-y-auto">
+        <div className="flex justify-between items-start mb-4 gap-3">
+          <div>
+            <div className="font-display text-3xl gold-text">SEASONS</div>
+            <div className="text-yellow-100/60 font-mono text-xs mt-1">
+              Create · edit · rename · archive
+            </div>
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        </div>
+
+        {error && (
+          <div className="mb-3 p-3 rounded-lg bg-red-950/40 border border-red-500/40 text-red-200 font-mono text-xs">{error}</div>
+        )}
+        {status && (
+          <div className={`mb-3 p-3 rounded-lg border font-mono text-xs ${
+            status.kind === 'ok'
+              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+              : 'bg-red-950/40 border-red-500/40 text-red-200'
+          }`}>{status.msg}</div>
+        )}
+
+        {/* New season */}
+        <div className="mb-4">
+          {!creating ? (
+            <button
+              onClick={() => setCreating(true)}
+              className="w-full px-3 py-2 rounded-lg bg-emerald-900/30 border border-emerald-400/40 text-emerald-100 font-mono text-xs hover:bg-emerald-800/40"
+            >
+              + NEW SEASON
+            </button>
+          ) : (
+            <div className="p-4 rounded-xl bg-black/30 border border-emerald-500/25 space-y-2">
+              <div className="font-mono text-xs text-emerald-300/80 tracking-widest mb-2">NEW SEASON</div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="font-mono text-[10px] text-yellow-100/50">
+                  ID
+                  <input
+                    type="text" value={newSeason.id} placeholder="2026-r2"
+                    onChange={(e) => setNewSeason((s) => ({ ...s, id: e.target.value }))}
+                    className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                  />
+                </label>
+                <label className="font-mono text-[10px] text-yellow-100/50">
+                  Name
+                  <input
+                    type="text" value={newSeason.name} placeholder="2026 — Round 2"
+                    onChange={(e) => setNewSeason((s) => ({ ...s, name: e.target.value }))}
+                    className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                  />
+                </label>
+                <label className="font-mono text-[10px] text-yellow-100/50">
+                  Start date
+                  <input
+                    type="date" value={newSeason.startDate}
+                    onChange={(e) => setNewSeason((s) => ({ ...s, startDate: e.target.value }))}
+                    className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                  />
+                </label>
+                <label className="font-mono text-[10px] text-yellow-100/50">
+                  End date
+                  <input
+                    type="date" value={newSeason.endDate}
+                    onChange={(e) => setNewSeason((s) => ({ ...s, endDate: e.target.value }))}
+                    className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                  />
+                </label>
+                <label className="font-mono text-[10px] text-yellow-100/50">
+                  Total games
+                  <input
+                    type="number" min="1" value={newSeason.totalGames}
+                    onChange={(e) => setNewSeason((s) => ({ ...s, totalGames: e.target.value }))}
+                    className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                  />
+                </label>
+                <label className="font-mono text-[10px] text-yellow-100/50">
+                  Final game #
+                  <input
+                    type="number" min="1" value={newSeason.finalGameIndex}
+                    onChange={(e) => setNewSeason((s) => ({ ...s, finalGameIndex: e.target.value }))}
+                    className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                  />
+                </label>
+                <label className="font-mono text-[10px] text-yellow-100/50 col-span-2">
+                  Status
+                  <select
+                    value={newSeason.status}
+                    onChange={(e) => setNewSeason((s) => ({ ...s, status: e.target.value }))}
+                    className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                  >
+                    <option value="active" style={{ background: '#062815' }}>active</option>
+                    <option value="upcoming" style={{ background: '#062815' }}>upcoming</option>
+                    <option value="complete" style={{ background: '#062815' }}>complete</option>
+                  </select>
+                </label>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => { setCreating(false); setError(null); }}
+                  disabled={busy}
+                  className="flex-1 px-3 py-1.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100/70 font-mono text-xs"
+                >
+                  CANCEL
+                </button>
+                <button
+                  onClick={createSeason}
+                  disabled={busy || !newSeason.id.trim() || !newSeason.name.trim()}
+                  className="flex-1 px-3 py-1.5 rounded-full font-mono text-xs text-black disabled:opacity-30"
+                  style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+                >
+                  {busy ? 'SAVING…' : 'CREATE'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Existing seasons */}
+        <div className="space-y-2">
+          {orderedSeasons.length === 0 && (
+            <div className="text-yellow-100/40 font-mono text-sm text-center py-6 italic">
+              No seasons yet — create one above.
+            </div>
+          )}
+          {orderedSeasons.map((season) => {
+            const isOpen = expandedId === season.id;
+            const isDirty = dirty(season.id);
+            return (
+              <div key={season.id} className="rounded-xl bg-black/30 border border-yellow-500/15 overflow-hidden">
+                <button
+                  onClick={() => setExpandedId(isOpen ? null : season.id)}
+                  className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-black/20"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-yellow-100/60 font-mono text-xs">{isOpen ? '▼' : '▶'}</span>
+                    <div className="text-left min-w-0">
+                      <div className="text-emerald-100 truncate">{season.name || season.id}</div>
+                      <div className="font-mono text-[10px] text-yellow-100/40 truncate">
+                        {season.id} · {season.startDate || '?'} → {season.endDate || '?'} · {season.totalGames || '?'} games
+                      </div>
+                    </div>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono border ${statusPillColor(season.status)}`}>
+                    {season.status || 'unknown'}
+                  </span>
+                </button>
+                {isOpen && (
+                  <div className="px-4 pb-4 pt-2 space-y-2 border-t border-yellow-500/10">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="font-mono text-[10px] text-yellow-100/50">
+                        Name
+                        <input
+                          type="text" value={getField(season, 'name')}
+                          onChange={(e) => setField(season, 'name', e.target.value)}
+                          className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                        />
+                      </label>
+                      <label className="font-mono text-[10px] text-yellow-100/50">
+                        Status
+                        <select
+                          value={getField(season, 'status') || 'active'}
+                          onChange={(e) => setField(season, 'status', e.target.value)}
+                          className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                        >
+                          <option value="active" style={{ background: '#062815' }}>active</option>
+                          <option value="upcoming" style={{ background: '#062815' }}>upcoming</option>
+                          <option value="complete" style={{ background: '#062815' }}>complete</option>
+                        </select>
+                      </label>
+                      <label className="font-mono text-[10px] text-yellow-100/50">
+                        Start date
+                        <input
+                          type="date" value={getField(season, 'startDate') || ''}
+                          onChange={(e) => setField(season, 'startDate', e.target.value)}
+                          className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                        />
+                      </label>
+                      <label className="font-mono text-[10px] text-yellow-100/50">
+                        End date
+                        <input
+                          type="date" value={getField(season, 'endDate') || ''}
+                          onChange={(e) => setField(season, 'endDate', e.target.value)}
+                          className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                        />
+                      </label>
+                      <label className="font-mono text-[10px] text-yellow-100/50">
+                        Total games
+                        <input
+                          type="number" min="1" value={getField(season, 'totalGames') || ''}
+                          onChange={(e) => setField(season, 'totalGames', e.target.value)}
+                          className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                        />
+                      </label>
+                      <label className="font-mono text-[10px] text-yellow-100/50">
+                        Final game #
+                        <input
+                          type="number" min="1" value={getField(season, 'finalGameIndex') || ''}
+                          onChange={(e) => setField(season, 'finalGameIndex', e.target.value)}
+                          className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/20 text-yellow-50 text-xs font-mono"
+                        />
+                      </label>
+                    </div>
+
+                    {/* Rename (id migration) */}
+                    <div className="pt-1">
+                      {renameFor !== season.id ? (
+                        <button
+                          onClick={() => setRenameFor(season.id)}
+                          className="text-[10px] font-mono text-yellow-100/50 underline hover:text-yellow-100/80"
+                        >
+                          rename id ({season.id})…
+                        </button>
+                      ) : (
+                        <RenameSeasonForm
+                          season={season}
+                          busy={busy}
+                          onCancel={() => setRenameFor(null)}
+                          onConfirm={doRename}
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <button
+                        onClick={() => {
+                          setEdits((prev) => { const n = { ...prev }; delete n[season.id]; return n; });
+                        }}
+                        disabled={!isDirty || busy}
+                        className="flex-1 px-3 py-1.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100/70 font-mono text-xs disabled:opacity-30"
+                      >
+                        DISCARD
+                      </button>
+                      <button
+                        onClick={() => saveSeason(season)}
+                        disabled={!isDirty || busy}
+                        className="flex-1 px-3 py-1.5 rounded-full font-mono text-xs text-black disabled:opacity-30"
+                        style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+                      >
+                        {busy ? 'SAVING…' : (isDirty ? 'SAVE CHANGES' : 'NO CHANGES')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <button
+          onClick={onClose}
+          className="mt-4 w-full px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm"
+        >
+          CLOSE
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RenameSeasonForm({ season, busy, onCancel, onConfirm }) {
+  const [newId, setNewId] = useState(season.id);
+  const [newName, setNewName] = useState(season.name || '');
+  const [confirming, setConfirming] = useState(false);
+  const idChanged = newId.trim() && newId.trim() !== season.id;
+  return (
+    <div className="p-3 rounded-lg bg-yellow-950/30 border border-yellow-500/30 space-y-2">
+      <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">
+        RENAME · cascades to every attached game
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="font-mono text-[10px] text-yellow-100/50">
+          New ID
+          <input
+            type="text" value={newId}
+            onChange={(e) => setNewId(e.target.value)}
+            className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/30 text-yellow-50 text-xs font-mono"
+          />
+        </label>
+        <label className="font-mono text-[10px] text-yellow-100/50">
+          New name
+          <input
+            type="text" value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            className="mt-1 w-full px-2 py-1.5 rounded bg-black/50 border border-yellow-500/30 text-yellow-50 text-xs font-mono"
+          />
+        </label>
+      </div>
+      {!confirming ? (
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-3 py-1.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100/70 font-mono text-xs"
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={() => setConfirming(true)}
+            disabled={!idChanged || busy}
+            className="flex-1 px-3 py-1.5 rounded-full font-mono text-xs border border-red-400/60 bg-red-900/40 text-red-100 disabled:opacity-30"
+          >
+            RENAME
+          </button>
+        </div>
+      ) : (
+        <div className="p-2 rounded-lg bg-red-950/40 border border-red-500/40 space-y-2">
+          <div className="font-mono text-[11px] text-red-200">
+            Confirm rename <b>{season.id}</b> → <b>{newId.trim()}</b>? All games attached to this season will be re-IDed.
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setConfirming(false)}
+              className="flex-1 px-3 py-1.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100/70 font-mono text-xs"
+            >
+              BACK
+            </button>
+            <button
+              onClick={() => onConfirm(season, newId.trim(), newName.trim())}
+              disabled={busy}
+              className="flex-1 px-3 py-1.5 rounded-full font-mono text-xs text-red-100 border border-red-400/70 bg-red-800/60 disabled:opacity-30"
+            >
+              {busy ? 'MIGRATING…' : 'CONFIRM'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
