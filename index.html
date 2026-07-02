@@ -1639,6 +1639,42 @@ function LeagueContextScreen({ onConfirm, onBack, fbUser }) {
               )}
             </div>
 
+            {/* Bounties this month — direct birthday bounties for the
+                current calendar month. Carry-forwards from prior months
+                aren't computed automatically (rule is manual: admin
+                adds them to bountyHolders when the player next attends). */}
+            {!isFinal && (() => {
+              const today = new Date().toISOString().slice(0, 10);
+              const bountyIds = computeBountyHolders(players, today);
+              const bountied = players.filter((p) => bountyIds.includes(p.id));
+              if (bountied.length === 0) return null;
+              const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+              const month = parseInt(today.slice(5, 7), 10);
+              return (
+                <div className="gold-border rounded-2xl p-5 bg-gradient-to-br from-yellow-950/40 to-black/80 backdrop-blur mb-6">
+                  <div className="font-mono text-xs text-yellow-300/80 tracking-widest mb-3">
+                    🎂 BOUNTIES · {MONTHS[month]?.toUpperCase()}
+                  </div>
+                  <div className="space-y-1.5">
+                    {bountied.map((p) => {
+                      const bday = p.birthday
+                        ? `${MONTHS[p.birthday.month]} ${p.birthday.day}`
+                        : '';
+                      return (
+                        <div key={p.id} className="flex justify-between items-baseline gap-3 py-1 border-b border-yellow-500/10 last:border-0">
+                          <span className="text-emerald-100">{p.displayName}</span>
+                          <span className="text-yellow-100/40 font-mono text-xs">{bday}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="text-yellow-100/40 text-xs font-mono mt-3">
+                    +2,000 pts per bounty claim (knocking a bountied player out). Also check for anyone from a previous month who missed their game and hasn't attended yet — carry-forwards.
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Final game starting stacks preview */}
             {isFinal && playerRoundTotals.length > 0 && (
               <div className="gold-border rounded-2xl p-5 bg-gradient-to-br from-yellow-950/40 to-black/80 backdrop-blur mb-6">
@@ -4081,13 +4117,32 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 );
               })()}
               <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {players.map((player, idx) => {
+                {(() => {
+                  // Bountied names for this game — same computation as the
+                  // eliminate modal so a 🎂 shows next to whoever's carrying
+                  // a bounty. Uses game start date (falls back to today) so
+                  // the calendar month matches when the game was actually
+                  // played, not when this component re-renders.
+                  const gameDate = gameStartedAt
+                    ? new Date(gameStartedAt).toISOString().slice(0, 10)
+                    : new Date().toISOString().slice(0, 10);
+                  const bountyIds = config.gameType === 'league'
+                    ? computeBountyHolders(fullRosterFromDB, gameDate)
+                    : [];
+                  const bountyNames = new Set(
+                    fullRosterFromDB
+                      .filter((p) => bountyIds.includes(p.id))
+                      .map((p) => p.displayName)
+                  );
+                  return players.map((player, idx) => {
                   const isOut = eliminatedPlayers.includes(player.name);
                   const rebuys = rebuyCounts[player.name] || 0;
+                  const isBountied = bountyNames.has(player.name);
                   return (
                     <div key={idx} className={`flex items-center gap-2 p-3 rounded-lg border ${isOut ? 'bg-red-950/30 border-red-500/20' : 'bg-emerald-950/30 border-emerald-500/20'}`}>
-                      <span className={`flex-1 ${isOut ? 'line-through text-red-300/60' : 'text-emerald-100'}`}>
+                      <span className={`flex-1 ${isOut ? 'line-through text-red-300/60' : 'text-emerald-100'} flex items-center gap-1.5`}>
                         {player.name}
+                        {isBountied && <span className="text-yellow-300/80 shrink-0" title="Bountied this game">🎂</span>}
                       </span>
                       {/* League-only payment chips — tap to toggle. Mirrors
                           the wizard's selection-time chips but tighter for
@@ -4170,7 +4225,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       </button>
                     </div>
                   );
-                })}
+                });
+                })()}
               </div>
               <div className="text-xs text-yellow-100/40 mt-3 font-mono">
                 +/− to record rebuys. Pool & avg stack update automatically.
