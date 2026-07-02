@@ -985,6 +985,230 @@ exports.sendTestHRResults = onCall(
   }
 );
 
+// Callable: admin audit tool. Reads a game doc plus its season and all
+// season games, computes a per-attendee bonus-points breakdown (attendance
+// + position bonus + KO count + first-out + bounty claims), and dumps
+// everything via logger.info so the raw data is accessible from
+// `firebase functions:log` without needing local Firestore admin creds.
+//
+// Input:  { gameId: '2026-r2-g1' }
+// Output: { ok, gameId, summary }  (short summary; full detail is in logs)
+exports.auditGame = onCall(
+  { region: REGION },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
+    }
+    const gameId = request.data && request.data.gameId;
+    if (!gameId) throw new HttpsError('invalid-argument', 'gameId required.');
+
+    const gameSnap = await db.collection('games').doc(gameId).get();
+    if (!gameSnap.exists) throw new HttpsError('not-found', `Game ${gameId} not found.`);
+    const game = { id: gameSnap.id, ...gameSnap.data() };
+
+    let season = null;
+    let seasonGames = [];
+    if (game.seasonId) {
+      const sSnap = await db.collection('seasons').doc(game.seasonId).get();
+      if (sSnap.exists) season = { id: sSnap.id, ...sSnap.data() };
+      const gsSnap = await db.collection('games')
+        .where('seasonId', '==', game.seasonId)
+        .get();
+      seasonGames = gsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    }
+
+    const playersSnap = await db.collection('players').get();
+    const playersById = {};
+    playersSnap.docs.forEach((d) => { playersById[d.id] = d.data(); });
+    const name = (pid) => (playersById[pid] && playersById[pid].displayName) || pid;
+
+    // Per-attendee bonus breakdown for this game (v2 rules).
+    const attendees = game.attendees || [];
+    const finishOrder = game.finishOrder || [];
+    const knockouts = game.knockouts || [];
+    const bountyClaims = game.bountyClaims || [];
+    const rebuys = game.rebuys || {};
+    const pointsAwarded = game.pointsAwarded || {};
+
+    const POSITION_BONUSES_V2 = [10000, 8000, 6000, 5000, 4000, 3000];
+    const breakdown = attendees.map((pid) => {
+      const pos = finishOrder.indexOf(pid);
+      const position = pos >= 0 ? pos + 1 : null;
+      const positionBonus = pos >= 0 && pos < 6 ? POSITION_BONUSES_V2[pos] : 0;
+      const attendance = 2000;
+      const kos = knockouts.filter((k) => k.knocker === pid).length;
+      const koBonus = kos * 1000;
+      // First-out reads game.firstOut as the source of truth. Fall back
+      // to knockouts[0].eliminated (v2 rule: first ever KO'd, even if
+      // they later rebought), then to finishOrder[last] for pre-v7.60
+      // imports that don't have either.
+      const firstOutPid = game.firstOut
+        || (knockouts.length > 0 ? knockouts[0].eliminated : null)
+        || (finishOrder.length > 0 ? finishOrder[finishOrder.length - 1] : null);
+      const firstOutBonus = firstOutPid === pid ? 1000 : 0;
+      const bountiesClaimed = bountyClaims.filter((b) => b.claimedBy === pid);
+      const bountyBonus = bountiesClaimed.length * 2000;
+      const expected = attendance + positionBonus + koBonus + firstOutBonus + bountyBonus;
+      const stored = pointsAwarded[pid] || 0;
+      const delta = stored - expected;
+      return {
+        pid,
+        name: name(pid),
+        position,
+        stored,
+        expected,
+        delta,
+        components: {
+          attendance,
+          positionBonus,
+          kos,
+          koBonus,
+          firstOut: firstOutPid === pid,
+          firstOutBonus,
+          bounties: bountiesClaimed.map((b) => `${name(b.bountied)}${b.claimedBy === b.bountied ? ' (self)' : ''}`),
+          bountyBonus,
+          rebuys: rebuys[pid] || 0,
+        },
+      };
+    }).sort((a, b) => (b.stored) - (a.stored));
+
+    logger.info('[auditGame] Game', { gameId, date: game.date, seasonId: game.seasonId, format: game.format, rulesVersion: game.rulesVersion, isFinal: game.isFinal });
+    logger.info('[auditGame] finishOrder (1st→last)', finishOrder.map(name));
+    logger.info('[auditGame] firstOut (from doc)', game.firstOut ? name(game.firstOut) : null);
+    logger.info('[auditGame] bountyHolders', (game.bountyHolders || []).map(name));
+    logger.info('[auditGame] knockouts log (chronological)', knockouts.map((k) => ({
+      eliminated: name(k.eliminated),
+      knocker: k.knocker ? name(k.knocker) : null,
+      rebought: !!k.rebought,
+    })));
+    logger.info('[auditGame] bountyClaims', bountyClaims.map((b) => ({
+      bountied: name(b.bountied),
+      claimedBy: name(b.claimedBy),
+      isSelfClaim: b.bountied === b.claimedBy,
+    })));
+    logger.info('[auditGame] rebuys per player', Object.fromEntries(
+      Object.entries(rebuys).map(([pid, n]) => [name(pid), n])
+    ));
+    logger.info('[auditGame] per-attendee breakdown', breakdown);
+    logger.info('[auditGame] season upfrontSubs', season ? (season.upfrontSubs || []).map(name) : null);
+    logger.info('[auditGame] subsPaid', Object.fromEntries(
+      Object.entries(game.subsPaid || {}).map(([pid, v]) => [name(pid), v])
+    ));
+
+    const mismatches = breakdown.filter((b) => b.delta !== 0);
+    return {
+      ok: true,
+      gameId,
+      summary: {
+        date: game.date,
+        seasonId: game.seasonId,
+        attendeeCount: attendees.length,
+        knockoutCount: knockouts.length,
+        bountyClaimCount: bountyClaims.length,
+        mismatchCount: mismatches.length,
+        mismatches: mismatches.map((m) => ({ name: m.name, stored: m.stored, expected: m.expected, delta: m.delta })),
+      },
+    };
+  }
+);
+
+// Callable: admin repair tool. Applies a whitelisted patch to a single
+// game doc atomically. Use for one-off data fixes when the in-app
+// EditGameModal doesn't yet expose the field you need to touch
+// (bountyHolders, bountyClaims, individual knockouts entries).
+//
+// Input:
+//   {
+//     gameId: '2026-r2-g1',
+//     patch: {
+//       removeKnockoutIndices?: [9, ...],      // splice these indices out
+//       addBountyHolders?: ['cactus', ...],    // append (unique) to bountyHolders
+//       addBountyClaims?: [{ bountied, claimedBy }, ...],
+//       setFirstOut?: 'duck',                  // replace the firstOut field
+//       pointsAdjustments?: { pid: +delta, ... },  // add delta to existing points
+//     }
+//   }
+// Output: { ok, gameId, before: {…}, after: {…} }  — key fields shown pre/post for audit
+exports.applyGamePatch = onCall(
+  { region: REGION },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
+    }
+    const { gameId, patch } = request.data || {};
+    if (!gameId || !patch || typeof patch !== 'object') {
+      throw new HttpsError('invalid-argument', 'Provide { gameId, patch }.');
+    }
+
+    const ref = db.collection('games').doc(gameId);
+    const snap = await ref.get();
+    if (!snap.exists) throw new HttpsError('not-found', `Game ${gameId} not found.`);
+    const before = snap.data();
+
+    // ---- Build the update. Only whitelisted fields are ever written. ----
+    const update = {};
+
+    // Knockouts: splice out the requested indices (validated against current length).
+    if (Array.isArray(patch.removeKnockoutIndices) && patch.removeKnockoutIndices.length) {
+      const current = Array.isArray(before.knockouts) ? [...before.knockouts] : [];
+      const drop = new Set(patch.removeKnockoutIndices.filter(
+        (i) => Number.isInteger(i) && i >= 0 && i < current.length
+      ));
+      update.knockouts = current.filter((_, i) => !drop.has(i));
+    }
+
+    // Bounty holders: union with existing.
+    if (Array.isArray(patch.addBountyHolders) && patch.addBountyHolders.length) {
+      const set = new Set([...(before.bountyHolders || []), ...patch.addBountyHolders]);
+      update.bountyHolders = Array.from(set);
+    }
+
+    // Bounty claims: append. Assumes caller checked for duplicates.
+    if (Array.isArray(patch.addBountyClaims) && patch.addBountyClaims.length) {
+      const validClaims = patch.addBountyClaims.filter(
+        (c) => c && typeof c.bountied === 'string' && typeof c.claimedBy === 'string'
+      );
+      update.bountyClaims = [...(before.bountyClaims || []), ...validClaims];
+    }
+
+    // firstOut: replace the field entirely.
+    if (typeof patch.setFirstOut === 'string') {
+      update.firstOut = patch.setFirstOut;
+    }
+
+    // Points adjustments: additive per PID.
+    if (patch.pointsAdjustments && typeof patch.pointsAdjustments === 'object') {
+      const nextPoints = { ...(before.pointsAwarded || {}) };
+      for (const [pid, delta] of Object.entries(patch.pointsAdjustments)) {
+        if (typeof delta !== 'number') continue;
+        nextPoints[pid] = (nextPoints[pid] || 0) + delta;
+      }
+      update.pointsAwarded = nextPoints;
+    }
+
+    if (Object.keys(update).length === 0) {
+      throw new HttpsError('invalid-argument', 'Patch had no recognised operations.');
+    }
+
+    await ref.set(update, { merge: true });
+
+    logger.info('[applyGamePatch] Applied', { gameId, patch });
+    logger.info('[applyGamePatch] Before', {
+      knockouts: before.knockouts,
+      bountyHolders: before.bountyHolders,
+      bountyClaims: before.bountyClaims,
+      pointsAwarded: before.pointsAwarded,
+    });
+    logger.info('[applyGamePatch] After', update);
+
+    return {
+      ok: true,
+      gameId,
+      applied: Object.keys(update),
+    };
+  }
+);
+
 // Callable: admin tool. Renames a season's document ID + name + cascades to
 // all of its games. Useful when historical seasons were stored under the wrong
 // ID (e.g. "2026-r2" when the data is actually Round 1).

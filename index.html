@@ -1176,7 +1176,13 @@ function computePointsAwarded({
 
   // First-out bonus +1,000. Falls back to the last entry of finishOrder
   // (which by construction is the first player eliminated).
+  // First-out = FIRST player knocked out chronologically, even if they
+  // later rebought and finished mid-pack. That's why we prefer the
+  // knockouts log over finishOrder — the last entry in finishOrder is
+  // whoever was PERMANENTLY eliminated first, not the same thing.
+  // (finishOrder fallback kept for legacy games that pre-date the log.)
   const firstOutName = firstOut
+    || (Array.isArray(knockouts) && knockouts.length > 0 ? knockouts[0].eliminated : null)
     || (finishOrder.length > 0 ? finishOrder[finishOrder.length - 1] : null);
   if (firstOutName && points[firstOutName] !== undefined) {
     points[firstOutName] += 1000;
@@ -3520,6 +3526,30 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // Un-eliminate (in case of misclick)
   const restorePlayer = (name) => {
     setEliminatedPlayers((prev) => prev.filter((p) => p !== name));
+    // Reverse the corresponding KO event: drop the most recent OUT
+    // entry (rebought:false) for this player from the chronological
+    // log. Without this, an accidental OUT + Restore leaves an orphan
+    // knockouts entry that dirties the audit trail forever (and any
+    // knocker who was tagged silently keeps their +1k KO bonus).
+    setKnockouts((prev) => {
+      let removed = false;
+      const next = [];
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (!removed && prev[i].eliminated === name && !prev[i].rebought) {
+          removed = true;
+          continue;
+        }
+        next.unshift(prev[i]);
+      }
+      return next;
+    });
+    // Legacy last-knocker map — clear too so bounty math doesn't linger.
+    setKnockedOutBy((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   };
 
   const updateLevel = (idx, field, value) => {
@@ -5652,9 +5682,17 @@ function LeagueDashboard({ onBack, fbUser }) {
       gamePoints: games.map(g => g.pointsAwarded?.[pid] || null),
     }));
 
-  // Aggregate stats at the bottom (subs, league money, etc.)
+  // Aggregate stats at the bottom (subs, league money, etc.). Player count
+  // reads from attendees (the ground truth for who was at the table);
+  // pointsAwarded is a fallback for legacy imports that predated the
+  // attendees field. Using attendees also means the FINAL column shows
+  // the right count — pointsAwarded is empty for finals since they don't
+  // award league points, so the pointsAwarded-length approach printed 0.
   const aggregates = {
-    playersPerGame: games.map(g => Object.values(g.pointsAwarded || {}).filter(p => p > 0).length),
+    playersPerGame: games.map(g =>
+      (g.attendees || []).length
+      || Object.values(g.pointsAwarded || {}).filter(p => p > 0).length
+    ),
     rebuys: games.map(g => g.totalRebuys || 0),
     pot: games.map(g => g.pot),
     leagueMoney: games.map(g => g.leagueMoney),
@@ -7012,7 +7050,12 @@ function SaveGameModal({
 
   // First out = last name in finishOrder (1st-place is first, so last = first eliminated).
   // null if no one was eliminated (shouldn't happen — winner overlay requires it).
-  const firstOutName = finishOrder.length > 0 ? finishOrder[finishOrder.length - 1] : null;
+  // First-out = first player ever knocked out, even if they later rebought
+  // and finished mid-pack. Prefer the knockouts log; fall back to
+  // finishOrder[last] (legacy games).
+  const firstOutName = (Array.isArray(knockouts) && knockouts.length > 0)
+    ? knockouts[0].eliminated
+    : (finishOrder.length > 0 ? finishOrder[finishOrder.length - 1] : null);
   const winnerName = finishOrder.length > 0 ? finishOrder[0] : null;
 
   // Resolve bounty claims (v2): each live bounty (initial + one per rebuy)
@@ -7657,12 +7700,17 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
       // (with extra trailing entries that the UI couldn't render or fix)
       // can be cleaned up by re-saving from this modal.
       const trimmedFinishOrder = (finishOrder || []).slice(0, attendees.length);
-      // firstOut is the last entry of finishOrder by construction — the
-      // first eliminated player. Keep it in sync so the v2 +1k first-out
-      // bonus accounting and any future "first out" displays stay honest.
-      const newFirstOut = trimmedFinishOrder.length > 0
-        ? trimmedFinishOrder[trimmedFinishOrder.length - 1]
-        : null;
+      // First-out = the FIRST player knocked out (even if they later
+      // rebought). Prefer the game's knockouts log; only fall back to
+      // finishOrder[last] if there's no log (pre-v7.60 imports). Do NOT
+      // overwrite an existing firstOut with the finishOrder fallback if
+      // it's already been manually set — losing an intentional value on
+      // an unrelated edit would be an easy mistake to make.
+      const knockoutsLog = Array.isArray(game.knockouts) ? game.knockouts : [];
+      const firstFromLog = knockoutsLog.length > 0 ? knockoutsLog[0].eliminated : null;
+      const newFirstOut = game.firstOut
+        || firstFromLog
+        || (trimmedFinishOrder.length > 0 ? trimmedFinishOrder[trimmedFinishOrder.length - 1] : null);
       const updates = {
         ...game,
         date,
