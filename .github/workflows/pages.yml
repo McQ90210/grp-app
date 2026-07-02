@@ -1,0 +1,50 @@
+# Deploy the static site to GitHub Pages. Replaces the legacy
+# "Deploy from a branch" mode, which was getting stuck in the
+# deployment_queued state and timing out.
+#
+# For this to take effect: repo Settings → Pages → Source must be
+# switched from "Deploy from a branch" to "GitHub Actions".
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialise deployments so a fast follow-up push waits for the
+# prior one to land rather than racing it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      # Upload the repo root as-is. Matches the previous "Deploy
+      # from a branch" behaviour where every file at / was served.
+      # If we ever want to exclude functions/ or the .firebaserc
+      # etc., add a `path` filter or a build step here.
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
