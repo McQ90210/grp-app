@@ -1209,6 +1209,94 @@ function computePointsAwarded({
   return points;
 }
 
+// Break a single game's points for a specific PID into its constituent
+// parts (attendance / position / KOs / bounties / first-out). Used by the
+// League Dashboard's points-breakdown popup so admins can see exactly how
+// a player earned their season total.
+//
+// Returns null if the player didn't attend that game. Otherwise:
+//   {
+//     parts: [{ label, points, detail? }, ...],
+//     total: sum(parts.points),
+//     rulesVersion: 'v1' | 'v2',
+//   }
+function computePointsBreakdownForGame(pid, game, playersById = {}) {
+  const attendees = game.attendees || [];
+  if (!attendees.includes(pid)) return null;
+
+  const version = rulesVersionForGame({ date: game.date, rulesVersion: game.rulesVersion });
+  const parts = [];
+
+  // Finals don't award league points — surface that plainly.
+  if (game.isFinal) {
+    return { parts: [], total: 0, rulesVersion: version, isFinal: true };
+  }
+
+  parts.push({ label: 'Attendance', points: 2000 });
+
+  const nameOf = (id) => playersById[id]?.displayName || id;
+  const ordinal = (n) => {
+    const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  };
+
+  const finishOrder = game.finishOrder || [];
+  const finishPos = finishOrder.indexOf(pid);
+  const POSITION_BONUSES_V2 = [10000, 8000, 6000, 5000, 4000, 3000];
+  const POSITION_BONUSES_V1 = [8000, 5000, 3000, 1000, 500];
+  const bonuses = version === 'v2' ? POSITION_BONUSES_V2 : POSITION_BONUSES_V1;
+  if (finishPos >= 0 && finishPos < bonuses.length) {
+    parts.push({
+      label: `${ordinal(finishPos + 1)} place`,
+      points: bonuses[finishPos],
+    });
+  }
+
+  if (version === 'v2') {
+    const kos = (game.knockouts || []).filter((k) => k.knocker === pid);
+    if (kos.length > 0) {
+      parts.push({
+        label: `Knockouts (×${kos.length})`,
+        points: kos.length * 1000,
+        detail: kos.map((k) => nameOf(k.eliminated)).join(', '),
+      });
+    }
+
+    const claims = (game.bountyClaims || []).filter((c) => c.claimedBy === pid);
+    if (claims.length > 0) {
+      parts.push({
+        label: `Bounty claims (×${claims.length})`,
+        points: claims.length * 2000,
+        detail: claims.map((c) => nameOf(c.bountied)).join(', '),
+      });
+    }
+
+    // First-out preference: game.firstOut > knockouts[0].eliminated > finishOrder tail
+    const knockouts = game.knockouts || [];
+    const firstOutId = game.firstOut
+      || (knockouts.length > 0 ? knockouts[0].eliminated : null)
+      || (finishOrder.length > 0 ? finishOrder[finishOrder.length - 1] : null);
+    if (firstOutId === pid) {
+      parts.push({ label: 'First out', points: 1000 });
+    }
+  } else {
+    // v1 — bounty via knockedOutBy + bountyHolders
+    const bountyHolders = new Set(game.bountyHolders || []);
+    const claimsV1 = Object.entries(game.knockedOutBy || {})
+      .filter(([elim, knocker]) => knocker === pid && bountyHolders.has(elim));
+    if (claimsV1.length > 0) {
+      parts.push({
+        label: `Bounty claims (×${claimsV1.length})`,
+        points: claimsV1.length * 2000,
+        detail: claimsV1.map(([elim]) => nameOf(elim)).join(', '),
+      });
+    }
+  }
+
+  const total = parts.reduce((s, p) => s + p.points, 0);
+  return { parts, total, rulesVersion: version, isFinal: false };
+}
+
 // Resolve the full set of bounty claims for a v2 game — including respawns
 // and self-claims. Used by SaveGameModal and (optionally) the live points
 // readout.
@@ -5866,6 +5954,7 @@ function LeagueDashboard({ onBack, fbUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
+  const [breakdown, setBreakdown] = useState(null); // { playerId, mode: 'season'|'game', gameId? }
   const [showImport, setShowImport] = useState(false);
   const [editingGame, setEditingGame] = useState(null);
   const [showDeleteSeasonConfirm, setShowDeleteSeasonConfirm] = useState(false);
@@ -6295,6 +6384,7 @@ function LeagueDashboard({ onBack, fbUser }) {
                       </td>
                       {row.gamePoints.map((pts, gi) => {
                         const g = games[gi];
+                        const openGameBreakdown = () => setBreakdown({ playerId: row.player.id, mode: 'game', gameId: g.id });
                         // Finals don't award league points (pointsAwarded is empty).
                         // Show finishing label for top 3, blank for everyone else.
                         if (g.isFinal) {
@@ -6311,12 +6401,23 @@ function LeagueDashboard({ onBack, fbUser }) {
                         const finishPos = (g.finishOrder || []).indexOf(row.player.id);
                         const posClass = finishPos >= 0 && finishPos < 5 ? `place-${finishPos + 1}` : '';
                         return (
-                          <td key={gi} className={`text-center ${posClass || 'text-emerald-100/80'}`}>
+                          <td
+                            key={gi}
+                            className={`text-center cursor-pointer hover:brightness-125 ${posClass || 'text-emerald-100/80'}`}
+                            onClick={openGameBreakdown}
+                            title="Tap to see how these points were earned"
+                          >
                             {pts.toLocaleString()}
                           </td>
                         );
                       })}
-                      <td className="total-col text-center">{row.total.toLocaleString()}</td>
+                      <td
+                        className="total-col text-center cursor-pointer hover:brightness-125"
+                        onClick={() => setBreakdown({ playerId: row.player.id, mode: 'season' })}
+                        title="Tap for a season-wide breakdown"
+                      >
+                        {row.total.toLocaleString()}
+                      </td>
                     </tr>
                   );
                 })}
@@ -6401,6 +6502,24 @@ function LeagueDashboard({ onBack, fbUser }) {
           onClose={() => setSelectedPlayerId(null)}
         />
       )}
+
+      {/* Points breakdown modal */}
+      {breakdown && (() => {
+        const player = players.find((p) => p.id === breakdown.playerId);
+        if (!player) return null;
+        const playersById = {};
+        players.forEach((p) => { playersById[p.id] = p; });
+        return (
+          <PointsBreakdownModal
+            player={player}
+            games={games}
+            playersById={playersById}
+            mode={breakdown.mode}
+            gameId={breakdown.gameId}
+            onClose={() => setBreakdown(null)}
+          />
+        );
+      })()}
 
       {/* Edit game modal */}
       {editingGame && (
@@ -6805,6 +6924,97 @@ function PlayerProfile({ playerId, players, games, season, fbUser, onPlayerUpdat
             ? (season ? `Stats for ${season.name}` : '')
             : `${(chartGames || []).filter(g => (g?.finishOrder || []).includes(playerId)).length} games across all seasons`}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ POINTS BREAKDOWN MODAL ============
+// Click a total-points cell or a per-game cell on the league table to open
+// this. Splits the player's points into attendance / position / KO / bounty
+// claim / first-out, per game. Season mode aggregates + lists every game;
+// game mode focuses on one game only.
+function PointsBreakdownModal({ player, games, playersById, mode, gameId, onClose }) {
+  const relevant = mode === 'game' && gameId
+    ? games.filter((g) => g.id === gameId)
+    : games;
+  const perGame = relevant
+    .slice()
+    .sort((a, b) => (a.gameNumber || 0) - (b.gameNumber || 0))
+    .map((game) => ({ game, breakdown: computePointsBreakdownForGame(player.id, game, playersById) }))
+    .filter((row) => row.breakdown !== null);
+
+  const grandTotal = perGame.reduce((s, r) => s + r.breakdown.total, 0);
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-lg w-full max-h-[92vh] overflow-y-auto">
+        <div className="flex justify-between items-start mb-4 gap-3">
+          <div className="min-w-0">
+            <div className="font-display text-3xl gold-text">POINTS BREAKDOWN</div>
+            <div className="text-yellow-100/60 font-mono text-xs mt-1">
+              {player.displayName} · {mode === 'game' ? `Game ${relevant[0]?.gameNumber || '?'}` : 'Season'}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        </div>
+
+        {perGame.length === 0 ? (
+          <div className="text-yellow-100/60 font-mono text-sm text-center py-6">
+            {mode === 'game' ? 'Player didn\'t attend this game.' : 'No qualifying games yet.'}
+          </div>
+        ) : (
+          <>
+            <div className="space-y-3">
+              {perGame.map(({ game, breakdown }) => (
+                <div key={game.id} className="rounded-xl bg-black/30 border border-yellow-500/15 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-mono text-xs text-yellow-100/70 tracking-widest">
+                      G{game.gameNumber}{game.isFinal ? ' · FINAL' : ''} · {game.date}
+                    </div>
+                    <div className="font-display text-xl gold-text">
+                      {breakdown.total.toLocaleString()}
+                    </div>
+                  </div>
+                  {breakdown.isFinal ? (
+                    <div className="text-xs font-mono text-yellow-100/50 italic">
+                      Finals don't award league points.
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {breakdown.parts.map((p, i) => (
+                        <div key={i} className="flex justify-between items-baseline gap-3 py-0.5">
+                          <div className="min-w-0">
+                            <div className="text-emerald-100 text-sm">{p.label}</div>
+                            {p.detail && (
+                              <div className="text-yellow-100/40 font-mono text-[10px] truncate">{p.detail}</div>
+                            )}
+                          </div>
+                          <div className="text-yellow-100 font-mono text-sm shrink-0">
+                            +{p.points.toLocaleString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {mode === 'season' && perGame.length > 1 && (
+              <div className="mt-4 p-3 rounded-xl bg-black/40 border border-yellow-500/30 flex justify-between items-baseline">
+                <div className="font-mono text-xs text-yellow-100/60 tracking-widest">SEASON TOTAL</div>
+                <div className="font-display text-3xl gold-text">{grandTotal.toLocaleString()}</div>
+              </div>
+            )}
+          </>
+        )}
+
+        <button
+          onClick={onClose}
+          className="mt-4 w-full px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm"
+        >
+          CLOSE
+        </button>
       </div>
     </div>
   );
