@@ -6194,12 +6194,14 @@ function LeagueDashboard({ onBack, fbUser }) {
           background: #020a06;
           color: #1ec890;
         }
-        /* Per-cell finishing-position colours (1st-5th in each individual game) */
+        /* Per-cell finishing-position colours — only the PAID positions in
+           each individual game get a medal colour; everyone else who played
+           renders in a muted grey so admin can see at a glance who cashed. */
         .league-table td.place-1 { color: #f4d03f; font-weight: 700; }
         .league-table td.place-2 { color: #d4d4d4; font-weight: 700; }
         .league-table td.place-3 { color: #d4924a; font-weight: 700; }
         .league-table td.place-4 { color: #5eead4; font-weight: 600; }
-        .league-table td.place-5 { color: #93c5fd; font-weight: 600; }
+        .league-table td.place-unpaid { color: #6b7280; font-weight: 500; }
         /* Coloured leaderboard rank numbers (top 3 only) */
         .pos-num-1 { color: #f4d03f; font-weight: 700; }
         .pos-num-2 { color: #d4d4d4; font-weight: 700; }
@@ -6407,13 +6409,19 @@ function LeagueDashboard({ onBack, fbUser }) {
                         if (pts === null) {
                           return <td key={gi} className="text-center text-yellow-100/30">—</td>;
                         }
-                        // Regular games: colour by finishing position
+                        // Regular games: only PAID positions get a medal
+                        // colour (top-3 for ≤10-player games, top-4 for
+                        // 11+). Everyone else who played renders muted grey
+                        // so it's obvious at a glance who cashed.
                         const finishPos = (g.finishOrder || []).indexOf(row.player.id);
-                        const posClass = finishPos >= 0 && finishPos < 5 ? `place-${finishPos + 1}` : '';
+                        const paidCount = Object.keys(g.payouts || {}).length || 3;
+                        const posClass = finishPos >= 0 && finishPos < paidCount && finishPos < 4
+                          ? `place-${finishPos + 1}`
+                          : 'place-unpaid';
                         return (
                           <td
                             key={gi}
-                            className={`text-center cursor-pointer hover:brightness-125 ${posClass || 'text-emerald-100/80'}`}
+                            className={`text-center cursor-pointer hover:brightness-125 ${posClass}`}
                             onClick={openGameBreakdown}
                             title="Tap to see how these points were earned"
                           >
