@@ -2809,6 +2809,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const wledBaseUrl = (ip) => /^https?:\/\//i.test(ip) ? ip : `http://${ip}`;
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [fullRosterFromDB, setFullRosterFromDB] = useState([]); // raw player docs from Firestore — for bounty calc
+  // Season totals BEFORE this game — { pid: totalPoints }. Sums pointsAwarded
+  // across every prior game in the current season, excluding this game's own
+  // id (in case an admin re-opened a saved game). Loaded once when the timer
+  // mounts; used by the BONUS POINTS panel to show live rank + delta.
+  const [seasonPreGameTotals, setSeasonPreGameTotals] = useState(null);
 
   const intervalRef = useRef(null);
   const scrubDraggingRef = useRef(false);
@@ -3037,6 +3042,40 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     }
     return () => { cancelled = true; };
   }, []);
+
+  // Load season pointsAwarded totals from Firestore so the BONUS POINTS panel
+  // can show each attendee's live rank + delta vs. going in. League games only.
+  useEffect(() => {
+    if (config.gameType !== 'league') return;
+    const seasonId = config.leagueContext?.seasonId;
+    if (!seasonId) return;
+    let cancelled = false;
+    const currentGameId = `${seasonId}-g${config.leagueContext.gameNumber}`;
+    const doLoad = async () => {
+      try {
+        const games = await window.GRP_DB.getGamesForSeason(seasonId);
+        if (cancelled) return;
+        const totals = {};
+        (games || []).forEach((g) => {
+          if (g.id === currentGameId) return; // exclude current game (in case a saved copy exists)
+          Object.entries(g.pointsAwarded || {}).forEach(([pid, pts]) => {
+            totals[pid] = (totals[pid] || 0) + (pts || 0);
+          });
+        });
+        setSeasonPreGameTotals(totals);
+      } catch (e) { /* silent — panel falls back to zero pre-game totals */ }
+    };
+    if (window.GRP_DB) doLoad();
+    else {
+      const onReady = () => doLoad();
+      window.addEventListener('firebase-ready', onReady);
+      return () => {
+        cancelled = true;
+        window.removeEventListener('firebase-ready', onReady);
+      };
+    }
+    return () => { cancelled = true; };
+  }, [config.gameType, config.leagueContext?.seasonId, config.leagueContext?.gameNumber]);
 
   // Load available voices. They load asynchronously in some browsers.
   useEffect(() => {
@@ -4223,10 +4262,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           )}
 
           {activePanel === 'bonusPoints' && (() => {
-            // Live bonus points earned so far this game. Position bonuses
-            // depend on final finish order, so they're intentionally excluded —
-            // this panel shows what's ALREADY locked in from KOs, bounty
-            // claims, first-out, and attendance.
+            // Live bonus points earned so far this game, layered on top of
+            // each attendee's season total going in. Position bonuses depend
+            // on final finish order and are intentionally excluded from the
+            // "locked-in" tally.
             const gameDate = gameStartedAt
               ? new Date(gameStartedAt).toISOString().slice(0, 10)
               : new Date().toISOString().slice(0, 10);
@@ -4238,8 +4277,20 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             );
             const firstOutName = knockouts.length > 0 ? knockouts[0].eliminated : null;
 
-            // Per-attendee live bonus tally.
-            const rows = players.map((pl) => {
+            // Resolve attendee name -> pid via the roster (some attendees may
+            // be new players not yet in fullRosterFromDB — they get pid = null
+            // and no pre-game total).
+            const pidByName = {};
+            fullRosterFromDB.forEach((p) => { pidByName[p.displayName] = p.id; });
+            const preTotals = seasonPreGameTotals || {};
+
+            // Build the rank universe: everyone with pre-game points + every
+            // attendee (even if their pid is unknown yet). Attendees get
+            // their live tonight bonus layered on top; non-attendees keep
+            // their pre-game total unchanged (their rank shifts naturally
+            // when attendees pass them).
+            const attendeeInfo = players.map((pl) => {
+              const pid = pidByName[pl.name] || null;
               const kos = knockouts.filter((k) => k.knocker === pl.name).length;
               const bountyClaims = knockouts.filter(
                 (k) => k.knocker === pl.name && bountyNames.has(k.eliminated)
@@ -4249,62 +4300,126 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               const koPts = kos * 1000;
               const bountyPts = bountyClaims * 2000;
               const firstOutPts = isFirstOut ? 1000 : 0;
+              const liveTonight = attendance + koPts + bountyPts + firstOutPts;
+              const preGame = pid ? (preTotals[pid] || 0) : 0;
               return {
                 name: pl.name,
+                pid,
                 isBountied: bountyNames.has(pl.name),
                 kos,
                 bountyClaims,
                 isFirstOut,
-                attendance,
-                koPts,
-                bountyPts,
-                firstOutPts,
-                lockedIn: attendance + koPts + bountyPts + firstOutPts,
+                liveTonight,
+                preGame,
+                liveTotal: preGame + liveTonight,
               };
             });
-            rows.sort((a, b) => b.lockedIn - a.lockedIn || a.name.localeCompare(b.name));
+            const attendeePidSet = new Set(attendeeInfo.map((a) => a.pid).filter(Boolean));
+
+            // Non-attendees in the season universe — hold at their pre-game
+            // totals; live total = pre total (no tonight bonus).
+            const nonAttendees = Object.entries(preTotals)
+              .filter(([pid]) => !attendeePidSet.has(pid))
+              .map(([pid, pts]) => {
+                const p = fullRosterFromDB.find((x) => x.id === pid);
+                return {
+                  pid,
+                  name: p?.displayName || pid,
+                  preGame: pts,
+                  liveTotal: pts,
+                  isAttendee: false,
+                };
+              });
+
+            const universe = [
+              ...attendeeInfo.map((a) => ({ ...a, isAttendee: true })),
+              ...nonAttendees,
+            ];
+
+            // Ordinal ranks — sort by score desc, name asc for stability.
+            // Ranking uses distinct-score buckets so ties share a rank.
+            const rankMap = (key) => {
+              const sorted = [...universe].sort((a, b) =>
+                (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name)
+              );
+              const ranks = {};
+              let lastScore = null;
+              let lastRank = 0;
+              sorted.forEach((row, i) => {
+                const score = row[key] || 0;
+                if (score !== lastScore) {
+                  lastRank = i + 1;
+                  lastScore = score;
+                }
+                ranks[row.name] = lastRank;
+              });
+              return ranks;
+            };
+            const preRanks = rankMap('preGame');
+            const liveRanks = rankMap('liveTotal');
+            const hasPreGameData = Object.keys(preTotals).length > 0;
+
+            const rows = attendeeInfo
+              .map((a) => ({
+                ...a,
+                liveRank: liveRanks[a.name],
+                preRank: preRanks[a.name],
+                delta: (preRanks[a.name] || 0) - (liveRanks[a.name] || 0),
+              }))
+              .sort((a, b) => a.liveRank - b.liveRank || a.name.localeCompare(b.name));
+
+            const rankColor = (r) => {
+              if (r === 1) return 'text-yellow-300';
+              if (r === 2) return 'text-gray-300';
+              if (r === 3) return 'text-amber-500';
+              return 'text-yellow-100/70';
+            };
 
             return (
               <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
                 <div className="flex justify-between items-center mb-4">
-                  <div className="font-display text-2xl gold-text">LIVE BONUS POINTS</div>
+                  <div className="font-display text-2xl gold-text">LIVE STANDINGS</div>
                   <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
                 </div>
                 <div className="text-xs font-mono text-yellow-100/50 mb-3">
-                  Locked-in tonight so far. Position bonuses (1st–6th) settle at end of game.
+                  {seasonPreGameTotals === null
+                    ? 'Loading season totals…'
+                    : hasPreGameData
+                      ? 'Season total + tonight\'s locked-in bonuses. Position bonuses (1st–6th) settle at end of game.'
+                      : 'First game of the season — no prior totals.'}
                 </div>
-                <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1 text-xs font-mono px-2 pb-2 border-b border-yellow-500/10 text-yellow-500/60 tracking-widest">
-                  <div>PLAYER</div>
-                  <div className="text-right">KO</div>
-                  <div className="text-right">🎯</div>
-                  <div className="text-right">1ST OUT</div>
-                  <div className="text-right">TOTAL</div>
-                </div>
-                <div className="max-h-96 overflow-y-auto pr-1">
+                <div className="max-h-[28rem] overflow-y-auto pr-1">
                   {rows.map((r) => (
-                    <div key={r.name} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1 items-center py-1.5 px-2 border-b border-yellow-500/5">
-                      <div className="text-emerald-100 flex items-center gap-1.5 min-w-0">
-                        <span className="truncate">{r.name}</span>
-                        {r.isBountied && <span title="Bountied this game" className="text-yellow-300/80 shrink-0">🎂</span>}
+                    <div key={r.name} className="flex items-center gap-3 py-2 px-2 border-b border-yellow-500/5">
+                      <div className="flex flex-col items-center w-12 shrink-0">
+                        <div className={`font-display text-xl ${rankColor(r.liveRank)}`}>#{r.liveRank}</div>
+                        {hasPreGameData && r.delta !== 0 && (
+                          <div className={`text-[10px] font-mono ${r.delta > 0 ? 'text-emerald-300' : 'text-red-300'}`}>
+                            {r.delta > 0 ? `↑${r.delta}` : `↓${-r.delta}`}
+                          </div>
+                        )}
                       </div>
-                      <div className={`text-right font-mono text-xs ${r.kos > 0 ? 'text-yellow-100' : 'text-yellow-100/30'}`}>
-                        {r.kos > 0 ? `${r.kos}×1k` : '—'}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-emerald-100 flex items-center gap-1.5 min-w-0">
+                          <span className="truncate">{r.name}</span>
+                          {r.isBountied && <span className="text-yellow-300/80 shrink-0" title="Bountied this game">🎂</span>}
+                          {r.isFirstOut && <span className="text-red-300/80 text-[10px] font-mono shrink-0">1ST OUT</span>}
+                        </div>
+                        <div className="text-[11px] font-mono text-yellow-100/50 truncate">
+                          {r.preGame.toLocaleString()} + {r.liveTonight.toLocaleString()} tonight
+                          {r.kos > 0 && ` · ${r.kos} KO`}
+                          {r.bountyClaims > 0 && ` · ${r.bountyClaims}🎯`}
+                        </div>
                       </div>
-                      <div className={`text-right font-mono text-xs ${r.bountyClaims > 0 ? 'text-yellow-300' : 'text-yellow-100/30'}`}>
-                        {r.bountyClaims > 0 ? `${r.bountyClaims}×2k` : '—'}
-                      </div>
-                      <div className={`text-right font-mono text-xs ${r.isFirstOut ? 'text-red-300' : 'text-yellow-100/30'}`}>
-                        {r.isFirstOut ? '+1k' : '—'}
-                      </div>
-                      <div className="text-right font-mono text-yellow-100 font-bold">
-                        {r.lockedIn.toLocaleString()}
+                      <div className="text-right shrink-0">
+                        <div className="font-display text-2xl gold-text">{r.liveTotal.toLocaleString()}</div>
                       </div>
                     </div>
                   ))}
                 </div>
                 <div className="text-xs font-mono text-yellow-100/40 mt-3 space-y-0.5">
-                  <div>Everyone: +2,000 attendance · KO: +1,000 each · Bounty (🎯): +2,000 each · First-out: +1,000</div>
-                  <div>🎂 = bountied this game</div>
+                  <div>Tonight: +2,000 attendance · KO +1,000 each · 🎯 +2,000 each · 1st out +1,000</div>
+                  <div>🎂 = bountied this game · rank shown across the full season roster</div>
                 </div>
               </div>
             );
