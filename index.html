@@ -8618,7 +8618,7 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
                       <tr className="bg-black/40">
                         <th className="text-left p-2 text-yellow-100/60 sticky left-0 bg-black/60 z-10" style={{ minWidth: 140 }}>Player</th>
                         {regular.map((g) => (
-                          <th key={g.id} className="text-center p-2 text-emerald-300 whitespace-nowrap" style={{ minWidth: 52 }}>
+                          <th key={g.id} className="text-center p-2 text-emerald-300 whitespace-nowrap" style={{ minWidth: 72 }}>
                             G{g.gameNumber}
                           </th>
                         ))}
@@ -8641,7 +8641,7 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
                               if (state === 'upfront') {
                                 return (
                                   <td key={g.id} className="text-center p-1" title="Covered by upfront round payment">
-                                    <span className="inline-block w-7 h-7 rounded border bg-emerald-700/40 border-emerald-300/60 text-emerald-50 text-[11px] leading-7">⌬</span>
+                                    <span className="inline-block px-2 py-1 rounded border bg-emerald-600/30 border-emerald-400/60 text-emerald-100 text-[11px] font-mono">✓</span>
                                   </td>
                                 );
                               }
@@ -8651,7 +8651,7 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
                                   <button
                                     onClick={() => toggle(g.id, pid)}
                                     disabled={!editMode}
-                                    className={`w-7 h-7 rounded border text-[11px] ${
+                                    className={`px-2 py-1 rounded border text-[11px] font-mono ${
                                       isPaid
                                         ? 'bg-emerald-600/30 border-emerald-400/60 text-emerald-100'
                                         : 'bg-red-900/40 border-red-400/60 text-red-100'
@@ -8660,7 +8660,7 @@ function SubsLedgerModal({ season, games, players, onClose, onSaved }) {
                                       ? (isPaid ? 'Paid — click to mark owed' : 'Owed — click to mark paid')
                                       : (isPaid ? 'Paid' : 'Owed')}
                                   >
-                                    {isPaid ? '✓' : '□'}
+                                    {isPaid ? '✓' : 'OWES'}
                                   </button>
                                 </td>
                               );
