@@ -7486,15 +7486,14 @@ function SaveGameModal({
         pot: parseFloat(pot) || 0,
         payouts,
         leagueMoney: isLeague ? (parseFloat(leagueMoney) || 0) : 0,
-        // Prize pool = pot minus what goes to the kitty (league money +
-        // subs). Was previously being saved as raw pot, which quietly
-        // over-stated the prize pool by whatever was collected for the
-        // kitty. HR has no league money / subs so this collapses to pot.
+        // Prize pool = pot minus league money. Subs (£3/attendee) are
+        // collected SEPARATELY from the pot, not deducted from it — see
+        // CLAUDE.md "Money" rules. HR has no league money so collapses
+        // to raw pot.
         prizePool: (() => {
           const p = parseFloat(pot) || 0;
           const lm = isLeague ? (parseFloat(leagueMoney) || 0) : 0;
-          const sb = isLeague ? (parseFloat(subs) || 0) : 0;
-          return Math.max(0, p - lm - sb);
+          return Math.max(0, p - lm);
         })(),
         subs: isLeague ? (parseFloat(subs) || 0) : 0,
         pointsAwarded: isLeague ? pointsAwarded : {},
@@ -7956,10 +7955,11 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
         // Keep per-player rebuys in sync (we only edit them for HR, but
         // store the existing value for league untouched).
         updates.rebuys = rebuys;
-        // Prize pool = pot minus kitty (league money + subs). Recompute
-        // on every league save so an edit to any of the three keeps the
-        // stored prizePool honest.
-        updates.prizePool = Math.max(0, (updates.pot || 0) - (updates.leagueMoney || 0) - (updates.subs || 0));
+        // Prize pool = pot minus league money. Subs are collected
+        // separately (never in the pot), so they don't reduce the
+        // prize pool. Recompute on every league save so an edit to
+        // either pot or leagueMoney keeps prizePool honest.
+        updates.prizePool = Math.max(0, (updates.pot || 0) - (updates.leagueMoney || 0));
       } else {
         // HR: BUY IN is the editable field; derive the pot from it.
         const newBuyIn = parseFloat(buyIn) || 0;

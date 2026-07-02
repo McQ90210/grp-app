@@ -1141,6 +1141,8 @@ exports.auditGame = onCall(
 //       addBountyClaims?: [{ bountied, claimedBy }, ...],
 //       setFirstOut?: 'duck',                  // replace the firstOut field
 //       pointsAdjustments?: { pid: +delta, ... },  // add delta to existing points
+//       setLeagueMoney?: 0,                    // overwrite the leagueMoney field
+//       setPrizePool?: 540,                    // overwrite the prizePool field
 //     }
 //   }
 // Output: { ok, gameId, before: {…}, after: {…} }  — key fields shown pre/post for audit
@@ -1199,6 +1201,15 @@ exports.applyGamePatch = onCall(
         nextPoints[pid] = (nextPoints[pid] || 0) + delta;
       }
       update.pointsAwarded = nextPoints;
+    }
+
+    // Overwrite leagueMoney / prizePool (used when a game was played
+    // without the 10% deduction, or to reconcile after a math change).
+    if (typeof patch.setLeagueMoney === 'number' && patch.setLeagueMoney >= 0) {
+      update.leagueMoney = patch.setLeagueMoney;
+    }
+    if (typeof patch.setPrizePool === 'number' && patch.setPrizePool >= 0) {
+      update.prizePool = patch.setPrizePool;
     }
 
     if (Object.keys(update).length === 0) {
