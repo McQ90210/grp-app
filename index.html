@@ -2945,6 +2945,17 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // STANDINGS rail. Skips the "which player" step of the full eliminate
   // modal — the player is already known — and just asks OUT vs REBUY.
   const [standingsAction, setStandingsAction] = useState(null); // { player } | null
+  // Standings-rail delayed reveal: lag the visible knockouts log by a few
+  // seconds so the room can look up after a KO and *watch* the points move.
+  // The real `knockouts` state stays authoritative for the save flow /
+  // eliminate modal / bounty sound — only the standings render uses this
+  // delayed copy.
+  const [displayedKnockouts, setDisplayedKnockouts] = useState(knockouts);
+  useEffect(() => {
+    if (knockouts === displayedKnockouts) return;
+    const t = setTimeout(() => setDisplayedKnockouts(knockouts), 3000);
+    return () => clearTimeout(t);
+  }, [knockouts, displayedKnockouts]);
   // If resuming and only one player remains active, infer the winner so the
   // overlay surfaces immediately and the save flow is reachable.
   const [winner, setWinner] = useState(() => {
@@ -4090,7 +4101,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 .filter((p) => bountyIds.includes(p.id))
                 .map((p) => p.displayName)
             );
-            const firstOutName = knockouts.length > 0 ? knockouts[0].eliminated : null;
+            // Standings rail reads a lagged snapshot of the KO log so
+            // scoring updates arrive ~3s after the tap that caused them.
+            const railKnockouts = displayedKnockouts;
+            const firstOutName = railKnockouts.length > 0 ? railKnockouts[0].eliminated : null;
 
             const pidByName = {};
             fullRosterFromDB.forEach((p) => { pidByName[p.displayName] = p.id; });
@@ -4100,8 +4114,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             // pre-game season totals.
             const attendeeInfo = players.map((pl) => {
               const pid = pidByName[pl.name] || null;
-              const kos = knockouts.filter((k) => k.knocker === pl.name).length;
-              const claims = knockouts.filter(
+              const kos = railKnockouts.filter((k) => k.knocker === pl.name).length;
+              const claims = railKnockouts.filter(
                 (k) => k.knocker === pl.name && bountyNameSet.has(k.eliminated)
               ).length;
               const isFirstOut = firstOutName === pl.name;
