@@ -2988,11 +2988,42 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // eliminate modal / bounty sound — only the standings render uses this
   // delayed copy. Must be declared AFTER `knockouts` — it references it.
   const [displayedKnockouts, setDisplayedKnockouts] = useState(resume?.knockouts || []);
+  // Names of players whose points just updated in the delayed reveal — used
+  // to flash their rows in the standings so the whole room can see who
+  // scored. Cleared after FLASH_DURATION_MS.
+  const [justScored, setJustScored] = useState(() => new Set());
   useEffect(() => {
     if (knockouts === displayedKnockouts) return;
-    const t = setTimeout(() => setDisplayedKnockouts(knockouts), 3000);
+    const t = setTimeout(() => {
+      // Diff the incoming log vs. the currently displayed one to find
+      // who's tally of knockouts changed. First-out belongs to whoever's
+      // at the head of the log — highlight them on the game's opening KO.
+      const tallyKnockers = (log) => {
+        const t = {};
+        (log || []).forEach((k) => {
+          if (k.knocker) t[k.knocker] = (t[k.knocker] || 0) + 1;
+        });
+        return t;
+      };
+      const before = tallyKnockers(displayedKnockouts);
+      const after = tallyKnockers(knockouts);
+      const changed = new Set();
+      Object.keys(after).forEach((name) => {
+        if ((after[name] || 0) > (before[name] || 0)) changed.add(name);
+      });
+      const firstAfter = (knockouts || [])[0]?.eliminated;
+      const firstBefore = (displayedKnockouts || [])[0]?.eliminated;
+      if (firstAfter && firstAfter !== firstBefore) changed.add(firstAfter);
+      setDisplayedKnockouts(knockouts);
+      if (changed.size > 0) setJustScored(changed);
+    }, 3000);
     return () => clearTimeout(t);
   }, [knockouts, displayedKnockouts]);
+  useEffect(() => {
+    if (justScored.size === 0) return;
+    const t = setTimeout(() => setJustScored(new Set()), 2500);
+    return () => clearTimeout(t);
+  }, [justScored]);
   // Per-attendee payment status (keyed by displayName). Seeded from the
   // setup wizard's captured state; late-entry players default to paid
   // (admin can correct via the Subs Ledger after the fact).
@@ -4227,12 +4258,15 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                     // been permanently eliminated. Tapping opens the
                     // OUT-vs-REBUY shortcut modal for that specific row.
                     const isActionable = r.isAttendee && playerObj && !isOut && !winner;
+                    const isFlashing = justScored.has(r.name);
                     return (
                       <div
                         key={r.name}
                         onClick={isActionable ? () => setStandingsAction({ player: playerObj }) : undefined}
-                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded ${
-                          r.isAttendee ? 'bg-emerald-500/15' : ''
+                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-colors duration-500 ${
+                          isFlashing
+                            ? 'bg-yellow-400/40 ring-2 ring-yellow-300'
+                            : r.isAttendee ? 'bg-emerald-500/15' : ''
                         } ${isActionable ? 'cursor-pointer hover:bg-emerald-500/25' : ''} ${isOut ? 'opacity-60' : ''}`}
                         title={isActionable ? 'Tap to record OUT or REBUY' : (r.isAttendee ? (isOut ? 'Eliminated' : 'Playing tonight') : 'Not here tonight')}
                       >
@@ -4246,8 +4280,17 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                             : hasPreGame && r.delta < 0 ? `↓${-r.delta}`
                             : '·'}
                         </span>
-                        <span className={`flex-1 min-w-0 truncate ${isOut ? 'line-through text-red-300/60' : r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
-                        <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>
+                        <span className={`flex-1 min-w-0 truncate transition-colors duration-500 ${
+                          isFlashing ? 'text-yellow-50 font-bold'
+                          : isOut ? 'line-through text-red-300/60'
+                          : r.isAttendee ? 'text-emerald-100'
+                          : 'text-yellow-100/50'
+                        }`}>{r.name}</span>
+                        <span className={`font-mono text-xs shrink-0 tabular-nums transition-colors duration-500 ${
+                          isFlashing ? 'text-yellow-50 font-bold'
+                          : r.isAttendee ? 'text-yellow-100'
+                          : 'text-yellow-100/50'
+                        }`}>
                           {r.liveTotal.toLocaleString()}
                         </span>
                       </div>
