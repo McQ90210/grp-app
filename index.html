@@ -4376,7 +4376,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               )
             );
 
-            const standingsBody = (
+            // Rendered TWICE (desktop rail + mobile strip) — refs must be
+            // namespaced per variant or the hidden copy overwrites the
+            // visible copy's ref and FLIP measures a display:none element
+            // (top always 0 → "no movement" → rows snap instead of slide).
+            const renderStandingsBody = (variant) => (
               seasonPreGameTotals === null ? (
                 <div className="font-mono text-[11px] text-yellow-100/40 italic">Loading…</div>
               ) : standings.length === 0 ? (
@@ -4395,8 +4399,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       <div
                         key={r.name}
                         ref={(el) => {
-                          if (el) rowRefs.current[r.name] = el;
-                          else delete rowRefs.current[r.name];
+                          const refKey = `${variant}:${r.name}`;
+                          if (el) rowRefs.current[refKey] = el;
+                          else delete rowRefs.current[refKey];
                         }}
                         onClick={isActionable ? () => setStandingsAction({ player: playerObj }) : undefined}
                         className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-colors duration-300 ease-out ${
@@ -4466,7 +4471,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                           <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
                           <div className="font-mono text-[9px] text-yellow-100/40 mt-0.5">position bonuses settle at end</div>
                         </div>
-                        <div className="overflow-y-auto min-h-0">{standingsBody}</div>
+                        <div className="overflow-y-auto min-h-0">{renderStandingsBody('rail')}</div>
                       </div>
                     )}
                   </aside>
@@ -4491,7 +4496,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                         <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
                         <div className="font-mono text-[9px] text-yellow-100/40">position bonuses settle at end</div>
                       </div>
-                      {standingsBody}
+                      {renderStandingsBody('strip')}
                     </div>
                   )}
                 </div>
