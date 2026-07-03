@@ -2996,7 +2996,6 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // the scoring player's displayed liveTotal as it walks through each
   // intermediate rank threshold, one step at a time. Null when not
   // animating (final state is settled).
-  const [animOverride, setAnimOverride] = useState(null); // { name, index } | null — climbing row's display slot
   // NOTE: the useEffects that drive the delayed reveal + rank climb are
   // declared much further down, AFTER fullRosterFromDB and
   // seasonPreGameTotals — they're in the dependency array and would trip
@@ -3164,7 +3163,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       });
     });
     prevRowPositions.current = current;
-  }, [displayedKnockouts, animOverride]);
+  }, [displayedKnockouts]);
 
   // Standings-rail delayed reveal + rank-climb animation. Deps below
   // include state declared above (players, fullRosterFromDB, etc), which
@@ -3189,64 +3188,44 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       const firstBefore = (displayedKnockouts || [])[0]?.eliminated;
       if (firstAfter && firstAfter !== firstBefore) changed.add(firstAfter);
 
-      setDisplayedKnockouts(knockouts);
-      if (changed.size === 0) return;
-      setJustScored(changed);
-
-      // Multi-step rank climb: only animate when exactly ONE player
-      // scored. For multi-KO events we skip the climb and just flash.
-      if (changed.size !== 1) return;
-      const [scoringName] = Array.from(changed);
-      if (config.gameType !== 'league') return;
-
-      // Index-based climb: compute the scorer's position in the OLD and
-      // NEW orders using the exact same sort the rail renders with. Then
-      // walk them up one display slot at a time. Because the climb is
-      // expressed in list positions (not synthetic totals), it can never
-      // overshoot or disagree with the final settle.
-      const oldOrder = computeNaturalStandings(displayedKnockouts);
-      const newOrder = computeNaturalStandings(knockouts);
-      const startIdx = oldOrder.findIndex((r) => r.name === scoringName);
-      const endIdx = newOrder.findIndex((r) => r.name === scoringName);
-      if (startIdx < 0 || endIdx < 0 || endIdx >= startIdx) return; // nothing to climb
-
-      // One step per display slot, pacing scaled so a long climb finishes
-      // in ~5s while a short one keeps the deliberate 1.5s-per-place feel.
-      const stepIndices = [];
-      for (let idx = startIdx - 1; idx >= endIdx; idx--) stepIndices.push(idx);
-      const stepMs = Math.max(600, Math.min(1500, Math.round(5000 / stepIndices.length)));
-      flipDurationRef.current = stepMs;
-
-      setAnimOverride({ name: scoringName, index: startIdx });
-      let i = 0;
-      const runStep = () => {
-        if (i >= stepIndices.length) {
-          setAnimOverride(null);
-          flipDurationRef.current = 1500;
-          flipEasingRef.current = 'cubic-bezier(0.4, 0, 0.2, 1)';
-          return;
+      // Single continuous climb: the reveal switches the data straight to
+      // its final order, and ONE long FLIP slide carries the scoring row
+      // up through every name it passes. No stepping machinery — the
+      // row visibly overtakes each player mid-glide, at constant speed,
+      // with a single deceleration into its final slot (pure ease-out:
+      // full speed from the first frame, no acceleration ramp).
+      // Duration scales with the climb distance so short hops stay quick.
+      if (changed.size === 1 && config.gameType === 'league') {
+        const [scoringName] = Array.from(changed);
+        const oldOrder = computeNaturalStandings(displayedKnockouts);
+        const newOrder = computeNaturalStandings(knockouts);
+        const startIdx = oldOrder.findIndex((r) => r.name === scoringName);
+        const endIdx = newOrder.findIndex((r) => r.name === scoringName);
+        const places = startIdx >= 0 && endIdx >= 0 ? startIdx - endIdx : 0;
+        if (places > 0) {
+          const dur = Math.max(800, Math.min(3000, places * 500));
+          flipDurationRef.current = dur;
+          flipEasingRef.current = 'cubic-bezier(0, 0, 0.2, 1)';
+          // Restore defaults once the slide has finished so unrelated
+          // moves (multi-KO snaps, later reveals) get the stock feel.
+          setTimeout(() => {
+            flipDurationRef.current = 1500;
+            flipEasingRef.current = 'cubic-bezier(0.4, 0, 0.2, 1)';
+          }, dur + 200);
         }
-        // Intermediate hops run linear so back-to-back one-slot moves read
-        // as one continuous glide; the final hop eases out to settle.
-        flipEasingRef.current = i === stepIndices.length - 1
-          ? 'cubic-bezier(0.25, 0.1, 0.25, 1)'
-          : 'linear';
-        setAnimOverride({ name: scoringName, index: stepIndices[i] });
-        i++;
-        setTimeout(runStep, stepMs);
-      };
-      setTimeout(runStep, 100);
+      }
+
+      setDisplayedKnockouts(knockouts);
+      if (changed.size > 0) setJustScored(changed);
     }, 1000);
     return () => clearTimeout(t);
   }, [knockouts, displayedKnockouts, players, fullRosterFromDB, seasonPreGameTotals, gameStartedAt, config.gameType]);
   useEffect(() => {
     if (justScored.size === 0) return;
-    // Wait for any active climb to finish before clearing the flash so the
-    // row stays highlighted through the whole slide.
-    if (animOverride !== null) return;
-    const t = setTimeout(() => setJustScored(new Set()), 2000);
+    // Keep the flash lit through the slide, then linger 2s and fade.
+    const t = setTimeout(() => setJustScored(new Set()), flipDurationRef.current + 2000);
     return () => clearTimeout(t);
-  }, [justScored, animOverride]);
+  }, [justScored]);
 
   const intervalRef = useRef(null);
   const scrubDraggingRef = useRef(false);
@@ -4345,19 +4324,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             const hasPreGame = Object.keys(preTotals).length > 0;
 
             // Full season league table via the shared sort (points →
-            // winnings → KOs → name). During a climb, `animOverride`
-            // re-splices the scoring row at an intermediate list position
-            // so it visibly walks up one slot at a time.
+            // winnings → KOs → name). Climb animation is handled entirely
+            // by FLIP — the reveal jumps the data to its final order and
+            // one long slide carries the scoring row up through the names.
             const standings = computeNaturalStandings(railKnockouts);
-            if (animOverride && animOverride.index != null) {
-              const fromIdx = standings.findIndex((r) => r.name === animOverride.name);
-              if (fromIdx >= 0) {
-                const [movingRow] = standings.splice(fromIdx, 1);
-                const target = Math.max(0, Math.min(standings.length, animOverride.index));
-                standings.splice(target, 0, movingRow);
-                movingRow.liveRank = target + 1;
-              }
-            }
 
             // Pre-game ranks (for the delta arrows) — same tiebreaks, but
             // ordered on season totals as of before tonight.
