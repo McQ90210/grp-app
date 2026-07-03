@@ -3926,7 +3926,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     }
     setKnockouts((prev) => [
       ...prev,
-      { eliminated: name, knocker: knockerOuterName || null, rebought: true },
+      { eliminated: name, knocker: knockerOuterName || null, rebought: true, at: Date.now() },
     ]);
     if (voiceEnabled) speakClip(`rebuy-${slugifyName(name)}`, `Rebuy for ${name}.`);
   };
@@ -4011,7 +4011,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     }
     setKnockouts((prev) => [
       ...prev,
-      { eliminated: player.name, knocker: knockerOuterName || null, rebought: false },
+      // `at` powers time-based end-of-round awards (e.g. Quickest Exit) —
+      // recording from July 2026 so the Christmas final has a full round.
+      { eliminated: player.name, knocker: knockerOuterName || null, rebought: false, at: Date.now() },
     ]);
     doEliminate(player);
   };
@@ -8632,6 +8634,9 @@ function SaveGameModal({
         eliminated: resolvePid(k.eliminated),
         knocker: k.knocker ? resolvePid(k.knocker) : null,
         rebought: !!k.rebought,
+        // ms-since-epoch when the KO was recorded (null for pre-v8.42
+        // games) — feeds time-based end-of-round awards.
+        at: k.at || null,
       }));
 
       // Per-attendee payment status — convert name-keyed maps to PID-keyed

@@ -201,7 +201,7 @@ function computeStandings(games, players, latestGameId) {
 
 // Prompt for a regular (non-final) league game. Treats the night as one of
 // many; references the standings table; looks ahead to "next month".
-function buildRegularRecapPrompt({ game, season, podium, standingsBlurb }) {
+function buildRegularRecapPrompt({ game, season, podium, standingsBlurb, eventsBlurb }) {
   return `Write a 3-4 sentence recap (60-100 words) of last night's Greene Room Poker
 league game, for the morning-after results email. Tone: warm, dry-witty, British pub
 energy. Reference at least TWO specific player nicknames and AT LEAST ONE specific
@@ -217,6 +217,13 @@ Context:
 - Game ${game.gameNumber} on ${game.date}
 - ${(game.attendees || []).length} players, pot £${game.pot || 0}, ${game.totalRebuys || 0} rebuys
 - Podium: ${podium || 'no results recorded'}
+
+Match events from the night, in chronological order. Pick the ONE or TWO most
+interesting for the recap, do not list them all. A player racking up several
+knockouts is a story. A birthday bounty being claimed (or kept) is a story.
+Someone rebuying repeatedly is a story. The first player out is gentle
+material for a friendly dig:
+- ${eventsBlurb || '(none recorded)'}
 
 When referring to the next game, say "next month" or "the next game", never "next week" or "tonight".
 
@@ -328,11 +335,36 @@ async function generateRecap({ game, season, standings, players }) {
     `${i + 1}. ${s.displayName} (${s.total.toLocaleString()} pts, ${s.gamesPlayed} games)`
   ).join('\n');
 
+  // Narrative events — the chronological KO log, bounty claims, first-out
+  // and rebuys give Gemini an actual story to tell instead of just the
+  // podium. Everything is stored as PIDs; translate to nicknames.
+  const nameOf = (pid) => playersById[pid]?.displayName || pid;
+  const koLines = (game.knockouts || [])
+    .filter((k) => k.knocker)
+    .map((k) => `${nameOf(k.knocker)} knocked out ${nameOf(k.eliminated)}${k.rebought ? ' (who rebought)' : ''}`);
+  const bountyLines = (game.bountyClaims || []).map((c) =>
+    c.claimedBy === c.bountied
+      ? `${nameOf(c.bountied)} survived the night and kept their own birthday bounty`
+      : `${nameOf(c.claimedBy)} claimed ${nameOf(c.bountied)}'s birthday bounty`
+  );
+  const firstOutLine = game.firstOut
+    ? `First player eliminated on the night: ${nameOf(game.firstOut)}`
+    : null;
+  const rebuyLines = Object.entries(game.rebuys || {})
+    .filter(([, n]) => n > 0)
+    .map(([pid, n]) => `${nameOf(pid)} rebought ${n} time${n > 1 ? 's' : ''}`);
+  const eventsBlurb = [
+    ...(firstOutLine ? [firstOutLine] : []),
+    ...koLines,
+    ...bountyLines,
+    ...rebuyLines,
+  ].join('\n- ');
+
   // Finals get a season-closer treatment — different vibe, no league-points
   // talk, more focus on the trophy moment + setup for the next round.
   const prompt = game.isFinal
     ? buildFinalRecapPrompt({ game, season, standings, players, podium, playersById })
-    : buildRegularRecapPrompt({ game, season, podium, standingsBlurb });
+    : buildRegularRecapPrompt({ game, season, podium, standingsBlurb, eventsBlurb });
 
   try {
     // gemini-2.5-flash is the current free-tier flagship. If 429s come back,
