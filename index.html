@@ -4010,11 +4010,6 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               <button onClick={() => setActivePanel(activePanel === 'payouts' ? null : 'payouts')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'payouts' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Payouts">
                 <Trophy size={18} />
               </button>
-              {config.gameType === 'league' && !config.leagueContext?.isFinal && (
-                <button onClick={() => setActivePanel(activePanel === 'bonusPoints' ? null : 'bonusPoints')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'bonusPoints' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Live bonus points">
-                  <Award size={18} />
-                </button>
-              )}
               <button onClick={() => setActivePanel(activePanel === 'settings' ? null : 'settings')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'settings' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Settings & blinds">
                 <Settings size={18} />
               </button>
@@ -4023,6 +4018,140 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               </button>
             </div>
           </div>
+
+          {/* --- Always-visible BOUNTIES + LIVE STANDINGS strips ---
+              F1-qualifying-style: rank + delta + name on the right,
+              bountied attendees on the left. League games only, no
+              finals. Skipped entirely when there's no leagueContext. */}
+          {config.gameType === 'league' && !config.leagueContext?.isFinal && (() => {
+            const gameDate = gameStartedAt
+              ? new Date(gameStartedAt).toISOString().slice(0, 10)
+              : new Date().toISOString().slice(0, 10);
+            const bountyIds = computeBountyHolders(fullRosterFromDB, gameDate);
+            const bountyNameSet = new Set(
+              fullRosterFromDB
+                .filter((p) => bountyIds.includes(p.id))
+                .map((p) => p.displayName)
+            );
+            const firstOutName = knockouts.length > 0 ? knockouts[0].eliminated : null;
+
+            const pidByName = {};
+            fullRosterFromDB.forEach((p) => { pidByName[p.displayName] = p.id; });
+            const preTotals = seasonPreGameTotals || {};
+
+            // Attendees with their live-tonight bonuses layered on top of
+            // pre-game season totals.
+            const attendeeInfo = players.map((pl) => {
+              const pid = pidByName[pl.name] || null;
+              const kos = knockouts.filter((k) => k.knocker === pl.name).length;
+              const claims = knockouts.filter(
+                (k) => k.knocker === pl.name && bountyNameSet.has(k.eliminated)
+              ).length;
+              const isFirstOut = firstOutName === pl.name;
+              const liveTonight = 2000 + kos * 1000 + claims * 2000 + (isFirstOut ? 1000 : 0);
+              const preGame = pid ? (preTotals[pid] || 0) : 0;
+              return { name: pl.name, pid, isBountied: bountyNameSet.has(pl.name), liveTotal: preGame + liveTonight, preGame };
+            });
+            const attendeePidSet = new Set(attendeeInfo.map((a) => a.pid).filter(Boolean));
+
+            // Non-attendees hold their pre-game total (their live total
+            // doesn't change tonight — attendees just slide past them).
+            const nonAttendees = Object.entries(preTotals)
+              .filter(([pid]) => !attendeePidSet.has(pid))
+              .map(([pid, pts]) => {
+                const p = fullRosterFromDB.find((x) => x.id === pid);
+                return { pid, name: p?.displayName || pid, preGame: pts, liveTotal: pts };
+              });
+            const universe = [...attendeeInfo, ...nonAttendees];
+
+            const rankMap = (key) => {
+              const sorted = [...universe].sort((a, b) =>
+                (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name)
+              );
+              const ranks = {};
+              let lastScore = null, lastRank = 0;
+              sorted.forEach((row, i) => {
+                const score = row[key] || 0;
+                if (score !== lastScore) { lastRank = i + 1; lastScore = score; }
+                ranks[row.name] = lastRank;
+              });
+              return ranks;
+            };
+            const preRanks = rankMap('preGame');
+            const liveRanks = rankMap('liveTotal');
+            const hasPreGame = Object.keys(preTotals).length > 0;
+
+            const standings = attendeeInfo
+              .map((a) => ({
+                ...a,
+                liveRank: liveRanks[a.name],
+                delta: (preRanks[a.name] || 0) - (liveRanks[a.name] || 0),
+              }))
+              .sort((a, b) => a.liveRank - b.liveRank || a.name.localeCompare(b.name));
+
+            const bountiedHere = attendeeInfo.filter((a) => a.isBountied);
+            const bountiedMissing = bountyIds
+              .map((pid) => fullRosterFromDB.find((p) => p.id === pid))
+              .filter((p) => p && !players.some((pl) => pl.name === p.displayName));
+
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3 mb-6">
+                {/* --- BOUNTIES --- */}
+                <div className="gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3">
+                  <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest mb-2">🎂 BOUNTIES</div>
+                  {bountiedHere.length === 0 && bountiedMissing.length === 0 ? (
+                    <div className="font-mono text-[11px] text-yellow-100/40 italic">None this month.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {bountiedHere.map((b) => (
+                        <div key={b.name} className="flex items-center gap-1.5 text-sm text-emerald-100">
+                          <span className="text-yellow-300/90">🎂</span>
+                          <span className="truncate">{b.name}</span>
+                        </div>
+                      ))}
+                      {bountiedMissing.map((p) => (
+                        <div key={p.id} className="flex items-center gap-1.5 text-sm text-yellow-100/40 line-through" title="Bountied but not here tonight — carries forward">
+                          <span>🎂</span>
+                          <span className="truncate">{p.displayName}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* --- LIVE STANDINGS --- */}
+                <div className="gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
+                    <div className="font-mono text-[9px] text-yellow-100/40">position bonuses settle at end</div>
+                  </div>
+                  {seasonPreGameTotals === null ? (
+                    <div className="font-mono text-[11px] text-yellow-100/40 italic">Loading…</div>
+                  ) : standings.length === 0 ? (
+                    <div className="font-mono text-[11px] text-yellow-100/40 italic">No attendees yet.</div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5">
+                      {standings.map((r) => (
+                        <div key={r.name} className="flex items-center gap-1.5 text-sm min-w-0">
+                          <span className={`font-mono text-xs shrink-0 w-6 text-right ${r.liveRank <= 3 ? 'text-yellow-300' : 'text-yellow-100/50'}`}>#{r.liveRank}</span>
+                          <span className={`font-mono text-[10px] shrink-0 w-4 ${
+                            hasPreGame && r.delta > 0 ? 'text-emerald-300'
+                            : hasPreGame && r.delta < 0 ? 'text-red-300'
+                            : 'text-yellow-100/20'
+                          }`}>
+                            {hasPreGame && r.delta > 0 ? `↑${r.delta}`
+                              : hasPreGame && r.delta < 0 ? `↓${-r.delta}`
+                              : '·'}
+                          </span>
+                          <span className="text-emerald-100 truncate">{r.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12 mb-6">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
@@ -4452,170 +4581,6 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               )}
             </div>
           )}
-
-          {activePanel === 'bonusPoints' && (() => {
-            // Live bonus points earned so far this game, layered on top of
-            // each attendee's season total going in. Position bonuses depend
-            // on final finish order and are intentionally excluded from the
-            // "locked-in" tally.
-            const gameDate = gameStartedAt
-              ? new Date(gameStartedAt).toISOString().slice(0, 10)
-              : new Date().toISOString().slice(0, 10);
-            const bountyIds = computeBountyHolders(fullRosterFromDB, gameDate);
-            const bountyNames = new Set(
-              fullRosterFromDB
-                .filter((p) => bountyIds.includes(p.id))
-                .map((p) => p.displayName)
-            );
-            const firstOutName = knockouts.length > 0 ? knockouts[0].eliminated : null;
-
-            // Resolve attendee name -> pid via the roster (some attendees may
-            // be new players not yet in fullRosterFromDB — they get pid = null
-            // and no pre-game total).
-            const pidByName = {};
-            fullRosterFromDB.forEach((p) => { pidByName[p.displayName] = p.id; });
-            const preTotals = seasonPreGameTotals || {};
-
-            // Build the rank universe: everyone with pre-game points + every
-            // attendee (even if their pid is unknown yet). Attendees get
-            // their live tonight bonus layered on top; non-attendees keep
-            // their pre-game total unchanged (their rank shifts naturally
-            // when attendees pass them).
-            const attendeeInfo = players.map((pl) => {
-              const pid = pidByName[pl.name] || null;
-              const kos = knockouts.filter((k) => k.knocker === pl.name).length;
-              const bountyClaims = knockouts.filter(
-                (k) => k.knocker === pl.name && bountyNames.has(k.eliminated)
-              ).length;
-              const isFirstOut = firstOutName === pl.name;
-              const attendance = 2000;
-              const koPts = kos * 1000;
-              const bountyPts = bountyClaims * 2000;
-              const firstOutPts = isFirstOut ? 1000 : 0;
-              const liveTonight = attendance + koPts + bountyPts + firstOutPts;
-              const preGame = pid ? (preTotals[pid] || 0) : 0;
-              return {
-                name: pl.name,
-                pid,
-                isBountied: bountyNames.has(pl.name),
-                kos,
-                bountyClaims,
-                isFirstOut,
-                liveTonight,
-                preGame,
-                liveTotal: preGame + liveTonight,
-              };
-            });
-            const attendeePidSet = new Set(attendeeInfo.map((a) => a.pid).filter(Boolean));
-
-            // Non-attendees in the season universe — hold at their pre-game
-            // totals; live total = pre total (no tonight bonus).
-            const nonAttendees = Object.entries(preTotals)
-              .filter(([pid]) => !attendeePidSet.has(pid))
-              .map(([pid, pts]) => {
-                const p = fullRosterFromDB.find((x) => x.id === pid);
-                return {
-                  pid,
-                  name: p?.displayName || pid,
-                  preGame: pts,
-                  liveTotal: pts,
-                  isAttendee: false,
-                };
-              });
-
-            const universe = [
-              ...attendeeInfo.map((a) => ({ ...a, isAttendee: true })),
-              ...nonAttendees,
-            ];
-
-            // Ordinal ranks — sort by score desc, name asc for stability.
-            // Ranking uses distinct-score buckets so ties share a rank.
-            const rankMap = (key) => {
-              const sorted = [...universe].sort((a, b) =>
-                (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name)
-              );
-              const ranks = {};
-              let lastScore = null;
-              let lastRank = 0;
-              sorted.forEach((row, i) => {
-                const score = row[key] || 0;
-                if (score !== lastScore) {
-                  lastRank = i + 1;
-                  lastScore = score;
-                }
-                ranks[row.name] = lastRank;
-              });
-              return ranks;
-            };
-            const preRanks = rankMap('preGame');
-            const liveRanks = rankMap('liveTotal');
-            const hasPreGameData = Object.keys(preTotals).length > 0;
-
-            const rows = attendeeInfo
-              .map((a) => ({
-                ...a,
-                liveRank: liveRanks[a.name],
-                preRank: preRanks[a.name],
-                delta: (preRanks[a.name] || 0) - (liveRanks[a.name] || 0),
-              }))
-              .sort((a, b) => a.liveRank - b.liveRank || a.name.localeCompare(b.name));
-
-            const rankColor = (r) => {
-              if (r === 1) return 'text-yellow-300';
-              if (r === 2) return 'text-gray-300';
-              if (r === 3) return 'text-amber-500';
-              return 'text-yellow-100/70';
-            };
-
-            return (
-              <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
-                <div className="flex justify-between items-center mb-4">
-                  <div className="font-display text-2xl gold-text">LIVE STANDINGS</div>
-                  <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
-                </div>
-                <div className="text-xs font-mono text-yellow-100/50 mb-3">
-                  {seasonPreGameTotals === null
-                    ? 'Loading season totals…'
-                    : hasPreGameData
-                      ? 'Season total + tonight\'s locked-in bonuses. Position bonuses (1st–6th) settle at end of game.'
-                      : 'First game of the season — no prior totals.'}
-                </div>
-                <div className="max-h-[28rem] overflow-y-auto pr-1">
-                  {rows.map((r) => (
-                    <div key={r.name} className="flex items-center gap-3 py-2 px-2 border-b border-yellow-500/5">
-                      <div className="flex flex-col items-center w-12 shrink-0">
-                        <div className={`font-display text-xl ${rankColor(r.liveRank)}`}>#{r.liveRank}</div>
-                        {hasPreGameData && r.delta !== 0 && (
-                          <div className={`text-[10px] font-mono ${r.delta > 0 ? 'text-emerald-300' : 'text-red-300'}`}>
-                            {r.delta > 0 ? `↑${r.delta}` : `↓${-r.delta}`}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-emerald-100 flex items-center gap-1.5 min-w-0">
-                          <span className="truncate">{r.name}</span>
-                          {r.isBountied && <span className="text-yellow-300/80 shrink-0" title="Bountied this game">🎂</span>}
-                          {r.isFirstOut && <span className="text-red-300/80 text-[10px] font-mono shrink-0">1ST OUT</span>}
-                        </div>
-                        <div className="text-[11px] font-mono text-yellow-100/50 truncate">
-                          {r.preGame.toLocaleString()} + {r.liveTonight.toLocaleString()} tonight
-                          {r.kos > 0 && ` · ${r.kos} KO`}
-                          {r.bountyClaims > 0 && ` · ${r.bountyClaims}🎯`}
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <div className="font-display text-2xl gold-text">{r.liveTotal.toLocaleString()}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="text-xs font-mono text-yellow-100/40 mt-3 space-y-0.5">
-                  <div>Tonight: +2,000 attendance · KO +1,000 each · 🎯 +2,000 each · 1st out +1,000</div>
-                  <div>🎂 = bountied this game · rank shown across the full season roster</div>
-                </div>
-              </div>
-            );
-          })()}
 
           {activePanel === 'settings' && (
             <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
