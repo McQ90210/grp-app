@@ -82,7 +82,7 @@
   <div id="root"></div>
   <script type="text/babel" data-presets="react-classic" data-type="module">
 // Destructure hooks for in-browser use
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useLayoutEffect, useRef, useCallback } = React;
 
 // Inline SVG icon components — replacements for lucide-react
 const Icon = ({ children, size = 24 }) => (
@@ -3049,6 +3049,41 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // mounts; used by the BONUS POINTS panel to show live rank + delta.
   const [seasonPreGameTotals, setSeasonPreGameTotals] = useState(null);
 
+  // FLIP animation for the standings rail. Each row registers a ref
+  // keyed by player name. Before every commit, we snapshot each row's
+  // y-position. After commit, we compare against the new position and
+  // for any row that moved, apply an inverse translateY then animate
+  // it back to zero — the row visibly slides into its new slot instead
+  // of jumping.
+  const rowRefs = useRef({});
+  const prevRowPositions = useRef({});
+  useLayoutEffect(() => {
+    const current = {};
+    Object.entries(rowRefs.current).forEach(([name, el]) => {
+      if (el) current[name] = el.getBoundingClientRect().top;
+    });
+    Object.entries(current).forEach(([name, newTop]) => {
+      const oldTop = prevRowPositions.current[name];
+      if (oldTop === undefined || oldTop === newTop) return;
+      const el = rowRefs.current[name];
+      if (!el) return;
+      const dy = oldTop - newTop;
+      // Invert: place the row where it used to be, no transition.
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${dy}px)`;
+      // Play: two rAFs so the browser paints the inverted position first,
+      // then the transition to zero takes effect.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!rowRefs.current[name]) return;
+          el.style.transition = 'transform 400ms cubic-bezier(0.4, 0, 0.2, 1)';
+          el.style.transform = 'translateY(0)';
+        });
+      });
+    });
+    prevRowPositions.current = current;
+  });
+
   // Standings-rail delayed reveal + rank-climb animation. Deps below
   // include state declared above (players, fullRosterFromDB, etc), which
   // is why this effect lives here rather than next to the state hooks.
@@ -4353,8 +4388,12 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                     return (
                       <div
                         key={r.name}
+                        ref={(el) => {
+                          if (el) rowRefs.current[r.name] = el;
+                          else delete rowRefs.current[r.name];
+                        }}
                         onClick={isActionable ? () => setStandingsAction({ player: playerObj }) : undefined}
-                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-all duration-300 ease-out ${
+                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-colors duration-300 ease-out ${
                           isFlashing
                             ? 'bg-yellow-400/40 ring-2 ring-yellow-300'
                             : r.isAttendee ? 'bg-emerald-500/15' : ''
