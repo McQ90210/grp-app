@@ -3234,10 +3234,15 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           .map((k) => k.eliminated)
           .filter(Boolean)
       );
-      if (changed.size === 1 && config.gameType === 'league') {
+      // Yellow = scorers still standing. The eliminated player can also
+      // score (first-out bonus on the game's opening KO) but out = red,
+      // always — so they're excluded from the yellow set, which also
+      // keeps the knocker's climb animation firing on the first KO.
+      const scorers = new Set([...changed].filter((n) => !dropped.has(n)));
+      if (scorers.size === 1 && config.gameType === 'league') {
         const oldOrder = computeNaturalStandings(displayedKnockouts);
         const newOrder = computeNaturalStandings(knockouts);
-        const [scoringName] = Array.from(changed);
+        const [scoringName] = Array.from(scorers);
         const startIdx = oldOrder.findIndex((r) => r.name === scoringName);
         const endIdx = newOrder.findIndex((r) => r.name === scoringName);
         const places = startIdx >= 0 && endIdx >= 0 ? startIdx - endIdx : 0;
@@ -3255,7 +3260,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       }
 
       setDisplayedKnockouts(knockouts);
-      if (changed.size > 0) setJustScored(changed);
+      if (scorers.size > 0) setJustScored(scorers);
       if (dropped.size > 0) setJustDropped(dropped);
     }, 1000);
     return () => clearTimeout(t);
@@ -4448,8 +4453,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                     // been permanently eliminated. Tapping opens the
                     // OUT-vs-REBUY shortcut modal for that specific row.
                     const isActionable = r.isAttendee && playerObj && !isOut && !winner;
-                    const isFlashing = justScored.has(r.name);
-                    const isDropping = !isFlashing && justDropped.has(r.name);
+                    const isDropping = justDropped.has(r.name);
+                    const isFlashing = !isDropping && justScored.has(r.name);
                     return (
                       <div
                         key={r.name}
