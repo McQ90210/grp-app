@@ -5426,56 +5426,15 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             ))}
           </div>
 
-          <div
-            className="relative z-10 max-w-2xl w-full text-center max-h-[94vh] overflow-y-auto px-1"
-            style={{ animation: 'winnerPop 0.8s ease-out' }}
-          >
-            <div className="font-mono text-sm text-yellow-300/80 tracking-[0.3em] mb-4">CHAMPION</div>
-            <div
-              className="font-display gold-text leading-none mb-8"
-              style={{
-                fontSize: 'clamp(4rem, 18vw, 10rem)',
-                animation: 'winnerGlow 2s ease-in-out infinite',
-              }}
-            >
-              {winner.name}
-            </div>
-            <div className="font-mono text-xs text-yellow-300/60 tracking-widest mb-2">PRIZE POOL</div>
-            <div className="font-display text-5xl gold-text mb-8">£{prizePool.toLocaleString()}</div>
+          {(() => {
+            const hasStandings = config.gameType === 'league' && !config.leagueContext?.isFinal;
 
-            {/* Payout breakdown */}
-            <div className="max-w-md mx-auto space-y-2 mb-8">
-              {(() => {
-                const splits = PAYOUT_STRUCTURES[payoutKey].splits;
-                const paidCount = splits.length;
-                const amounts = computePayouts(prizePool, config.buyIn, paidCount);
-                const places = ['1st', '2nd', '3rd', '4th', '5th'];
-                const colors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
-                return splits.map((pct, i) => {
-                  let placeName;
-                  if (i === 0) placeName = winner.name;
-                  else {
-                    const reversed = [...eliminatedPlayers].reverse();
-                    placeName = reversed[i - 1] || '—';
-                  }
-                  return (
-                    <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/40 border border-yellow-500/10">
-                      <div className="flex items-center gap-3">
-                        <div className={`font-display text-2xl ${colors[i]}`}>{places[i]}</div>
-                        <div className="font-mono text-sm text-yellow-100/80">{placeName}</div>
-                      </div>
-                      <div className="font-display text-2xl gold-text">£{amounts[i].toLocaleString()}</div>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-
-            {/* Post-game league impact — the game is decided, so position
-                bonuses are settled and this is the REAL updated table
-                (same numbers SAVE GAME will write). Every attendee row
-                shows movement + exactly where tonight's points came from. */}
-            {config.gameType === 'league' && !config.leagueContext?.isFinal && (() => {
+            // Post-game league impact — the game is decided, so position
+            // bonuses are settled and this is the REAL updated table
+            // (same numbers SAVE GAME will write). Every attendee row
+            // shows movement + exactly where tonight's points came from.
+            let standingsRows = null, standingsFinalRanks = null, standingsPreRanks = null;
+            if (hasStandings) {
               const finishOrder = [winner.name, ...[...eliminatedPlayers].reverse()];
               const POS_BONUS = [8000, 6000, 4000, 3000, 2000, 1000];
               const POS_LABEL = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
@@ -5540,66 +5499,113 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 });
                 return ranks;
               };
-              const rows = [...attendeeRows, ...nonAttendeeRows].sort((a, b) => cmp(a, b, 'total'));
-              const finalRanks = rankOf(rows, 'total');
-              const preSorted = [...rows].sort((a, b) => cmp(a, b, 'preGame'));
-              const preRanks = rankOf(preSorted, 'preGame');
+              standingsRows = [...attendeeRows, ...nonAttendeeRows].sort((a, b) => cmp(a, b, 'total'));
+              standingsFinalRanks = rankOf(standingsRows, 'total');
+              const preSorted = [...standingsRows].sort((a, b) => cmp(a, b, 'preGame'));
+              standingsPreRanks = rankOf(preSorted, 'preGame');
+            }
 
-              return (
-                <div className="max-w-md mx-auto mb-8 text-left">
-                  <div className="font-mono text-xs text-yellow-300/60 tracking-widest mb-2 text-center">UPDATED STANDINGS</div>
-                  <div className="rounded-xl bg-black/40 border border-yellow-500/10 p-3 max-h-80 overflow-y-auto space-y-1">
-                    {rows.map((r) => {
-                      const delta = (preRanks[r.name] || 0) - (finalRanks[r.name] || 0);
-                      return (
-                        <div key={r.name} className={`px-2 py-1 rounded ${r.isAttendee ? 'bg-emerald-500/10' : ''}`}>
-                          <div className="flex items-center gap-1.5 text-sm min-w-0">
-                            <span className={`font-mono text-xs shrink-0 w-6 text-right ${finalRanks[r.name] <= 3 ? 'text-yellow-300' : 'text-yellow-100/50'}`}>#{finalRanks[r.name]}</span>
-                            <span className={`font-mono text-[10px] shrink-0 w-5 ${delta > 0 ? 'text-emerald-300' : delta < 0 ? 'text-red-300' : 'text-yellow-100/20'}`}>
-                              {delta > 0 ? `↑${delta}` : delta < 0 ? `↓${-delta}` : '·'}
-                            </span>
-                            <span className={`flex-1 min-w-0 truncate ${r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
-                            <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>{r.total.toLocaleString()}</span>
-                          </div>
-                          {r.isAttendee && (
-                            <div className="pl-[52px] font-mono text-[10px] text-yellow-100/45">
-                              +{r.tonight.toLocaleString()} tonight · {r.parts.join(' · ')}
+            const splits = PAYOUT_STRUCTURES[payoutKey].splits;
+            const amounts = computePayouts(prizePool, config.buyIn, splits.length);
+            const placeLabels = ['1st', '2nd', '3rd', '4th', '5th'];
+            const placeColors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
+            const reversedOut = [...eliminatedPlayers].reverse();
+
+            return (
+              <div
+                className="relative z-10 w-full max-h-[94vh] px-2"
+                style={{ animation: 'winnerPop 0.8s ease-out', maxWidth: hasStandings ? '72rem' : '42rem' }}
+              >
+                <div className={`grid gap-8 items-center ${hasStandings ? 'lg:grid-cols-[1.15fr_1fr]' : ''}`}>
+                  {/* Left: champion + payouts + actions */}
+                  <div className="text-center">
+                    <div className="font-mono text-sm text-yellow-300/80 tracking-[0.3em] mb-3">CHAMPION</div>
+                    <div
+                      className="font-display gold-text leading-none mb-6"
+                      style={{
+                        fontSize: 'clamp(3rem, 9vw, 6.5rem)',
+                        animation: 'winnerGlow 2s ease-in-out infinite',
+                      }}
+                    >
+                      {winner.name}
+                    </div>
+                    <div className="font-mono text-xs text-yellow-300/60 tracking-widest mb-1">PRIZE POOL</div>
+                    <div className="font-display text-4xl gold-text mb-6">£{prizePool.toLocaleString()}</div>
+
+                    <div className="max-w-sm mx-auto space-y-1.5 mb-8">
+                      {splits.map((pct, i) => {
+                        const placeName = i === 0 ? winner.name : (reversedOut[i - 1] || '—');
+                        return (
+                          <div key={i} className="flex items-center justify-between px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/10">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className={`font-display text-xl ${placeColors[i]}`}>{placeLabels[i]}</div>
+                              <div className="font-mono text-sm text-yellow-100/80 truncate">{placeName}</div>
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
+                            <div className="font-display text-xl gold-text shrink-0">£{amounts[i].toLocaleString()}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 justify-center flex-wrap">
-              <button
-                onClick={() => setShowSaveModal(true)}
-                className="control-btn px-8 py-3 rounded-full font-display text-xl text-white"
-                style={{ background: 'linear-gradient(135deg, #1ec890, #14a37b)' }}
-              >
-                SAVE GAME
-              </button>
-              {config.gameType === 'league' && onViewLeague && (
-                <button
-                  onClick={() => { setWinner(null); onViewLeague(); }}
-                  className="control-btn px-8 py-3 rounded-full font-display text-xl text-black"
-                  style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
-                >
-                  VIEW THE LEAGUE
-                </button>
-              )}
-              <button
-                onClick={() => { setWinner(null); onReset(); }}
-                className="control-btn px-8 py-3 rounded-full font-display text-xl text-black"
-                style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
-              >
-                NEW TOURNAMENT
-              </button>
-            </div>
-          </div>
+                    <div className="flex flex-col sm:flex-row gap-3 justify-center flex-wrap">
+                      <button
+                        onClick={() => setShowSaveModal(true)}
+                        className="control-btn px-7 py-3 rounded-full font-display text-lg text-white"
+                        style={{ background: 'linear-gradient(135deg, #1ec890, #14a37b)' }}
+                      >
+                        SAVE GAME
+                      </button>
+                      {config.gameType === 'league' && onViewLeague && (
+                        <button
+                          onClick={() => { setWinner(null); onViewLeague(); }}
+                          className="control-btn px-7 py-3 rounded-full font-display text-lg text-black"
+                          style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+                        >
+                          VIEW THE LEAGUE
+                        </button>
+                      )}
+                      <button
+                        onClick={() => { setWinner(null); onReset(); }}
+                        className="control-btn px-7 py-3 rounded-full font-display text-lg text-black"
+                        style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
+                      >
+                        NEW TOURNAMENT
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Right: updated league table (league, non-final only) */}
+                  {hasStandings && (
+                    <div className="text-left">
+                      <div className="font-mono text-xs text-yellow-300/60 tracking-widest mb-2">UPDATED STANDINGS</div>
+                      <div className="rounded-xl bg-black/40 border border-yellow-500/10 p-2.5 max-h-[82vh] overflow-y-auto space-y-0.5">
+                        {standingsRows.map((r) => {
+                          const delta = (standingsPreRanks[r.name] || 0) - (standingsFinalRanks[r.name] || 0);
+                          return (
+                            <div key={r.name} className={`px-2 py-0.5 rounded ${r.isAttendee ? 'bg-emerald-500/10' : ''}`}>
+                              <div className="flex items-center gap-1.5 text-sm min-w-0">
+                                <span className={`font-mono text-xs shrink-0 w-6 text-right ${standingsFinalRanks[r.name] <= 3 ? 'text-yellow-300' : 'text-yellow-100/50'}`}>#{standingsFinalRanks[r.name]}</span>
+                                <span className={`font-mono text-[10px] shrink-0 w-5 ${delta > 0 ? 'text-emerald-300' : delta < 0 ? 'text-red-300' : 'text-yellow-100/20'}`}>
+                                  {delta > 0 ? `↑${delta}` : delta < 0 ? `↓${-delta}` : '·'}
+                                </span>
+                                <span className={`flex-1 min-w-0 truncate ${r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
+                                <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>{r.total.toLocaleString()}</span>
+                              </div>
+                              {r.isAttendee && (
+                                <div className="pl-[52px] font-mono text-[10px] leading-tight text-yellow-100/45 truncate">
+                                  +{r.tonight.toLocaleString()} tonight · {r.parts.join(' · ')}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
