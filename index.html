@@ -6388,7 +6388,7 @@ function LeagueDashboard({ onBack, fbUser }) {
                     <tr key={row.player.id}>
                       <td className="sticky-col">
                         <span className="player-link text-emerald-100" onClick={() => setSelectedPlayerId(row.player.id)}>
-                          <span className={pos <= 3 ? `pos-num-${pos} mr-2` : 'text-yellow-100/40 mr-2'}>
+                          <span className={`inline-block w-7 text-right mr-2 ${pos <= 3 ? `pos-num-${pos}` : 'text-yellow-100/40'}`}>
                             {pos}.
                           </span>
                           {row.player.displayName}
