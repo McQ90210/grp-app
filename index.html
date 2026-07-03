@@ -4243,16 +4243,18 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             // otherwise trap `position: fixed` inside a scroll container.
             const desktopRail = showAny && (
               <aside
-                className="hidden xl:flex flex-col fixed top-24 w-64 max-h-[calc(100vh-7rem)] z-10 gap-3"
-                    style={{
-                      // Center the 16rem-wide (256px) rail in the empty gap
-                      // between the timer's max-w-4xl (896px) container and
-                      // the viewport's right edge. Falls back to a 2rem
-                      // minimum on narrower windows so it never hugs the
-                      // edge even when the maths would put it at zero.
-                      right: 'max(2rem, calc((100vw - 1408px) / 4))',
-                    }}
-                  >
+                className="hidden xl:flex flex-col w-64 gap-3"
+                style={{
+                  // Force position/coordinates inline so nothing in Tailwind
+                  // or an ancestor stylesheet can override them. Portal
+                  // renders this into <body> so `fixed` = viewport-fixed.
+                  position: 'fixed',
+                  top: '6rem',
+                  right: 'max(2rem, calc((100vw - 1408px) / 4))',
+                  maxHeight: 'calc(100vh - 7rem)',
+                  zIndex: 40,
+                }}
+              >
                     {showBountiesRail && (
                       <div className="gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 shrink-0">
                         <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest mb-2">🎂 BOUNTIES</div>
