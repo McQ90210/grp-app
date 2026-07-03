@@ -3234,18 +3234,22 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       if (changed.size > 0 && config.gameType === 'league') {
         const oldOrder = computeNaturalStandings(displayedKnockouts);
         const newOrder = computeNaturalStandings(knockouts);
-        const oldRanks = {};
-        oldOrder.forEach((r) => { oldRanks[r.name] = r.liveRank; });
+        // Compare LIST POSITIONS, not tie-shared rank numbers — a player
+        // tied at #8 keeps "#8" when the scorer climbs out of the group,
+        // but their row still visibly slides down a slot. The eye tracks
+        // slots, so the red flash should too.
+        const oldIdx = {};
+        oldOrder.forEach((r, i) => { oldIdx[r.name] = i; });
         const involved = new Set(
           (knockouts || [])
             .slice((displayedKnockouts || []).length)
             .map((k) => k.eliminated)
             .filter(Boolean)
         );
-        newOrder.forEach((r) => {
+        newOrder.forEach((r, i) => {
           if (!involved.has(r.name)) return;
-          const prev = oldRanks[r.name];
-          if (prev !== undefined && r.liveRank > prev) dropped.add(r.name);
+          const prev = oldIdx[r.name];
+          if (prev !== undefined && i > prev) dropped.add(r.name);
         });
         if (changed.size === 1) {
           const [scoringName] = Array.from(changed);
