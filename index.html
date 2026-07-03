@@ -3012,6 +3012,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // to flash their rows in the standings so the whole room can see who
   // scored. Cleared after ~2.5s.
   const [justScored, setJustScored] = useState(() => new Set());
+  // Names whose rank got WORSE in the reveal — flashed red while the
+  // scorer flashes yellow, so overtakes read both ways.
+  const [justDropped, setJustDropped] = useState(() => new Set());
   // Animation override for the row that's climbing the standings. Holds
   // the scoring player's displayed liveTotal as it walks through each
   // intermediate rank threshold, one step at a time. Null when not
@@ -3222,37 +3225,52 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       // with a single deceleration into its final slot (pure ease-out:
       // full speed from the first frame, no acceleration ramp).
       // Duration scales with the climb distance so short hops stay quick.
-      if (changed.size === 1 && config.gameType === 'league') {
-        const [scoringName] = Array.from(changed);
+      // Anyone whose rank got WORSE in the reveal flashes red — the
+      // players being overtaken are half the story.
+      const dropped = new Set();
+      if (changed.size > 0 && config.gameType === 'league') {
         const oldOrder = computeNaturalStandings(displayedKnockouts);
         const newOrder = computeNaturalStandings(knockouts);
-        const startIdx = oldOrder.findIndex((r) => r.name === scoringName);
-        const endIdx = newOrder.findIndex((r) => r.name === scoringName);
-        const places = startIdx >= 0 && endIdx >= 0 ? startIdx - endIdx : 0;
-        if (places > 0) {
-          const dur = Math.max(800, Math.min(3000, places * 500));
-          flipDurationRef.current = dur;
-          flipEasingRef.current = 'cubic-bezier(0, 0, 0.2, 1)';
-          // Restore defaults once the slide has finished so unrelated
-          // moves (multi-KO snaps, later reveals) get the stock feel.
-          setTimeout(() => {
-            flipDurationRef.current = 1500;
-            flipEasingRef.current = 'cubic-bezier(0.4, 0, 0.2, 1)';
-          }, dur + 200);
+        const oldRanks = {};
+        oldOrder.forEach((r) => { oldRanks[r.name] = r.liveRank; });
+        newOrder.forEach((r) => {
+          const prev = oldRanks[r.name];
+          if (prev !== undefined && r.liveRank > prev) dropped.add(r.name);
+        });
+        if (changed.size === 1) {
+          const [scoringName] = Array.from(changed);
+          const startIdx = oldOrder.findIndex((r) => r.name === scoringName);
+          const endIdx = newOrder.findIndex((r) => r.name === scoringName);
+          const places = startIdx >= 0 && endIdx >= 0 ? startIdx - endIdx : 0;
+          if (places > 0) {
+            const dur = Math.max(800, Math.min(3000, places * 500));
+            flipDurationRef.current = dur;
+            flipEasingRef.current = 'cubic-bezier(0, 0, 0.2, 1)';
+            // Restore defaults once the slide has finished so unrelated
+            // moves (multi-KO snaps, later reveals) get the stock feel.
+            setTimeout(() => {
+              flipDurationRef.current = 1500;
+              flipEasingRef.current = 'cubic-bezier(0.4, 0, 0.2, 1)';
+            }, dur + 200);
+          }
         }
       }
 
       setDisplayedKnockouts(knockouts);
       if (changed.size > 0) setJustScored(changed);
+      if (dropped.size > 0) setJustDropped(dropped);
     }, 1000);
     return () => clearTimeout(t);
   }, [knockouts, displayedKnockouts, players, fullRosterFromDB, seasonPreGameTotals, gameStartedAt, config.gameType]);
   useEffect(() => {
-    if (justScored.size === 0) return;
-    // Keep the flash lit through the slide, then linger 2s and fade.
-    const t = setTimeout(() => setJustScored(new Set()), flipDurationRef.current + 2000);
+    if (justScored.size === 0 && justDropped.size === 0) return;
+    // Keep the flashes lit through the slide, then linger 2s and fade.
+    const t = setTimeout(() => {
+      setJustScored(new Set());
+      setJustDropped(new Set());
+    }, flipDurationRef.current + 2000);
     return () => clearTimeout(t);
-  }, [justScored]);
+  }, [justScored, justDropped]);
 
   const intervalRef = useRef(null);
   const scrubDraggingRef = useRef(false);
@@ -4433,6 +4451,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                     // OUT-vs-REBUY shortcut modal for that specific row.
                     const isActionable = r.isAttendee && playerObj && !isOut && !winner;
                     const isFlashing = justScored.has(r.name);
+                    const isDropping = !isFlashing && justDropped.has(r.name);
                     return (
                       <div
                         key={r.name}
@@ -4445,6 +4464,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                         className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-[background-color,color,box-shadow] duration-1000 ease-out ${
                           isFlashing
                             ? 'bg-yellow-400/40 ring-2 ring-yellow-300'
+                            : isDropping
+                            ? 'bg-red-500/30 ring-2 ring-red-400'
                             : r.isAttendee ? 'bg-emerald-500/15' : ''
                         } ${isActionable ? 'cursor-pointer hover:bg-emerald-500/25' : ''} ${isOut ? 'opacity-60' : ''}`}
                         title={isActionable ? 'Tap to record OUT or REBUY' : (r.isAttendee ? (isOut ? 'Eliminated' : 'Playing tonight') : 'Not here tonight')}
