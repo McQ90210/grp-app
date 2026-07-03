@@ -2990,38 +2990,130 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const [displayedKnockouts, setDisplayedKnockouts] = useState(resume?.knockouts || []);
   // Names of players whose points just updated in the delayed reveal — used
   // to flash their rows in the standings so the whole room can see who
-  // scored. Cleared after FLASH_DURATION_MS.
+  // scored. Cleared after ~2.5s.
   const [justScored, setJustScored] = useState(() => new Set());
+  // Animation override for the row that's climbing the standings. Holds
+  // the scoring player's displayed liveTotal as it walks through each
+  // intermediate rank threshold, one step at a time. Null when not
+  // animating (final state is settled).
+  const [animOverride, setAnimOverride] = useState(null); // { name, total } | null
   useEffect(() => {
     if (knockouts === displayedKnockouts) return;
     const t = setTimeout(() => {
       // Diff the incoming log vs. the currently displayed one to find
       // who's tally of knockouts changed. First-out belongs to whoever's
       // at the head of the log — highlight them on the game's opening KO.
-      const tallyKnockers = (log) => {
+      const tallyBy = (log, key) => {
         const t = {};
         (log || []).forEach((k) => {
-          if (k.knocker) t[k.knocker] = (t[k.knocker] || 0) + 1;
+          if (k[key]) t[k[key]] = (t[k[key]] || 0) + 1;
         });
         return t;
       };
-      const before = tallyKnockers(displayedKnockouts);
-      const after = tallyKnockers(knockouts);
+      const beforeKnockers = tallyBy(displayedKnockouts, 'knocker');
+      const afterKnockers = tallyBy(knockouts, 'knocker');
       const changed = new Set();
-      Object.keys(after).forEach((name) => {
-        if ((after[name] || 0) > (before[name] || 0)) changed.add(name);
+      Object.keys(afterKnockers).forEach((name) => {
+        if ((afterKnockers[name] || 0) > (beforeKnockers[name] || 0)) changed.add(name);
       });
       const firstAfter = (knockouts || [])[0]?.eliminated;
       const firstBefore = (displayedKnockouts || [])[0]?.eliminated;
       if (firstAfter && firstAfter !== firstBefore) changed.add(firstAfter);
+
       setDisplayedKnockouts(knockouts);
-      if (changed.size > 0) setJustScored(changed);
+      if (changed.size === 0) return;
+      setJustScored(changed);
+
+      // Multi-step rank climb: only animate when exactly ONE player
+      // scored — otherwise it's ambiguous who to climb. Compute their
+      // old and new totals, figure out which other players they'll pass
+      // on the way up, and walk through those thresholds one at a time.
+      if (changed.size !== 1) return;
+      const [scoringName] = Array.from(changed);
+      if (config.gameType !== 'league') return;
+
+      const gameDate = gameStartedAt
+        ? new Date(gameStartedAt).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+      const bountyIds = computeBountyHolders(fullRosterFromDB, gameDate);
+      const bountyNameSet = new Set(
+        fullRosterFromDB.filter((p) => bountyIds.includes(p.id)).map((p) => p.displayName)
+      );
+      const pidByName = {};
+      fullRosterFromDB.forEach((p) => { pidByName[p.displayName] = p.id; });
+      const preTotals = seasonPreGameTotals || {};
+
+      const totalFor = (name, log) => {
+        const attendee = players.find((p) => p.name === name);
+        if (!attendee) {
+          // Non-attendee — pre-game total only.
+          const pid = pidByName[name];
+          return pid ? (preTotals[pid] || 0) : 0;
+        }
+        const pid = pidByName[name] || null;
+        const kos = (log || []).filter((k) => k.knocker === name).length;
+        const claims = (log || []).filter(
+          (k) => k.knocker === name && bountyNameSet.has(k.eliminated)
+        ).length;
+        const firstOutId = (log || [])[0]?.eliminated;
+        const isFirstOut = firstOutId === name;
+        const preGame = pid ? (preTotals[pid] || 0) : 0;
+        return preGame + 2000 + kos * 1000 + claims * 2000 + (isFirstOut ? 1000 : 0);
+      };
+
+      const oldTotal = totalFor(scoringName, displayedKnockouts);
+      const newTotal = totalFor(scoringName, knockouts);
+      if (newTotal <= oldTotal) return; // shouldn't happen for a scoring player
+
+      // Others' totals (using NEW state — everyone else already at their
+      // final total, since only one player changed).
+      const attendeeUniverse = players.map((pl) => ({
+        name: pl.name,
+        total: totalFor(pl.name, knockouts),
+      }));
+      const nonAttendeeUniverse = Object.entries(preTotals)
+        .filter(([pid]) => !players.some((pl) => pidByName[pl.name] === pid))
+        .map(([pid, pts]) => {
+          const p = fullRosterFromDB.find((x) => x.id === pid);
+          return { name: p?.displayName || pid, total: pts };
+        });
+      const others = [...attendeeUniverse, ...nonAttendeeUniverse]
+        .filter((u) => u.name !== scoringName);
+
+      const passed = others
+        .filter((o) => o.total >= oldTotal && o.total < newTotal)
+        .sort((a, b) => a.total - b.total)
+        .slice(-5); // cap at 5 steps so the climb never drags on
+
+      if (passed.length === 0) return; // no rank change to animate
+
+      // Freeze the scoring player at their old total, then step through.
+      setAnimOverride({ name: scoringName, total: oldTotal });
+      const steps = passed.map((o) => o.total + 1);
+      steps.push(newTotal);
+      let i = 0;
+      const timers = [];
+      const runStep = () => {
+        if (i >= steps.length) {
+          setAnimOverride(null);
+          return;
+        }
+        setAnimOverride({ name: scoringName, total: steps[i] });
+        i++;
+        timers.push(setTimeout(runStep, 400));
+      };
+      timers.push(setTimeout(runStep, 100));
+      // No cleanup return here — the parent effect's cleanup handles the
+      // outer timeout. Any dangling step timeouts are harmless: they only
+      // call setAnimOverride which is a safe idempotent state set.
     }, 3000);
     return () => clearTimeout(t);
-  }, [knockouts, displayedKnockouts]);
+  }, [knockouts, displayedKnockouts, players, fullRosterFromDB, seasonPreGameTotals, gameStartedAt, config.gameType]);
   useEffect(() => {
     if (justScored.size === 0) return;
-    const t = setTimeout(() => setJustScored(new Set()), 2500);
+    // Flash lingers a hair past the climb (max 5 steps × 400ms = 2s) so
+    // there's a beat at the final rank before the row settles back.
+    const t = setTimeout(() => setJustScored(new Set()), 3000);
     return () => clearTimeout(t);
   }, [justScored]);
   // Per-attendee payment status (keyed by displayName). Seeded from the
@@ -4163,7 +4255,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             const preTotals = seasonPreGameTotals || {};
 
             // Attendees with their live-tonight bonuses layered on top of
-            // pre-game season totals.
+            // pre-game season totals. `animOverride` freezes the scoring
+            // player at an intermediate total so the row visibly climbs
+            // one rank at a time during the reveal.
             const attendeeInfo = players.map((pl) => {
               const pid = pidByName[pl.name] || null;
               const kos = railKnockouts.filter((k) => k.knocker === pl.name).length;
@@ -4173,7 +4267,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               const isFirstOut = firstOutName === pl.name;
               const liveTonight = 2000 + kos * 1000 + claims * 2000 + (isFirstOut ? 1000 : 0);
               const preGame = pid ? (preTotals[pid] || 0) : 0;
-              return { name: pl.name, pid, isBountied: bountyNameSet.has(pl.name), liveTotal: preGame + liveTonight, preGame };
+              const naturalTotal = preGame + liveTonight;
+              const overriddenTotal = animOverride && animOverride.name === pl.name
+                ? animOverride.total
+                : naturalTotal;
+              return { name: pl.name, pid, isBountied: bountyNameSet.has(pl.name), liveTotal: overriddenTotal, preGame };
             });
             const attendeePidSet = new Set(attendeeInfo.map((a) => a.pid).filter(Boolean));
 
@@ -4263,7 +4361,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       <div
                         key={r.name}
                         onClick={isActionable ? () => setStandingsAction({ player: playerObj }) : undefined}
-                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-colors duration-500 ${
+                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-all duration-300 ease-out ${
                           isFlashing
                             ? 'bg-yellow-400/40 ring-2 ring-yellow-300'
                             : r.isAttendee ? 'bg-emerald-500/15' : ''
