@@ -5608,9 +5608,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                                 <span className={`flex-1 min-w-0 truncate ${r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
                                 <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>{r.total.toLocaleString()}</span>
                               </div>
-                              {r.isAttendee && (
+                              {r.isAttendee && r.parts.length > 0 && (
                                 <div className="pl-[52px] font-mono text-[10px] leading-tight text-yellow-100/45 truncate">
-                                  +{r.tonight.toLocaleString()} tonight · {r.parts.join(' · ')}
+                                  {r.parts.join(' · ')}
                                 </div>
                               )}
                             </div>
