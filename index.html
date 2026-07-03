@@ -3225,15 +3225,25 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       // with a single deceleration into its final slot (pure ease-out:
       // full speed from the first frame, no acceleration ramp).
       // Duration scales with the climb distance so short hops stay quick.
-      // Anyone whose rank got WORSE in the reveal flashes red — the
-      // players being overtaken are half the story.
+      // Red flash is limited to the players INVOLVED in this KO event —
+      // the eliminated player(s) from the new log entries, and only if
+      // their rank actually got worse. Bystanders who slip a place as
+      // the scorer passes them stay unhighlighted (flashing the whole
+      // table on every KO was noise).
       const dropped = new Set();
       if (changed.size > 0 && config.gameType === 'league') {
         const oldOrder = computeNaturalStandings(displayedKnockouts);
         const newOrder = computeNaturalStandings(knockouts);
         const oldRanks = {};
         oldOrder.forEach((r) => { oldRanks[r.name] = r.liveRank; });
+        const involved = new Set(
+          (knockouts || [])
+            .slice((displayedKnockouts || []).length)
+            .map((k) => k.eliminated)
+            .filter(Boolean)
+        );
         newOrder.forEach((r) => {
+          if (!involved.has(r.name)) return;
           const prev = oldRanks[r.name];
           if (prev !== undefined && r.liveRank > prev) dropped.add(r.name);
         });
