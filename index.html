@@ -2945,52 +2945,6 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // STANDINGS rail. Skips the "which player" step of the full eliminate
   // modal — the player is already known — and just asks OUT vs REBUY.
   const [standingsAction, setStandingsAction] = useState(null); // { player } | null
-  // Standings rail displays a delayed snapshot of the knockouts log so
-  // the whole room can look up after a KO and *watch* points land. On
-  // any change to the real knockouts array, we schedule an update to
-  // this shadow copy REVEAL_DELAY_MS later. `justScored` flashes the
-  // row(s) that just gained points for FLASH_DURATION_MS.
-  const REVEAL_DELAY_MS = 3000;
-  const FLASH_DURATION_MS = 2500;
-  const [displayedKnockouts, setDisplayedKnockouts] = useState(knockouts);
-  const [justScored, setJustScored] = useState(() => new Set());
-  useEffect(() => {
-    if (knockouts === displayedKnockouts) return;
-    const scheduled = setTimeout(() => {
-      // Diff the new log vs. the currently displayed log to figure out
-      // whose row should flash. Compare tally per knocker so a rebuy
-      // (which appends an entry) still counts as "they just scored".
-      const tallyKnockers = (log) => {
-        const t = {};
-        (log || []).forEach((k) => {
-          if (k.knocker) t[k.knocker] = (t[k.knocker] || 0) + 1;
-        });
-        return t;
-      };
-      const before = tallyKnockers(displayedKnockouts);
-      const after = tallyKnockers(knockouts);
-      const changed = new Set();
-      Object.keys(after).forEach((name) => {
-        if ((after[name] || 0) !== (before[name] || 0)) changed.add(name);
-      });
-      // First-out belongs to whoever was FIRST in the log — flash them
-      // too on the initial KO of the game so viewers see who got docked.
-      const firstOutAfter = (knockouts || [])[0]?.eliminated;
-      const firstOutBefore = (displayedKnockouts || [])[0]?.eliminated;
-      if (firstOutAfter && firstOutAfter !== firstOutBefore) {
-        changed.add(firstOutAfter);
-      }
-      setDisplayedKnockouts(knockouts);
-      if (changed.size > 0) setJustScored(changed);
-    }, REVEAL_DELAY_MS);
-    return () => clearTimeout(scheduled);
-  }, [knockouts, displayedKnockouts]);
-  // Clear the flash after FLASH_DURATION_MS on any new burst of highlights.
-  useEffect(() => {
-    if (justScored.size === 0) return;
-    const t = setTimeout(() => setJustScored(new Set()), FLASH_DURATION_MS);
-    return () => clearTimeout(t);
-  }, [justScored]);
   // If resuming and only one player remains active, infer the winner so the
   // overlay surfaces immediately and the save flow is reachable.
   const [winner, setWinner] = useState(() => {
@@ -4136,11 +4090,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 .filter((p) => bountyIds.includes(p.id))
                 .map((p) => p.displayName)
             );
-            // Standings rail reads a DELAYED copy of the knockouts log so
-            // the display lags real state by REVEAL_DELAY_MS — gives the
-            // room a beat to see who just scored before the numbers move.
-            const railKnockouts = displayedKnockouts;
-            const firstOutName = railKnockouts.length > 0 ? railKnockouts[0].eliminated : null;
+            const firstOutName = knockouts.length > 0 ? knockouts[0].eliminated : null;
 
             const pidByName = {};
             fullRosterFromDB.forEach((p) => { pidByName[p.displayName] = p.id; });
@@ -4150,8 +4100,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             // pre-game season totals.
             const attendeeInfo = players.map((pl) => {
               const pid = pidByName[pl.name] || null;
-              const kos = railKnockouts.filter((k) => k.knocker === pl.name).length;
-              const claims = railKnockouts.filter(
+              const kos = knockouts.filter((k) => k.knocker === pl.name).length;
+              const claims = knockouts.filter(
                 (k) => k.knocker === pl.name && bountyNameSet.has(k.eliminated)
               ).length;
               const isFirstOut = firstOutName === pl.name;
@@ -4242,15 +4192,12 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                     // been permanently eliminated. Tapping opens the
                     // OUT-vs-REBUY shortcut modal for that specific row.
                     const isActionable = r.isAttendee && playerObj && !isOut && !winner;
-                    const isFlashing = justScored.has(r.name);
                     return (
                       <div
                         key={r.name}
                         onClick={isActionable ? () => setStandingsAction({ player: playerObj }) : undefined}
-                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-all duration-700 ${
-                          isFlashing
-                            ? 'bg-yellow-400/40 ring-1 ring-yellow-300 scale-[1.02] shadow-[0_0_18px_rgba(234,179,8,0.35)]'
-                            : r.isAttendee ? 'bg-emerald-500/15' : ''
+                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded ${
+                          r.isAttendee ? 'bg-emerald-500/15' : ''
                         } ${isActionable ? 'cursor-pointer hover:bg-emerald-500/25' : ''} ${isOut ? 'opacity-60' : ''}`}
                         title={isActionable ? 'Tap to record OUT or REBUY' : (r.isAttendee ? (isOut ? 'Eliminated' : 'Playing tonight') : 'Not here tonight')}
                       >
@@ -4264,18 +4211,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                             : hasPreGame && r.delta < 0 ? `↓${-r.delta}`
                             : '·'}
                         </span>
-                        <span className={`flex-1 min-w-0 truncate transition-colors duration-500 ${
-                          isFlashing
-                            ? 'text-yellow-50 font-semibold'
-                            : isOut ? 'line-through text-red-300/60'
-                            : r.isAttendee ? 'text-emerald-100'
-                            : 'text-yellow-100/50'
-                        }`}>{r.name}</span>
-                        <span className={`font-mono text-xs shrink-0 tabular-nums transition-colors duration-500 ${
-                          isFlashing ? 'text-yellow-50 font-bold'
-                          : r.isAttendee ? 'text-yellow-100'
-                          : 'text-yellow-100/50'
-                        }`}>
+                        <span className={`flex-1 min-w-0 truncate ${isOut ? 'line-through text-red-300/60' : r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
+                        <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>
                           {r.liveTotal.toLocaleString()}
                         </span>
                       </div>
@@ -4292,7 +4229,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                      independently toggleable via the header controls. --- */}
                 {showAny && (
                   <aside
-                    className="hidden xl:flex flex-col fixed top-28 w-64 max-h-[calc(100vh-8rem)] z-10 gap-3"
+                    className="hidden xl:flex flex-col fixed top-24 w-64 max-h-[calc(100vh-7rem)] z-10 gap-3"
                     style={{
                       // Center the 16rem-wide (256px) rail in the empty gap
                       // between the timer's max-w-4xl (896px) container and
@@ -4312,7 +4249,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       <div className="gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 flex flex-col min-h-0">
                         <div className="mb-2 shrink-0">
                           <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
-                          <div className="font-mono text-[9px] text-yellow-100/40 mt-0.5">tap a name to record OUT or REBUY · position bonuses settle at end</div>
+                          <div className="font-mono text-[9px] text-yellow-100/40 mt-0.5">position bonuses settle at end</div>
                         </div>
                         <div className="overflow-y-auto min-h-0">{standingsBody}</div>
                       </div>
@@ -4332,7 +4269,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                     <div className="gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3">
                       <div className="flex items-center justify-between mb-2">
                         <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
-                        <div className="font-mono text-[9px] text-yellow-100/40">tap a name to record OUT or REBUY · position bonuses settle at end</div>
+                        <div className="font-mono text-[9px] text-yellow-100/40">position bonuses settle at end</div>
                       </div>
                       {standingsBody}
                     </div>
@@ -4476,21 +4413,17 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             </button>
           </div>
 
-          {/* Eliminate button — hidden when the LIVE STANDINGS rail is
-              available and toggled on, since tapping a name there is the
-              shortcut. Kept for HR / finals / when the rail is hidden. */}
-          {!(config.gameType === 'league' && !config.leagueContext?.isFinal && showStandingsRail) && (
-            <div className="flex justify-center mb-6">
-              <button
-                onClick={() => setShowEliminate(true)}
-                disabled={activePlayers.length <= 1 || !!winner}
-                className="control-btn px-6 py-2.5 rounded-full bg-red-900/30 border border-red-500/40 text-red-200 font-mono text-sm flex items-center gap-2 hover:bg-red-900/50 disabled:opacity-30"
-                title={activePlayers.length <= 1 ? 'Last player standing — winner declared automatically' : 'Open eliminate panel'}
-              >
-                <UserMinus size={16} /> ELIMINATE PLAYER
-              </button>
-            </div>
-          )}
+          {/* Eliminate button */}
+          <div className="flex justify-center mb-6">
+            <button
+              onClick={() => setShowEliminate(true)}
+              disabled={activePlayers.length <= 1 || !!winner}
+              className="control-btn px-6 py-2.5 rounded-full bg-red-900/30 border border-red-500/40 text-red-200 font-mono text-sm flex items-center gap-2 hover:bg-red-900/50 disabled:opacity-30"
+              title={activePlayers.length <= 1 ? 'Last player standing — winner declared automatically' : 'Open eliminate panel'}
+            >
+              <UserMinus size={16} /> ELIMINATE PLAYER
+            </button>
+          </div>
 
           {activePanel === 'players' && (
             <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
