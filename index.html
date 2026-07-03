@@ -5466,12 +5466,24 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 const isFirstOut = firstOutName === pl.name;
                 const tonight = 2000 + posBonus + kos * 1000 + claims * 2000 + (isFirstOut ? 1000 : 0);
                 const preGame = pid ? (preTotals[pid] || 0) : 0;
+                // Narrative breakdown, not arithmetic: finishing place, WHO
+                // they knocked out (repeat KOs collapse to ×n), bounty count
+                // and the first-out marker. Point values live in the total.
                 const parts = [];
-                if (posBonus > 0) parts.push(`${POS_LABEL[posIdx]} +${posBonus.toLocaleString()}`);
-                if (kos > 0) parts.push(`${kos} KO +${(kos * 1000).toLocaleString()}`);
-                if (claims > 0) parts.push(`🎯 ×${claims} +${(claims * 2000).toLocaleString()}`);
-                if (isFirstOut) parts.push('1st out +1,000');
-                parts.push('turn-up +2,000');
+                if (posIdx >= 0 && posIdx < 6) parts.push(POS_LABEL[posIdx]);
+                const victims = knockouts
+                  .filter((k) => k.knocker === pl.name)
+                  .map((k) => k.eliminated);
+                if (victims.length > 0) {
+                  const counts = {};
+                  victims.forEach((v) => { counts[v] = (counts[v] || 0) + 1; });
+                  const list = Object.entries(counts)
+                    .map(([v, n]) => (n > 1 ? `${v} ×${n}` : v))
+                    .join(', ');
+                  parts.push(`KO: ${list}`);
+                }
+                if (claims > 0) parts.push(`🎂 Birthday bounty${claims > 1 ? ` ×${claims}` : ''}`);
+                if (isFirstOut) parts.push('1st out');
                 return { name: pl.name, pid, isAttendee: true, preGame, tonight, total: preGame + tonight, liveKos: kos, parts };
               });
               const attendeePidSet = new Set(attendeeRows.map((a) => a.pid).filter(Boolean));
