@@ -2891,6 +2891,20 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const [payoutKey, setPayoutKey] = useState(() => defaultPayoutKey((resume?.players || config.players).length));
   const [newPlayerName, setNewPlayerName] = useState('');
   const [activePanel, setActivePanel] = useState(null);
+  // Per-user preference for the two side rails on the timer screen.
+  // Persisted so a hidden rail stays hidden next session. Default: on.
+  const [showBountiesRail, setShowBountiesRail] = useState(() => {
+    try { return localStorage.getItem('grp-rail-bounties') !== '0'; } catch (_) { return true; }
+  });
+  const [showStandingsRail, setShowStandingsRail] = useState(() => {
+    try { return localStorage.getItem('grp-rail-standings') !== '0'; } catch (_) { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('grp-rail-bounties', showBountiesRail ? '1' : '0'); } catch (_) {}
+  }, [showBountiesRail]);
+  useEffect(() => {
+    try { localStorage.setItem('grp-rail-standings', showStandingsRail ? '1' : '0'); } catch (_) {}
+  }, [showStandingsRail]);
   const [hasStarted, setHasStarted] = useState(!!resume);
   // ms-since-epoch when the user first pressed PLAY on this game. Persisted
   // in the live snapshot so it survives a resume. Used by SaveGameModal to
@@ -4007,6 +4021,24 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               <button onClick={() => setActivePanel(activePanel === 'payouts' ? null : 'payouts')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'payouts' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Payouts">
                 <Trophy size={18} />
               </button>
+              {config.gameType === 'league' && !config.leagueContext?.isFinal && (
+                <>
+                  <button
+                    onClick={() => setShowBountiesRail((v) => !v)}
+                    className={`control-btn p-3 rounded-full border text-base leading-none ${showBountiesRail ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20 opacity-60'}`}
+                    title={showBountiesRail ? 'Hide bounties rail' : 'Show bounties rail'}
+                  >
+                    🎂
+                  </button>
+                  <button
+                    onClick={() => setShowStandingsRail((v) => !v)}
+                    className={`control-btn p-3 rounded-full border text-yellow-100 ${showStandingsRail ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20 opacity-60'}`}
+                    title={showStandingsRail ? 'Hide standings rail' : 'Show standings rail'}
+                  >
+                    <Award size={18} />
+                  </button>
+                </>
+              )}
               <button onClick={() => setActivePanel(activePanel === 'settings' ? null : 'settings')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'settings' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Settings & blinds">
                 <Settings size={18} />
               </button>
@@ -4153,37 +4185,48 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               )
             );
 
+            const showAny = showBountiesRail || showStandingsRail;
             return (
               <>
-                {/* --- Wide screens: single right-side rail with bounties on
-                     top and full-league standings below --- */}
-                <aside className="hidden xl:flex flex-col fixed top-24 right-3 w-64 max-h-[calc(100vh-7rem)] z-10 gap-3">
-                  <div className="gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 shrink-0">
-                    <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest mb-2">🎂 BOUNTIES</div>
-                    {bountiesBody}
-                  </div>
-                  <div className="gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 flex flex-col min-h-0">
-                    <div className="mb-2 shrink-0">
-                      <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
-                      <div className="font-mono text-[9px] text-yellow-100/40 mt-0.5">position bonuses settle at end</div>
-                    </div>
-                    <div className="overflow-y-auto min-h-0">{standingsBody}</div>
-                  </div>
-                </aside>
+                {/* --- Wide screens: single right-side rail. Each box is
+                     independently toggleable via the header controls. --- */}
+                {showAny && (
+                  <aside className="hidden xl:flex flex-col fixed top-24 right-8 w-64 max-h-[calc(100vh-7rem)] z-10 gap-3">
+                    {showBountiesRail && (
+                      <div className="gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 shrink-0">
+                        <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest mb-2">🎂 BOUNTIES</div>
+                        {bountiesBody}
+                      </div>
+                    )}
+                    {showStandingsRail && (
+                      <div className="gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 flex flex-col min-h-0">
+                        <div className="mb-2 shrink-0">
+                          <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
+                          <div className="font-mono text-[9px] text-yellow-100/40 mt-0.5">position bonuses settle at end</div>
+                        </div>
+                        <div className="overflow-y-auto min-h-0">{standingsBody}</div>
+                      </div>
+                    )}
+                  </aside>
+                )}
 
                 {/* --- Narrow screens: stacked above the timer --- */}
                 <div className="xl:hidden space-y-3 mb-6">
-                  <div className="gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3">
-                    <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest mb-2">🎂 BOUNTIES</div>
-                    {bountiesBody}
-                  </div>
-                  <div className="gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
-                      <div className="font-mono text-[9px] text-yellow-100/40">position bonuses settle at end</div>
+                  {showBountiesRail && (
+                    <div className="gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3">
+                      <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest mb-2">🎂 BOUNTIES</div>
+                      {bountiesBody}
                     </div>
-                    {standingsBody}
-                  </div>
+                  )}
+                  {showStandingsRail && (
+                    <div className="gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
+                        <div className="font-mono text-[9px] text-yellow-100/40">position bonuses settle at end</div>
+                      </div>
+                      {standingsBody}
+                    </div>
+                  )}
                 </div>
               </>
             );
