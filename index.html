@@ -3156,10 +3156,17 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       // inverted position first.
       // eslint-disable-next-line no-unused-expressions
       el.offsetHeight;
+      const slideMs = flipDurationRef.current;
       requestAnimationFrame(() => {
         if (!rowRefs.current[name]) return;
-        el.style.transition = `transform ${flipDurationRef.current}ms ${flipEasingRef.current}`;
+        el.style.transition = `transform ${slideMs}ms ${flipEasingRef.current}`;
         el.style.transform = 'translateY(0)';
+        // Clear the inline transition once the slide lands — while it's
+        // set, it overrides the class-based colour transitions, which
+        // made the yellow flash snap off instead of fading out.
+        setTimeout(() => {
+          if (rowRefs.current[name] === el) el.style.transition = '';
+        }, slideMs + 60);
       });
     });
     prevRowPositions.current = current;
@@ -4411,7 +4418,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                           else delete rowRefs.current[refKey];
                         }}
                         onClick={isActionable ? () => setStandingsAction({ player: playerObj }) : undefined}
-                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-colors duration-300 ease-out ${
+                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded transition-[background-color,color,box-shadow] duration-1000 ease-out ${
                           isFlashing
                             ? 'bg-yellow-400/40 ring-2 ring-yellow-300'
                             : r.isAttendee ? 'bg-emerald-500/15' : ''
@@ -4428,13 +4435,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                             : hasPreGame && r.delta < 0 ? `↓${-r.delta}`
                             : '·'}
                         </span>
-                        <span className={`flex-1 min-w-0 truncate transition-colors duration-500 ${
+                        <span className={`flex-1 min-w-0 truncate transition-colors duration-1000 ${
                           isFlashing ? 'text-yellow-50 font-bold'
                           : isOut ? 'line-through text-red-300/60'
                           : r.isAttendee ? 'text-emerald-100'
                           : 'text-yellow-100/50'
                         }`}>{r.name}</span>
-                        <span className={`font-mono text-xs shrink-0 tabular-nums transition-colors duration-500 ${
+                        <span className={`font-mono text-xs shrink-0 tabular-nums transition-colors duration-1000 ${
                           isFlashing ? 'text-yellow-50 font-bold'
                           : r.isAttendee ? 'text-yellow-100'
                           : 'text-yellow-100/50'
