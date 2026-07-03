@@ -10,20 +10,20 @@ A Progressive Web App for the **Greene Room Poker** league in Berkhamsted. Publi
 
 **Live URL**: https://mcq90210.github.io/grp-app/
 **Repo**: https://github.com/McQ90210/grp-app
-**Hosting**: GitHub Pages (auto-rebuilds on push to `main`)
-**Current version**: v7.28 (see `sw.js` `CACHE_NAME` for what's deployed)
-**Cloud Functions**: deployed in `europe-west2` — `dailyResultsEmail` (cron 09:00 UK), `resendLatestResults` (callable), `migrateSeason` (callable, break-glass — no UI)
+**Hosting**: GitHub Pages via `.github/workflows/pages.yml` (actions/deploy-pages; Settings → Pages → Source = "GitHub Actions"). The legacy "Deploy from a branch" mode was retired after it repeatedly wedged in `deployment_queued`.
+**Current version**: v8.41 (see `sw.js` `CACHE_NAME` for what's deployed)
+**Cloud Functions**: deployed in `europe-west2`, Node 22 — `dailyResultsEmail` (cron 09:00 UK), `resendLatestResults`, `resendLatestHRResults`, `sendTestHRResults`, `auditGame`, `applyGamePatch` (whitelisted one-off game repairs incl. `setLeagueMoney`/`setPrizePool`), `migrateSeason` (break-glass — no UI), `wipeSimData`, `simulateGames`
 
-### State as of last session (2026-05-20)
+### State as of last session (2026-07-04)
 
-- ✅ Cloud Functions deployed, scheduled cron live (next fire: 09:00 UK after the next league game)
-- ✅ Gmail (`grpberkhamsted@gmail.com`) created with 2FA + App Password set as Firebase secret
-- ✅ Gemini API key stored as secret (free-tier project, separate from gr-poker)
-- ✅ Firebase Blaze plan active on gr-poker with £5/month budget cap + email alerts
-- ✅ Firestore data is correct as of v7.28: one active season `2026-r1` (= "2026 — Round 1"), 5 games played (G1–G5), final game is G6 in June 2026
-- ✅ Player emails: only Cactus (Mark) has one (`djmarky@gmail.com`) on file; the other 31 players need their emails collected
-- ✅ End-to-end tested: manual RESEND RESULTS button + email arrived in djmarky inbox correctly formatted with AI recap
-- ⏳ Next league game (Round 1 Game 6, the final) is in June 2026. The cron will auto-email the next morning.
+- ✅ Season **2026-r2** active ("2026 — Round 2", 7 games: 6 regular + Dec final), v2 scoring rules live. R2 G1 played 2026-07-01, audited + patched (leagueMoney 0 that night, first-out = Duck, Cactus May-carryover bounty).
+- ✅ **2026-r1 marked complete** — rollover now auto-flips the previous season's stored status (v7.91). R1 G6 (June final) has an empty attendees list in Firestore; whether it was recorded is unresolved.
+- ✅ Timer screen now carries a right-side rail: 🎂 BOUNTIES + LIVE STANDINGS (full league table, money→KO tiebreaks, click a name to record OUT/REBUY, 1s delayed reveal, FLIP climb animation, yellow flash = scorer, red flash = eliminated). Rail toggles per-box via header buttons; position: absolute portal so it scrolls with the page.
+- ✅ Winner overlay: **auto-saves the game** on appearance (silent SaveGameModal instance; falls back to a manual button for test mode / signed-out / resume-inferred winners / failure), two-column layout with UPDATED STANDINGS + per-player narrative breakdowns (place, KO victims by name, bounty counts, first-out).
+- ✅ New-player registration modal (birthday + email) fires when a brand-new name is added in the wizard or as a late entry — creates the Firestore player doc immediately so the birthday bounty applies from that game.
+- ✅ Subs Ledger redesigned (aggregate OUTSTANDING view + upfront chips + collapsible per-game grid, plain-text cells); paid-for-round toggles confirm in both directions.
+- ⚠️ **GitHub Pages deploys flake often** ("Deployment failed, try again later" at the deploy step, ~50% some evenings). Remedy: empty commit + push again, retry until success. The Actions workflow itself is fine.
+- ⏳ Next league game: R2 G2, early August 2026.
 
 ### Two game modes
 - **League** — the formal monthly league with seasons, points, bounties, finals
@@ -253,6 +253,14 @@ The query `games where seasonId == X order by gameNumber` requires a composite i
 | 6th | 3,000 |
 | DNP top 6 | 2,000 |
 
+### Standings tiebreaks (confirmed by Mark, 2026-07-03)
+Players level on points are ordered by:
+1. **Money won this season** (payouts summed by finishing place from each game's `payouts` map — current round only, not all-time)
+2. **Knockout count** (season KOs from stored games + live KOs during a game)
+3. Name (alphabetical, last resort)
+
+Rank numbers are shared only when points AND both tiebreaks match. Implemented in `computeNaturalStandings()` (timer) and mirrored in the winner overlay.
+
 ### Money
 - Buy-in: **£30** (rebuy same)
 - Subs: **£3 × attendees** per game → kitty (cards, trophies, table)
@@ -475,21 +483,21 @@ A Cloud Billing budget cap (**£5/month**) is set on the gr-poker project as a s
 
 In rough priority order:
 
-1. **Birthday bounty pre-game splash** — when starting a league game, show a list of who's bountied this month (including carry-forwards from previous unplayed games)
-2. **In-game bounty badge** — small indicator on the timer screen showing who's currently bountied
-3. **Bounty visible in eliminate modal** — bountied players show a marker next to their name
-4. **Bounty-claimed sound** — distinct from winner fanfare, plays when a bountied player is eliminated
-5. **Per-player rebuy tracking** — currently only `totalRebuys` is stored; per-player would unlock fairer cost-tracking in HR history
-6. **Charts on player profile** — more than the current points-per-game bar chart (e.g. running total over time, position distribution)
-7. **Season management screen** — create new seasons, archive completed ones, configure dates/game counts via UI rather than import data. (Note: `migrateSeason` Cloud Function exists as a backend primitive — could power this screen's rename action.)
-8. **Real-time multi-device sync (deferred)** — phone-as-controller + laptop/TV-as-display via Firebase Realtime Database (Mark wants this "one day", not yet)
-9. **`firebase-admin` / `nodemailer` major-version bumps** — 13→14 and 6→9 respectively. Both have breaking changes; check release notes before bumping. Not urgent — current versions are stable.
+1. **End-of-round AWARDS screen** — for the Christmas (R2) final: scan the round's game docs and compute award winners automatically. Agreed award ideas (all computable from existing data): Nemesis (most KOs of the same victim), The Hitman (most total KOs), Most Rebuys, The Early Bath (most first-outs), Bounty Hunter (most bounty claims), The Marked Man (most-claimed bountied player), The Bridesmaid (most 2nds, no win), Bubble Boy (most just-out-of-the-money), Iron Man (perfect attendance), The Banker (most £ won), Best ROI, The Philanthropist (most £ in, least back), The Punchbag (most times KO'd), Giant Killer (most KOs of the round champion), Mr Consistent (best avg finish), The Comeback (biggest climb), Wooden Spoon. Could feed the Gemini recap for the final's results email.
+2. **KO timestamps** — add `at: Date.now()` to each `knockouts` entry so time-based awards (e.g. Quickest Exit) accumulate data before December. One-line change; proposed to Mark 2026-07-04, not yet approved.
+3. **Real-time multi-device sync (deferred)** — phone-as-controller + laptop/TV-as-display via Firebase Realtime Database (Mark wants this "one day", not yet)
+4. **`firebase-admin` / `nodemailer` major-version bumps** — 13→14 and 6→9 respectively. Both have breaking changes; check release notes before bumping. Not urgent — current versions are stable.
+5. **R1 G6 (June 2026 final) reconciliation** — the game doc exists with an empty attendees list; confirm whether the final was played and backfill if so.
 
 ### Done in previous sessions
 - ~~Roster sync from Firestore into SetupWizard~~ — v7.8
-- ~~End-of-game save flow~~ — SaveGameModal auto-populates from game state, single "Save to League" button. v7.4 (basic) + v7.21 (inline sign-in fix)
+- ~~End-of-game save flow~~ — SaveGameModal auto-populates from game state. v7.4 + v7.21; fully automatic on winner from v8.41
 - ~~Results email + AI recap~~ — v7.24 through v7.28
 - ~~GRP Berkhamsted rebrand~~ — v7.26
+- ~~Bounty pre-game splash / in-game badges / eliminate-modal markers / bounty-claimed sound~~ — v7.92 + v7.93
+- ~~Per-player rebuy tracking~~ — stored in game docs' `rebuys` map; profile buy-ins use it (v7.84)
+- ~~Charts on player profile~~ — cumulative line, finishing positions, position distribution, KO/bounty/first-out stats (v7.96)
+- ~~Season management screen~~ — 🗓 SEASONS modal under admin tools (v7.97)
 
 ### Out-of-scope thought experiments (not actively planned)
 - **Multi-tenant SaaS** — Mark asked about productising this for other clubs (~£15/mo per league). Bull case ~£15k MRR at 1k leagues. Not started; would need ~3-4 weeks of de-hardcoding + auth tiers + Stripe + onboarding before it could be sold. See conversation history for full bull/bear breakdown.
@@ -544,6 +552,10 @@ Each version is summarised here so a new session can pick up at the right point.
 - **v7.26** — **Rebrand**: "GR Poker" → "GRP Berkhamsted" across email subject/from/header + PWA manifest name + browser tab title (`<title>`, `apple-mobile-web-app-title`). Manifest `short_name` = "GRP". Formal "Greene Room Poker" left intact in the email footer and Gemini prompt context (it's still the real club name).  Also added `migrateSeason` callable Cloud Function + temporary admin UI (button + modal) to rename a season's id and cascade the change to all attached games. Used once to migrate `2026-r2` (wrongly named "Round 2") → `2026-r1` ("Round 1") in production Firestore.
 - **v7.27** — Gemini recap prompt clarifies the league plays **monthly** (one game/month, not weekly) so the AI stops writing "see you next week". Added "next month" / "the next game" as preferred phrasing.
 - **v7.28** — **Email design polish**: dropped nested-card backgrounds, tightened max-width to 520px, switched section headings to compact uppercase labels, thin row dividers, left-aligned PLAYED column with 24px padding so it doesn't crowd POINTS. Also: added `thinkingConfig.thinkingBudget = 0` to the Gemini call (2.5-flash was truncating output before it started — internal reasoning tokens were eating the budget). Added "no hyphens / em-dashes" to the prompt constraints. **Retired the SEASON TOOLS UI** (button + MigrateSeasonModal removed). The `migrateSeason` Cloud Function and `window.GRP_DB.migrateSeason` helper stay deployed as a break-glass tool — callable via Firebase Functions Shell if a future season needs renaming.
+- **v7.29–v7.85** (sessions to 2026-07-03) — v2 scoring rules for R2 2026 onwards (KO/first-out/bounty-claim bonuses, 6 paid places, chronological `knockouts` log with rebuy respawns); rebuy/freezeout format flag; season auto-rollover + test mode; Firebase Storage per-player sound uploads; per-attendee buy-in/subs payment chips + Subs Ledger admin modal with edit-mode gate; HR results email (`resendLatestHRResults`, `sendTestHRResults`); `auditGame` + `applyGamePatch` admin callables; R2 G1 data audit + patches; Gemini 503 retry; prizePool math fix (pot − leagueMoney only; subs never in the pot); Node 22 runtime.
+- **v7.86–v8.00** (2026-07-02) — live standings work begins: BONUS POINTS panel → season-standings integration; Subs Ledger simplified (aggregate OUTSTANDING view, plain ✓/OWES cells); points-breakdown popup on the league dashboard (click any points cell); bounty pre-game splash + in-game 🎂 badges + bounty-claimed cha-ching; season management modal (create/edit/rename via `migrateSeason`); player profile KO/bounty/first-out stats + position histogram; **v2 position-bonus fix** (stored array had totals, attendance double-counted — every R2 top-6 result was +2,000 too high; R2 G1 patched via `applyGamePatch`); league table colours only paid places (gold/silver/bronze/indigo, grey otherwise); **switched Pages to the Actions workflow** after the legacy branch-deploy queue wedged for hours.
+- **v8.01–v8.31** (2026-07-03) — the LIVE STANDINGS side-rail saga: full league table with money→KO tiebreaks on the timer's right side (toggleable, portal-rendered, scrolls with the page), click-a-name OUT/REBUY shortcut (replaces the eliminate button when the rail is on), 1s delayed reveal, FLIP-animated single-slide rank climb (yellow flash on the scorer, 1s fade-out). Hard-won lessons encoded in the code comments: TDZ crashes from hooks referencing later-declared state blanked the timer twice (v8.11, v8.13); FLIP needs deps-gated effects (timer tick was resetting transforms mid-slide), per-variant ref namespaces (hidden mobile copy of the list was hijacking refs → measurements of display:none rows), inline-transition cleanup after slides (inline `transition: transform` overrides class-based colour fades), and a single shared `computeNaturalStandings()` for rail + animation (two sort implementations drifted and the climb overshot). Also: paid-for-round chip confirms both directions.
+- **v8.32–v8.41** (2026-07-03/04) — new-player registration modal (birthday + email → immediate player doc, bounty applies same game); winner overlay rebuilt: two-column layout (champion/payouts left, UPDATED STANDINGS right, one page, ✕ to exit), per-player narrative breakdowns (place, KO victims by name, bounty counts, first-out — no point arithmetic), **auto-save on winner** (silent SaveGameModal instance; manual button kept for test mode / signed-out / resume-inferred winners / failures); eliminated player always flashes red on the rail reveal.
 
 ---
 
