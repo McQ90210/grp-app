@@ -2945,17 +2945,6 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // STANDINGS rail. Skips the "which player" step of the full eliminate
   // modal — the player is already known — and just asks OUT vs REBUY.
   const [standingsAction, setStandingsAction] = useState(null); // { player } | null
-  // Standings-rail delayed reveal: lag the visible knockouts log by a few
-  // seconds so the room can look up after a KO and *watch* the points move.
-  // The real `knockouts` state stays authoritative for the save flow /
-  // eliminate modal / bounty sound — only the standings render uses this
-  // delayed copy.
-  const [displayedKnockouts, setDisplayedKnockouts] = useState(knockouts);
-  useEffect(() => {
-    if (knockouts === displayedKnockouts) return;
-    const t = setTimeout(() => setDisplayedKnockouts(knockouts), 3000);
-    return () => clearTimeout(t);
-  }, [knockouts, displayedKnockouts]);
   // If resuming and only one player remains active, infer the winner so the
   // overlay surfaces immediately and the save flow is reachable.
   const [winner, setWinner] = useState(() => {
@@ -2972,6 +2961,17 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // where `rebought: true` means the player bought back in immediately
   // (so they stayed in the active pool — not in eliminatedPlayers).
   const [knockouts, setKnockouts] = useState(resume?.knockouts || []);
+  // Standings-rail delayed reveal: lag the visible knockouts log by a few
+  // seconds so the room can look up after a KO and *watch* the points move.
+  // The real `knockouts` state stays authoritative for the save flow /
+  // eliminate modal / bounty sound — only the standings render uses this
+  // delayed copy. Must be declared AFTER `knockouts` — it references it.
+  const [displayedKnockouts, setDisplayedKnockouts] = useState(resume?.knockouts || []);
+  useEffect(() => {
+    if (knockouts === displayedKnockouts) return;
+    const t = setTimeout(() => setDisplayedKnockouts(knockouts), 3000);
+    return () => clearTimeout(t);
+  }, [knockouts, displayedKnockouts]);
   // Per-attendee payment status (keyed by displayName). Seeded from the
   // setup wizard's captured state; late-entry players default to paid
   // (admin can correct via the Subs Ledger after the fact).
