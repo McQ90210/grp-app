@@ -3225,48 +3225,32 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       // with a single deceleration into its final slot (pure ease-out:
       // full speed from the first frame, no acceleration ramp).
       // Duration scales with the climb distance so short hops stay quick.
-      // Red flash is limited to the players INVOLVED in this KO event —
-      // the eliminated player(s) from the new log entries, and only if
-      // their rank actually got worse. Bystanders who slip a place as
-      // the scorer passes them stay unhighlighted (flashing the whole
-      // table on every KO was noise).
-      const dropped = new Set();
-      if (changed.size > 0 && config.gameType === 'league') {
+      // Red flash: the player who was just knocked out, always — whether
+      // or not their table position changed. The point is to show the
+      // room where the eliminated player sits, not to signal movement.
+      const dropped = new Set(
+        (knockouts || [])
+          .slice((displayedKnockouts || []).length)
+          .map((k) => k.eliminated)
+          .filter(Boolean)
+      );
+      if (changed.size === 1 && config.gameType === 'league') {
         const oldOrder = computeNaturalStandings(displayedKnockouts);
         const newOrder = computeNaturalStandings(knockouts);
-        // Compare LIST POSITIONS, not tie-shared rank numbers — a player
-        // tied at #8 keeps "#8" when the scorer climbs out of the group,
-        // but their row still visibly slides down a slot. The eye tracks
-        // slots, so the red flash should too.
-        const oldIdx = {};
-        oldOrder.forEach((r, i) => { oldIdx[r.name] = i; });
-        const involved = new Set(
-          (knockouts || [])
-            .slice((displayedKnockouts || []).length)
-            .map((k) => k.eliminated)
-            .filter(Boolean)
-        );
-        newOrder.forEach((r, i) => {
-          if (!involved.has(r.name)) return;
-          const prev = oldIdx[r.name];
-          if (prev !== undefined && i > prev) dropped.add(r.name);
-        });
-        if (changed.size === 1) {
-          const [scoringName] = Array.from(changed);
-          const startIdx = oldOrder.findIndex((r) => r.name === scoringName);
-          const endIdx = newOrder.findIndex((r) => r.name === scoringName);
-          const places = startIdx >= 0 && endIdx >= 0 ? startIdx - endIdx : 0;
-          if (places > 0) {
-            const dur = Math.max(800, Math.min(3000, places * 500));
-            flipDurationRef.current = dur;
-            flipEasingRef.current = 'cubic-bezier(0, 0, 0.2, 1)';
-            // Restore defaults once the slide has finished so unrelated
-            // moves (multi-KO snaps, later reveals) get the stock feel.
-            setTimeout(() => {
-              flipDurationRef.current = 1500;
-              flipEasingRef.current = 'cubic-bezier(0.4, 0, 0.2, 1)';
-            }, dur + 200);
-          }
+        const [scoringName] = Array.from(changed);
+        const startIdx = oldOrder.findIndex((r) => r.name === scoringName);
+        const endIdx = newOrder.findIndex((r) => r.name === scoringName);
+        const places = startIdx >= 0 && endIdx >= 0 ? startIdx - endIdx : 0;
+        if (places > 0) {
+          const dur = Math.max(800, Math.min(3000, places * 500));
+          flipDurationRef.current = dur;
+          flipEasingRef.current = 'cubic-bezier(0, 0, 0.2, 1)';
+          // Restore defaults once the slide has finished so unrelated
+          // moves (multi-KO snaps, later reveals) get the stock feel.
+          setTimeout(() => {
+            flipDurationRef.current = 1500;
+            flipEasingRef.current = 'cubic-bezier(0.4, 0, 0.2, 1)';
+          }, dur + 200);
         }
       }
 
