@@ -2996,7 +2996,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // the scoring player's displayed liveTotal as it walks through each
   // intermediate rank threshold, one step at a time. Null when not
   // animating (final state is settled).
-  const [animOverride, setAnimOverride] = useState(null); // { name, total } | null
+  const [animOverride, setAnimOverride] = useState(null); // { name, index } | null — climbing row's display slot
   // NOTE: the useEffects that drive the delayed reveal + rank climb are
   // declared much further down, AFTER fullRosterFromDB and
   // seasonPreGameTotals — they're in the dependency array and would trip
@@ -3053,6 +3053,72 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // season, then by knockout count.
   const [seasonTiebreakStats, setSeasonTiebreakStats] = useState({ winnings: {}, kos: {} });
 
+  // Single source of truth for standings order. Used by BOTH the rail
+  // render and the climb animation so their ranking can never disagree
+  // (a totals-based climb with separate math previously overshot and
+  // slid back down). Given a KO log, returns rows sorted highest-first:
+  // points desc → season winnings desc → KOs (season + live) desc → name.
+  // Rows carry liveRank (shared only on full ties).
+  const computeNaturalStandings = (log) => {
+    const gameDate = gameStartedAt
+      ? new Date(gameStartedAt).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    const bountyIds = computeBountyHolders(fullRosterFromDB, gameDate);
+    const bountyNameSet = new Set(
+      fullRosterFromDB.filter((p) => bountyIds.includes(p.id)).map((p) => p.displayName)
+    );
+    const pidByName = {};
+    fullRosterFromDB.forEach((p) => { pidByName[p.displayName] = p.id; });
+    const preTotals = seasonPreGameTotals || {};
+    const firstOutName = (log || [])[0]?.eliminated || null;
+
+    const attendeeRows = players.map((pl) => {
+      const pid = pidByName[pl.name] || null;
+      const kos = (log || []).filter((k) => k.knocker === pl.name).length;
+      const claims = (log || []).filter(
+        (k) => k.knocker === pl.name && bountyNameSet.has(k.eliminated)
+      ).length;
+      const isFirstOut = firstOutName === pl.name;
+      const liveTonight = 2000 + kos * 1000 + claims * 2000 + (isFirstOut ? 1000 : 0);
+      const preGame = pid ? (preTotals[pid] || 0) : 0;
+      return {
+        name: pl.name, pid, isAttendee: true,
+        isBountied: bountyNameSet.has(pl.name),
+        liveTotal: preGame + liveTonight, preGame, liveKos: kos,
+      };
+    });
+    const attendeePidSet = new Set(attendeeRows.map((a) => a.pid).filter(Boolean));
+    const nonAttendeeRows = Object.entries(preTotals)
+      .filter(([pid]) => !attendeePidSet.has(pid))
+      .map(([pid, pts]) => {
+        const p = fullRosterFromDB.find((x) => x.id === pid);
+        return {
+          name: p?.displayName || pid, pid, isAttendee: false,
+          isBountied: false, liveTotal: pts, preGame: pts, liveKos: 0,
+        };
+      });
+
+    const tiebreak = (row) => ({
+      winnings: (row.pid && seasonTiebreakStats.winnings[row.pid]) || 0,
+      kos: ((row.pid && seasonTiebreakStats.kos[row.pid]) || 0) + (row.liveKos || 0),
+    });
+    const rows = [...attendeeRows, ...nonAttendeeRows].sort((a, b) => {
+      if (b.liveTotal !== a.liveTotal) return b.liveTotal - a.liveTotal;
+      const ta = tiebreak(a), tbv = tiebreak(b);
+      if (tbv.winnings !== ta.winnings) return tbv.winnings - ta.winnings;
+      if (tbv.kos !== ta.kos) return tbv.kos - ta.kos;
+      return a.name.localeCompare(b.name);
+    });
+    let lastKey = null, lastRank = 0;
+    rows.forEach((row, i) => {
+      const tbv = tiebreak(row);
+      const fullKey = `${row.liveTotal}|${tbv.winnings}|${tbv.kos}`;
+      if (fullKey !== lastKey) { lastRank = i + 1; lastKey = fullKey; }
+      row.liveRank = lastRank;
+    });
+    return rows;
+  };
+
   // FLIP animation for the standings rail. Each row registers a ref
   // keyed by player name. Before every commit, we snapshot each row's
   // y-position. After commit, we compare against the new position and
@@ -3061,6 +3127,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // of jumping.
   const rowRefs = useRef({});
   const prevRowPositions = useRef({});
+  // Slide duration for row moves — the climb shortens this to match its
+  // step cadence so a transition always finishes before the next step
+  // re-measures (an in-flight transform poisons FLIP measurements).
+  const flipDurationRef = useRef(1500);
   useLayoutEffect(() => {
     // Only fires when the STANDINGS data actually changes (delayed reveal
     // arrived, or a rank-climb step ticked). Every-render firing was
@@ -3084,7 +3154,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       el.offsetHeight;
       requestAnimationFrame(() => {
         if (!rowRefs.current[name]) return;
-        el.style.transition = 'transform 1500ms cubic-bezier(0.4, 0, 0.2, 1)';
+        el.style.transition = `transform ${flipDurationRef.current}ms cubic-bezier(0.4, 0, 0.2, 1)`;
         el.style.transform = 'translateY(0)';
       });
     });
@@ -3124,70 +3194,35 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       const [scoringName] = Array.from(changed);
       if (config.gameType !== 'league') return;
 
-      const gameDate = gameStartedAt
-        ? new Date(gameStartedAt).toISOString().slice(0, 10)
-        : new Date().toISOString().slice(0, 10);
-      const bountyIds = computeBountyHolders(fullRosterFromDB, gameDate);
-      const bountyNameSet = new Set(
-        fullRosterFromDB.filter((p) => bountyIds.includes(p.id)).map((p) => p.displayName)
-      );
-      const pidByName = {};
-      fullRosterFromDB.forEach((p) => { pidByName[p.displayName] = p.id; });
-      const preTotals = seasonPreGameTotals || {};
+      // Index-based climb: compute the scorer's position in the OLD and
+      // NEW orders using the exact same sort the rail renders with. Then
+      // walk them up one display slot at a time. Because the climb is
+      // expressed in list positions (not synthetic totals), it can never
+      // overshoot or disagree with the final settle.
+      const oldOrder = computeNaturalStandings(displayedKnockouts);
+      const newOrder = computeNaturalStandings(knockouts);
+      const startIdx = oldOrder.findIndex((r) => r.name === scoringName);
+      const endIdx = newOrder.findIndex((r) => r.name === scoringName);
+      if (startIdx < 0 || endIdx < 0 || endIdx >= startIdx) return; // nothing to climb
 
-      const totalFor = (name, log) => {
-        const attendee = players.find((p) => p.name === name);
-        if (!attendee) {
-          const pid = pidByName[name];
-          return pid ? (preTotals[pid] || 0) : 0;
-        }
-        const pid = pidByName[name] || null;
-        const kos = (log || []).filter((k) => k.knocker === name).length;
-        const claims = (log || []).filter(
-          (k) => k.knocker === name && bountyNameSet.has(k.eliminated)
-        ).length;
-        const firstOutId = (log || [])[0]?.eliminated;
-        const isFirstOut = firstOutId === name;
-        const preGame = pid ? (preTotals[pid] || 0) : 0;
-        return preGame + 2000 + kos * 1000 + claims * 2000 + (isFirstOut ? 1000 : 0);
-      };
+      // One step per display slot, pacing scaled so a long climb finishes
+      // in ~5s while a short one keeps the deliberate 1.5s-per-place feel.
+      const stepIndices = [];
+      for (let idx = startIdx - 1; idx >= endIdx; idx--) stepIndices.push(idx);
+      const stepMs = Math.max(600, Math.min(1500, Math.round(5000 / stepIndices.length)));
+      flipDurationRef.current = stepMs;
 
-      const oldTotal = totalFor(scoringName, displayedKnockouts);
-      const newTotal = totalFor(scoringName, knockouts);
-      if (newTotal <= oldTotal) return;
-
-      const attendeeUniverse = players.map((pl) => ({
-        name: pl.name,
-        total: totalFor(pl.name, knockouts),
-      }));
-      const nonAttendeeUniverse = Object.entries(preTotals)
-        .filter(([pid]) => !players.some((pl) => pidByName[pl.name] === pid))
-        .map(([pid, pts]) => {
-          const p = fullRosterFromDB.find((x) => x.id === pid);
-          return { name: p?.displayName || pid, total: pts };
-        });
-      const others = [...attendeeUniverse, ...nonAttendeeUniverse]
-        .filter((u) => u.name !== scoringName);
-
-      const passed = others
-        .filter((o) => o.total >= oldTotal && o.total < newTotal)
-        .sort((a, b) => a.total - b.total)
-        .slice(-4);
-
-      if (passed.length === 0) return;
-
-      setAnimOverride({ name: scoringName, total: oldTotal });
-      const steps = passed.map((o) => o.total + 1);
-      steps.push(newTotal);
+      setAnimOverride({ name: scoringName, index: startIdx });
       let i = 0;
       const runStep = () => {
-        if (i >= steps.length) {
+        if (i >= stepIndices.length) {
           setAnimOverride(null);
+          flipDurationRef.current = 1500;
           return;
         }
-        setAnimOverride({ name: scoringName, total: steps[i] });
+        setAnimOverride({ name: scoringName, index: stepIndices[i] });
         i++;
-        setTimeout(runStep, 1500);
+        setTimeout(runStep, stepMs);
       };
       setTimeout(runStep, 100);
     }, 1000);
@@ -4291,105 +4326,57 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               ? new Date(gameStartedAt).toISOString().slice(0, 10)
               : new Date().toISOString().slice(0, 10);
             const bountyIds = computeBountyHolders(fullRosterFromDB, gameDate);
-            const bountyNameSet = new Set(
-              fullRosterFromDB
-                .filter((p) => bountyIds.includes(p.id))
-                .map((p) => p.displayName)
-            );
             // Standings rail reads a lagged snapshot of the KO log so
             // scoring updates arrive ~1s after the tap that caused them.
             const railKnockouts = displayedKnockouts;
-            const firstOutName = railKnockouts.length > 0 ? railKnockouts[0].eliminated : null;
 
-            const pidByName = {};
-            fullRosterFromDB.forEach((p) => { pidByName[p.displayName] = p.id; });
             const preTotals = seasonPreGameTotals || {};
+            const hasPreGame = Object.keys(preTotals).length > 0;
 
-            // Attendees with their live-tonight bonuses layered on top of
-            // pre-game season totals. `animOverride` freezes the scoring
-            // player at an intermediate total so the row visibly climbs
-            // one rank at a time during the reveal.
-            const attendeeInfo = players.map((pl) => {
-              const pid = pidByName[pl.name] || null;
-              const kos = railKnockouts.filter((k) => k.knocker === pl.name).length;
-              const claims = railKnockouts.filter(
-                (k) => k.knocker === pl.name && bountyNameSet.has(k.eliminated)
-              ).length;
-              const isFirstOut = firstOutName === pl.name;
-              const liveTonight = 2000 + kos * 1000 + claims * 2000 + (isFirstOut ? 1000 : 0);
-              const preGame = pid ? (preTotals[pid] || 0) : 0;
-              const naturalTotal = preGame + liveTonight;
-              const overriddenTotal = animOverride && animOverride.name === pl.name
-                ? animOverride.total
-                : naturalTotal;
-              return { name: pl.name, pid, isBountied: bountyNameSet.has(pl.name), liveTotal: overriddenTotal, preGame };
-            });
-            const attendeePidSet = new Set(attendeeInfo.map((a) => a.pid).filter(Boolean));
+            // Full season league table via the shared sort (points →
+            // winnings → KOs → name). During a climb, `animOverride`
+            // re-splices the scoring row at an intermediate list position
+            // so it visibly walks up one slot at a time.
+            const standings = computeNaturalStandings(railKnockouts);
+            if (animOverride && animOverride.index != null) {
+              const fromIdx = standings.findIndex((r) => r.name === animOverride.name);
+              if (fromIdx >= 0) {
+                const [movingRow] = standings.splice(fromIdx, 1);
+                const target = Math.max(0, Math.min(standings.length, animOverride.index));
+                standings.splice(target, 0, movingRow);
+                movingRow.liveRank = target + 1;
+              }
+            }
 
-            // Non-attendees hold their pre-game total (their live total
-            // doesn't change tonight — attendees just slide past them).
-            const nonAttendees = Object.entries(preTotals)
-              .filter(([pid]) => !attendeePidSet.has(pid))
-              .map(([pid, pts]) => {
-                const p = fullRosterFromDB.find((x) => x.id === pid);
-                return { pid, name: p?.displayName || pid, preGame: pts, liveTotal: pts };
+            // Pre-game ranks (for the delta arrows) — same tiebreaks, but
+            // ordered on season totals as of before tonight.
+            const preRanks = (() => {
+              const tiebreak = (row) => ({
+                winnings: (row.pid && seasonTiebreakStats.winnings[row.pid]) || 0,
+                kos: (row.pid && seasonTiebreakStats.kos[row.pid]) || 0,
               });
-            const universe = [...attendeeInfo, ...nonAttendees];
-
-            // Tiebreak values per row: equal-points players are ordered by
-            // money won this season, then knockout count (season + tonight).
-            const tiebreakFor = (row) => {
-              const winnings = (row.pid && seasonTiebreakStats.winnings[row.pid]) || 0;
-              const seasonKos = (row.pid && seasonTiebreakStats.kos[row.pid]) || 0;
-              const liveKos = railKnockouts.filter((k) => k.knocker === row.name).length;
-              return { winnings, kos: seasonKos + liveKos };
-            };
-
-            const rankMap = (key) => {
-              const sorted = [...universe].sort((a, b) => {
-                const scoreDiff = (b[key] || 0) - (a[key] || 0);
-                if (scoreDiff !== 0) return scoreDiff;
-                const tbA = tiebreakFor(a), tbB = tiebreakFor(b);
-                if (tbB.winnings !== tbA.winnings) return tbB.winnings - tbA.winnings;
-                if (tbB.kos !== tbA.kos) return tbB.kos - tbA.kos;
+              const sorted = [...standings].sort((a, b) => {
+                if ((b.preGame || 0) !== (a.preGame || 0)) return (b.preGame || 0) - (a.preGame || 0);
+                const ta = tiebreak(a), tbv = tiebreak(b);
+                if (tbv.winnings !== ta.winnings) return tbv.winnings - ta.winnings;
+                if (tbv.kos !== ta.kos) return tbv.kos - ta.kos;
                 return a.name.localeCompare(b.name);
               });
               const ranks = {};
               let lastKey = null, lastRank = 0;
               sorted.forEach((row, i) => {
-                const tb = tiebreakFor(row);
-                // Rows share a rank only when points AND both tiebreaks match.
-                const fullKey = `${row[key] || 0}|${tb.winnings}|${tb.kos}`;
+                const tbv = tiebreak(row);
+                const fullKey = `${row.preGame || 0}|${tbv.winnings}|${tbv.kos}`;
                 if (fullKey !== lastKey) { lastRank = i + 1; lastKey = fullKey; }
                 ranks[row.name] = lastRank;
               });
               return ranks;
-            };
-            const preRanks = rankMap('preGame');
-            const liveRanks = rankMap('liveTotal');
-            const hasPreGame = Object.keys(preTotals).length > 0;
+            })();
+            standings.forEach((row) => {
+              row.delta = (preRanks[row.name] || 0) - (row.liveRank || 0);
+            });
 
-            // Full season league table — attendees layered with live tonight
-            // bonuses, non-attendees frozen at their pre-game totals. Both go
-            // into the same ranked list so the whole league is visible.
-            const standings = universe
-              .map((row) => ({
-                name: row.name,
-                pid: row.pid || null,
-                isAttendee: attendeePidSet.has(row.pid) || attendeeInfo.some((a) => a.name === row.name),
-                liveTotal: row.liveTotal,
-                liveRank: liveRanks[row.name],
-                delta: (preRanks[row.name] || 0) - (liveRanks[row.name] || 0),
-              }))
-              .sort((a, b) => {
-                if (a.liveRank !== b.liveRank) return a.liveRank - b.liveRank;
-                const tbA = tiebreakFor(a), tbB = tiebreakFor(b);
-                if (tbB.winnings !== tbA.winnings) return tbB.winnings - tbA.winnings;
-                if (tbB.kos !== tbA.kos) return tbB.kos - tbA.kos;
-                return a.name.localeCompare(b.name);
-              });
-
-            const bountiedHere = attendeeInfo.filter((a) => a.isBountied);
+            const bountiedHere = standings.filter((r) => r.isAttendee && r.isBountied);
             const bountiedMissing = bountyIds
               .map((pid) => fullRosterFromDB.find((p) => p.id === pid))
               .filter((p) => p && !players.some((pl) => pl.name === p.displayName));
