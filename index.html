@@ -2941,6 +2941,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const [selectedVoiceURI, setSelectedVoiceURI] = useState(null);
   const [showHomeConfirm, setShowHomeConfirm] = useState(false);
   const [showEliminate, setShowEliminate] = useState(false);
+  // Shortcut modal opened when an admin taps a player's name on the LIVE
+  // STANDINGS rail. Skips the "which player" step of the full eliminate
+  // modal — the player is already known — and just asks OUT vs REBUY.
+  const [standingsAction, setStandingsAction] = useState(null); // { player } | null
   // If resuming and only one player remains active, infer the winner so the
   // overlay surfaces immediately and the save flow is reachable.
   const [winner, setWinner] = useState(() => {
@@ -4181,30 +4185,39 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 <div className="font-mono text-[11px] text-yellow-100/40 italic">No players yet.</div>
               ) : (
                 <div className="space-y-0.5">
-                  {standings.map((r) => (
-                    <div
-                      key={r.name}
-                      className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded ${
-                        r.isAttendee ? 'bg-emerald-500/15' : ''
-                      }`}
-                      title={r.isAttendee ? 'Playing tonight' : 'Not here tonight'}
-                    >
-                      <span className={`font-mono text-xs shrink-0 w-6 text-right ${r.liveRank <= 3 ? 'text-yellow-300' : 'text-yellow-100/50'}`}>#{r.liveRank}</span>
-                      <span className={`font-mono text-[10px] shrink-0 w-4 ${
-                        hasPreGame && r.delta > 0 ? 'text-emerald-300'
-                        : hasPreGame && r.delta < 0 ? 'text-red-300'
-                        : 'text-yellow-100/20'
-                      }`}>
-                        {hasPreGame && r.delta > 0 ? `↑${r.delta}`
-                          : hasPreGame && r.delta < 0 ? `↓${-r.delta}`
-                          : '·'}
-                      </span>
-                      <span className={`flex-1 min-w-0 truncate ${r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
-                      <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>
-                        {r.liveTotal.toLocaleString()}
-                      </span>
-                    </div>
-                  ))}
+                  {standings.map((r) => {
+                    const playerObj = players.find((p) => p.name === r.name);
+                    const isOut = eliminatedPlayers.includes(r.name);
+                    // Clickable when the player is here tonight and hasn't
+                    // been permanently eliminated. Tapping opens the
+                    // OUT-vs-REBUY shortcut modal for that specific row.
+                    const isActionable = r.isAttendee && playerObj && !isOut && !winner;
+                    return (
+                      <div
+                        key={r.name}
+                        onClick={isActionable ? () => setStandingsAction({ player: playerObj }) : undefined}
+                        className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded ${
+                          r.isAttendee ? 'bg-emerald-500/15' : ''
+                        } ${isActionable ? 'cursor-pointer hover:bg-emerald-500/25' : ''} ${isOut ? 'opacity-60' : ''}`}
+                        title={isActionable ? 'Tap to record OUT or REBUY' : (r.isAttendee ? (isOut ? 'Eliminated' : 'Playing tonight') : 'Not here tonight')}
+                      >
+                        <span className={`font-mono text-xs shrink-0 w-6 text-right ${r.liveRank <= 3 ? 'text-yellow-300' : 'text-yellow-100/50'}`}>#{r.liveRank}</span>
+                        <span className={`font-mono text-[10px] shrink-0 w-4 ${
+                          hasPreGame && r.delta > 0 ? 'text-emerald-300'
+                          : hasPreGame && r.delta < 0 ? 'text-red-300'
+                          : 'text-yellow-100/20'
+                        }`}>
+                          {hasPreGame && r.delta > 0 ? `↑${r.delta}`
+                            : hasPreGame && r.delta < 0 ? `↓${-r.delta}`
+                            : '·'}
+                        </span>
+                        <span className={`flex-1 min-w-0 truncate ${isOut ? 'line-through text-red-300/60' : r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
+                        <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>
+                          {r.liveTotal.toLocaleString()}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )
             );
@@ -4972,6 +4985,47 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 REBUY puts £{config.buyIn} back in the pot.
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Standings-rail shortcut: skip the "which player" step of the
+          eliminate modal because we already know who was tapped. Just
+          shows OUT / REBUY / cancel. The knocker picker still fires after. */}
+      {standingsAction && (
+        <div
+          onClick={() => setStandingsAction(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-sm w-full"
+          >
+            <div className="flex justify-between items-center mb-2">
+              <div className="font-display text-2xl gold-text">{standingsAction.player.name}</div>
+              <button onClick={() => setStandingsAction(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
+            </div>
+            <div className="text-yellow-100/60 text-sm mb-4">
+              {config.format === 'freezeout'
+                ? 'No rebuys tonight — tap OUT to eliminate.'
+                : 'Tap REBUY to put them back in, or OUT to eliminate.'}
+            </div>
+            <div className="flex gap-2">
+              {config.format !== 'freezeout' && (
+                <button
+                  onClick={() => { const p = standingsAction.player; setStandingsAction(null); requestRebuy(p); }}
+                  className="flex-1 px-5 py-3 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-100 font-display text-lg hover:bg-yellow-500/25"
+                >
+                  REBUY
+                </button>
+              )}
+              <button
+                onClick={() => { const p = standingsAction.player; setStandingsAction(null); requestEliminate(p); }}
+                className="flex-1 px-5 py-3 rounded-lg bg-red-900/30 border border-red-500/40 text-red-100 font-display text-lg hover:bg-red-700/40"
+              >
+                OUT
+              </button>
+            </div>
           </div>
         </div>
       )}
