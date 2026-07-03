@@ -4081,11 +4081,17 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             const liveRanks = rankMap('liveTotal');
             const hasPreGame = Object.keys(preTotals).length > 0;
 
-            const standings = attendeeInfo
-              .map((a) => ({
-                ...a,
-                liveRank: liveRanks[a.name],
-                delta: (preRanks[a.name] || 0) - (liveRanks[a.name] || 0),
+            // Full season league table — attendees layered with live tonight
+            // bonuses, non-attendees frozen at their pre-game totals. Both go
+            // into the same ranked list so the whole league is visible.
+            const standings = universe
+              .map((row) => ({
+                name: row.name,
+                pid: row.pid || null,
+                isAttendee: attendeePidSet.has(row.pid) || attendeeInfo.some((a) => a.name === row.name),
+                liveTotal: row.liveTotal,
+                liveRank: liveRanks[row.name],
+                delta: (preRanks[row.name] || 0) - (liveRanks[row.name] || 0),
               }))
               .sort((a, b) => a.liveRank - b.liveRank || a.name.localeCompare(b.name));
 
@@ -4119,11 +4125,17 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               seasonPreGameTotals === null ? (
                 <div className="font-mono text-[11px] text-yellow-100/40 italic">Loading…</div>
               ) : standings.length === 0 ? (
-                <div className="font-mono text-[11px] text-yellow-100/40 italic">No attendees yet.</div>
+                <div className="font-mono text-[11px] text-yellow-100/40 italic">No players yet.</div>
               ) : (
                 <div className="space-y-0.5">
                   {standings.map((r) => (
-                    <div key={r.name} className="flex items-center gap-1.5 text-sm min-w-0">
+                    <div
+                      key={r.name}
+                      className={`flex items-center gap-1.5 text-sm min-w-0 px-1.5 py-0.5 rounded ${
+                        r.isAttendee ? 'bg-emerald-500/15' : ''
+                      }`}
+                      title={r.isAttendee ? 'Playing tonight' : 'Not here tonight'}
+                    >
                       <span className={`font-mono text-xs shrink-0 w-6 text-right ${r.liveRank <= 3 ? 'text-yellow-300' : 'text-yellow-100/50'}`}>#{r.liveRank}</span>
                       <span className={`font-mono text-[10px] shrink-0 w-4 ${
                         hasPreGame && r.delta > 0 ? 'text-emerald-300'
@@ -4134,7 +4146,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                           : hasPreGame && r.delta < 0 ? `↓${-r.delta}`
                           : '·'}
                       </span>
-                      <span className="text-emerald-100 truncate">{r.name}</span>
+                      <span className={`flex-1 min-w-0 truncate ${r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
+                      <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>
+                        {r.liveTotal.toLocaleString()}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -4143,21 +4158,24 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
 
             return (
               <>
-                {/* --- Wide screens: fixed side rails, one column each --- */}
-                <aside className="hidden xl:flex flex-col fixed top-24 left-3 w-48 max-h-[calc(100vh-7rem)] z-10 gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 overflow-hidden">
-                  <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest mb-2 shrink-0">🎂 BOUNTIES</div>
-                  <div className="overflow-y-auto min-h-0">{bountiesBody}</div>
-                </aside>
-                <aside className="hidden xl:flex flex-col fixed top-24 right-3 w-56 max-h-[calc(100vh-7rem)] z-10 gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 overflow-hidden">
-                  <div className="mb-2 shrink-0">
-                    <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
-                    <div className="font-mono text-[9px] text-yellow-100/40 mt-0.5">position bonuses settle at end</div>
+                {/* --- Wide screens: single right-side rail with bounties on
+                     top and full-league standings below --- */}
+                <aside className="hidden xl:flex flex-col fixed top-24 right-3 w-64 max-h-[calc(100vh-7rem)] z-10 gap-3">
+                  <div className="gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 shrink-0">
+                    <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest mb-2">🎂 BOUNTIES</div>
+                    {bountiesBody}
                   </div>
-                  <div className="overflow-y-auto min-h-0">{standingsBody}</div>
+                  <div className="gold-border rounded-2xl bg-black/60 backdrop-blur px-3 py-3 flex flex-col min-h-0">
+                    <div className="mb-2 shrink-0">
+                      <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest">LIVE STANDINGS</div>
+                      <div className="font-mono text-[9px] text-yellow-100/40 mt-0.5">position bonuses settle at end</div>
+                    </div>
+                    <div className="overflow-y-auto min-h-0">{standingsBody}</div>
+                  </div>
                 </aside>
 
-                {/* --- Narrow screens: horizontal strip above the timer --- */}
-                <div className="xl:hidden grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3 mb-6">
+                {/* --- Narrow screens: stacked above the timer --- */}
+                <div className="xl:hidden space-y-3 mb-6">
                   <div className="gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3">
                     <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest mb-2">🎂 BOUNTIES</div>
                     {bountiesBody}
