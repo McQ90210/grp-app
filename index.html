@@ -4237,13 +4237,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             );
 
             const showAny = showBountiesRail || showStandingsRail;
-            return (
-              <>
-                {/* --- Wide screens: single right-side rail. Each box is
-                     independently toggleable via the header controls. --- */}
-                {showAny && (
-                  <aside
-                    className="hidden xl:flex flex-col fixed top-24 w-64 max-h-[calc(100vh-7rem)] z-10 gap-3"
+            // Render the desktop side rail through a portal so it lives as a
+            // direct child of <body>, immune to any ancestor whose CSS
+            // (transform / filter / backdrop-filter / contain) would
+            // otherwise trap `position: fixed` inside a scroll container.
+            const desktopRail = showAny && (
+              <aside
+                className="hidden xl:flex flex-col fixed top-24 w-64 max-h-[calc(100vh-7rem)] z-10 gap-3"
                     style={{
                       // Center the 16rem-wide (256px) rail in the empty gap
                       // between the timer's max-w-4xl (896px) container and
@@ -4269,7 +4269,12 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       </div>
                     )}
                   </aside>
-                )}
+                );
+            return (
+              <>
+                {/* Desktop rail rendered through a portal — direct child of
+                    <body>, escapes any ancestor CSS that would trap fixed. */}
+                {desktopRail && ReactDOM.createPortal(desktopRail, document.body)}
 
                 {/* --- Narrow screens: stacked above the timer --- */}
                 <div className="xl:hidden space-y-3 mb-6">
