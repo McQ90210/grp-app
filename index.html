@@ -2965,6 +2965,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const [standingsAction, setStandingsAction] = useState(null); // { player } | null
   // Late-entry name awaiting the optional birthday/email capture modal.
   const [newPlayerDetailsFor, setNewPlayerDetailsFor] = useState(null);
+  // Auto-save pipeline for the winner overlay: null (idle / manual paths),
+  // 'saving' (silent SaveGameModal instance mounted and writing),
+  // 'saved', or 'failed' (falls back to the manual SAVE GAME button).
+  const [autoSaveState, setAutoSaveState] = useState(null);
   // Rail top offset — measured once from the timer container's document-Y
   // position so the desktop side rail sits aligned with the timer's top
   // edge and scrolls naturally with the page (position: absolute inside
@@ -2994,6 +2998,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     const active = (resume.players || config.players).filter(p => !eliminated.has(p.name));
     return active.length === 1 ? active[0] : null;
   });
+  // Winner captured at mount (resume-inferred). Auto-save is skipped for
+  // this one — the game may already have been saved before the crash /
+  // refresh that led to the resume, and re-saving an HR game would mint
+  // a duplicate doc. Admin uses the manual SAVE GAME button instead.
+  const winnerAtMountRef = useRef(null);
+  useEffect(() => { winnerAtMountRef.current = winner; /* first render only */ // eslint-disable-line
+  }, []);
   const [fullRoster, setFullRoster] = useState([]); // [{ name, sound }, ...] — for late-entry picker
   const [knockedOutBy, setKnockedOutBy] = useState(resume?.knockedOutBy || {}); // { eliminatedPlayerName: knockerOuterName } — back-compat, last knocker per name
   // Chronological KO log — supports multiple knockouts of the same player
@@ -3274,6 +3285,19 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     }, flipDurationRef.current + 2000);
     return () => clearTimeout(t);
   }, [justScored, justDropped]);
+
+  // Kick the auto-save as soon as a winner is declared in this session.
+  // Manual paths keep the SAVE GAME button instead: test mode (FINISH
+  // TEST), signed-out (needs the modal's inline sign-in), and a
+  // resume-inferred winner (might already be saved — re-saving an HR
+  // game would mint a duplicate doc).
+  useEffect(() => {
+    if (!winner) { setAutoSaveState(null); return; }
+    if (autoSaveState !== null) return;
+    if (readTestMode() || !fbUser) return;
+    if (winnerAtMountRef.current && winner === winnerAtMountRef.current) return;
+    setAutoSaveState('saving');
+  }, [winner, fbUser, autoSaveState]);
 
   const intervalRef = useRef(null);
   const scrubDraggingRef = useRef(false);
@@ -5431,6 +5455,19 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             ))}
           </div>
 
+          {/* Exit — replaces the old NEW TOURNAMENT button. Hidden while
+              the auto-save is still writing so the silent saver can't be
+              unmounted mid-flight. */}
+          {autoSaveState !== 'saving' && (
+            <button
+              onClick={() => { setWinner(null); onReset(); }}
+              className="absolute top-4 right-4 z-20 p-2 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100/60 hover:text-yellow-100"
+              title="Done — back to home"
+            >
+              <X size={20} />
+            </button>
+          )}
+
           {(() => {
             const hasStandings = config.gameType === 'league' && !config.leagueContext?.isFinal;
 
@@ -5564,30 +5601,33 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       })}
                     </div>
 
-                    <div className="flex flex-col sm:flex-row gap-3 justify-center flex-wrap">
-                      <button
-                        onClick={() => setShowSaveModal(true)}
-                        className="control-btn px-7 py-3 rounded-full font-display text-lg text-white"
-                        style={{ background: 'linear-gradient(135deg, #1ec890, #14a37b)' }}
-                      >
-                        SAVE GAME
-                      </button>
-                      {config.gameType === 'league' && onViewLeague && (
-                        <button
-                          onClick={() => { setWinner(null); onViewLeague(); }}
-                          className="control-btn px-7 py-3 rounded-full font-display text-lg text-black"
-                          style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
-                        >
-                          VIEW THE LEAGUE
-                        </button>
+                    {/* Save status — the game saves itself when the winner
+                        lands. The button only appears on the manual paths:
+                        test mode, signed out, resume-inferred winner, or
+                        after an auto-save failure. */}
+                    <div className="flex flex-col items-center gap-2">
+                      {autoSaveState === 'saving' && (
+                        <div className="font-mono text-sm text-yellow-100/70 animate-pulse tracking-widest">SAVING GAME…</div>
                       )}
-                      <button
-                        onClick={() => { setWinner(null); onReset(); }}
-                        className="control-btn px-7 py-3 rounded-full font-display text-lg text-black"
-                        style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
-                      >
-                        NEW TOURNAMENT
-                      </button>
+                      {autoSaveState === 'saved' && (
+                        <div className="font-mono text-sm text-emerald-300 tracking-widest">
+                          ✓ GAME SAVED{config.gameType === 'league' ? ' TO THE LEAGUE' : ''}
+                        </div>
+                      )}
+                      {(autoSaveState === null || autoSaveState === 'failed') && (
+                        <>
+                          {autoSaveState === 'failed' && (
+                            <div className="font-mono text-xs text-red-300">Auto-save failed — save manually:</div>
+                          )}
+                          <button
+                            onClick={() => setShowSaveModal(true)}
+                            className="control-btn px-7 py-3 rounded-full font-display text-lg text-white"
+                            style={{ background: 'linear-gradient(135deg, #1ec890, #14a37b)' }}
+                          >
+                            {readTestMode() ? 'FINISH TEST' : 'SAVE GAME'}
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -5609,7 +5649,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                                 <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>{r.total.toLocaleString()}</span>
                               </div>
                               {r.isAttendee && r.parts.length > 0 && (
-                                <div className="pl-[52px] font-mono text-[10px] leading-tight text-yellow-100/45 truncate">
+                                <div className="pl-14 font-mono text-[10px] leading-tight text-yellow-100/45 truncate">
                                   {r.parts.join(' · ')}
                                 </div>
                               )}
@@ -5624,6 +5664,35 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             );
           })()}
         </div>
+      )}
+
+      {/* Silent auto-save — mounts as soon as the winner overlay appears
+          (signed-in, non-test, this-session winner), writes the game doc
+          with the exact same logic as the manual modal, and reports back
+          via onAutoSaveResult. Renders nothing. */}
+      {winner && autoSaveState === 'saving' && !showSaveModal && (
+        <SaveGameModal
+          silent
+          autoSave
+          onAutoSaveResult={(s) => setAutoSaveState(s)}
+          gameType={config.gameType}
+          leagueContext={config.leagueContext}
+          config={config}
+          players={players}
+          finishOrder={[winner.name, ...[...eliminatedPlayers].reverse()]}
+          totalRebuys={totalRebuys}
+          rebuyCounts={rebuyCounts}
+          knockedOutBy={knockedOutBy}
+          knockouts={knockouts}
+          buyInsPaidByName={buyInsPaidByName}
+          subsPaidByName={subsPaidByName}
+          payoutKey={payoutKey}
+          gameStartedAt={gameStartedAt}
+          fbUser={fbUser}
+          fullRosterFromDB={fullRosterFromDB}
+          onClose={() => {}}
+          onSaved={() => {}}
+        />
       )}
 
       {/* Save game modal */}
@@ -8332,6 +8401,12 @@ function SaveGameModal({
   fullRosterFromDB,
   onClose,
   onSaved,
+  // Auto-save mode: fire save() on mount, render nothing, and report the
+  // outcome through onAutoSaveResult('saved' | 'failed'). Used by the
+  // winner overlay so the game records itself without a tap.
+  autoSave = false,
+  silent = false,
+  onAutoSaveResult,
 }) {
   const playersById = {};
   fullRosterFromDB.forEach((p) => { playersById[p.id] = p; });
@@ -8626,6 +8701,25 @@ function SaveGameModal({
       setBusy(false);
     }
   };
+
+  // Auto-save wiring: kick the save once on mount, then report the result
+  // to the parent. Hooks live above every conditional return.
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    if (!autoSave || autoRanRef.current) return;
+    autoRanRef.current = true;
+    save();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (silent && savedOk && onAutoSaveResult) onAutoSaveResult('saved');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedOk]);
+  useEffect(() => {
+    if (silent && error && onAutoSaveResult) onAutoSaveResult('failed');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [error]);
+  if (silent) return null;
 
   if (savedOk) {
     return (
