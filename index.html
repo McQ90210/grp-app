@@ -3048,6 +3048,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // id (in case an admin re-opened a saved game). Loaded once when the timer
   // mounts; used by the BONUS POINTS panel to show live rank + delta.
   const [seasonPreGameTotals, setSeasonPreGameTotals] = useState(null);
+  // Tiebreak stats loaded alongside the totals: { winnings: {pid: £},
+  // kos: {pid: n} }. Equal-points players are ordered by money won this
+  // season, then by knockout count.
+  const [seasonTiebreakStats, setSeasonTiebreakStats] = useState({ winnings: {}, kos: {} });
 
   // FLIP animation for the standings rail. Each row registers a ref
   // keyed by player name. Before every commit, we snapshot each row's
@@ -3186,7 +3190,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         setTimeout(runStep, 1500);
       };
       setTimeout(runStep, 100);
-    }, 3000);
+    }, 1000);
     return () => clearTimeout(t);
   }, [knockouts, displayedKnockouts, players, fullRosterFromDB, seasonPreGameTotals, gameStartedAt, config.gameType]);
   useEffect(() => {
@@ -3439,13 +3443,26 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         const games = await window.GRP_DB.getGamesForSeason(seasonId);
         if (cancelled) return;
         const totals = {};
+        const winnings = {};
+        const kos = {};
         (games || []).forEach((g) => {
           if (g.id === currentGameId) return; // exclude current game (in case a saved copy exists)
           Object.entries(g.pointsAwarded || {}).forEach(([pid, pts]) => {
             totals[pid] = (totals[pid] || 0) + (pts || 0);
           });
+          // Tiebreak stats: money won (payouts by finishing place) and
+          // knockouts per player — used to order players on equal points.
+          const finishOrder = g.finishOrder || [];
+          const paidCount = Object.keys(g.payouts || {}).length;
+          finishOrder.slice(0, paidCount).forEach((pid, i) => {
+            winnings[pid] = (winnings[pid] || 0) + (parseFloat(g.payouts?.[String(i + 1)]) || 0);
+          });
+          (g.knockouts || []).forEach((k) => {
+            if (k.knocker) kos[k.knocker] = (kos[k.knocker] || 0) + 1;
+          });
         });
         setSeasonPreGameTotals(totals);
+        setSeasonTiebreakStats({ winnings, kos });
       } catch (e) { /* silent — panel falls back to zero pre-game totals */ }
     };
     if (window.GRP_DB) doLoad();
@@ -4280,7 +4297,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 .map((p) => p.displayName)
             );
             // Standings rail reads a lagged snapshot of the KO log so
-            // scoring updates arrive ~3s after the tap that caused them.
+            // scoring updates arrive ~1s after the tap that caused them.
             const railKnockouts = displayedKnockouts;
             const firstOutName = railKnockouts.length > 0 ? railKnockouts[0].eliminated : null;
 
@@ -4319,15 +4336,31 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               });
             const universe = [...attendeeInfo, ...nonAttendees];
 
+            // Tiebreak values per row: equal-points players are ordered by
+            // money won this season, then knockout count (season + tonight).
+            const tiebreakFor = (row) => {
+              const winnings = (row.pid && seasonTiebreakStats.winnings[row.pid]) || 0;
+              const seasonKos = (row.pid && seasonTiebreakStats.kos[row.pid]) || 0;
+              const liveKos = railKnockouts.filter((k) => k.knocker === row.name).length;
+              return { winnings, kos: seasonKos + liveKos };
+            };
+
             const rankMap = (key) => {
-              const sorted = [...universe].sort((a, b) =>
-                (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name)
-              );
+              const sorted = [...universe].sort((a, b) => {
+                const scoreDiff = (b[key] || 0) - (a[key] || 0);
+                if (scoreDiff !== 0) return scoreDiff;
+                const tbA = tiebreakFor(a), tbB = tiebreakFor(b);
+                if (tbB.winnings !== tbA.winnings) return tbB.winnings - tbA.winnings;
+                if (tbB.kos !== tbA.kos) return tbB.kos - tbA.kos;
+                return a.name.localeCompare(b.name);
+              });
               const ranks = {};
-              let lastScore = null, lastRank = 0;
+              let lastKey = null, lastRank = 0;
               sorted.forEach((row, i) => {
-                const score = row[key] || 0;
-                if (score !== lastScore) { lastRank = i + 1; lastScore = score; }
+                const tb = tiebreakFor(row);
+                // Rows share a rank only when points AND both tiebreaks match.
+                const fullKey = `${row[key] || 0}|${tb.winnings}|${tb.kos}`;
+                if (fullKey !== lastKey) { lastRank = i + 1; lastKey = fullKey; }
                 ranks[row.name] = lastRank;
               });
               return ranks;
@@ -4348,7 +4381,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 liveRank: liveRanks[row.name],
                 delta: (preRanks[row.name] || 0) - (liveRanks[row.name] || 0),
               }))
-              .sort((a, b) => a.liveRank - b.liveRank || a.name.localeCompare(b.name));
+              .sort((a, b) => {
+                if (a.liveRank !== b.liveRank) return a.liveRank - b.liveRank;
+                const tbA = tiebreakFor(a), tbB = tiebreakFor(b);
+                if (tbB.winnings !== tbA.winnings) return tbB.winnings - tbA.winnings;
+                if (tbB.kos !== tbA.kos) return tbB.kos - tbA.kos;
+                return a.name.localeCompare(b.name);
+              });
 
             const bountiedHere = attendeeInfo.filter((a) => a.isBountied);
             const bountiedMissing = bountyIds
