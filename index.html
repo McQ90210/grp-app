@@ -3058,6 +3058,23 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const rowRefs = useRef({});
   const prevRowPositions = useRef({});
   useLayoutEffect(() => {
+    // Cancel any in-flight FLIP animations FIRST so getBoundingClientRect
+    // measures each row's real slot position, not a mid-slide interpolated
+    // one. Without this reset, restarting an animation on a still-moving
+    // row measures a bogus "old" position and the row teleports.
+    Object.values(rowRefs.current).forEach((el) => {
+      if (!el) return;
+      el.style.transition = 'none';
+      el.style.transform = 'translateY(0)';
+    });
+    // Force a synchronous reflow so the browser flushes the reset transforms
+    // before we measure. Without this, the browser may skip the intermediate
+    // state.
+    if (Object.values(rowRefs.current).find((el) => !!el)) {
+      // eslint-disable-next-line no-unused-expressions
+      Object.values(rowRefs.current)[0]?.offsetHeight;
+    }
+
     const current = {};
     Object.entries(rowRefs.current).forEach(([name, el]) => {
       if (el) current[name] = el.getBoundingClientRect().top;
@@ -3068,11 +3085,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       const el = rowRefs.current[name];
       if (!el) return;
       const dy = oldTop - newTop;
-      // Invert: place the row where it used to be, no transition.
       el.style.transition = 'none';
       el.style.transform = `translateY(${dy}px)`;
-      // Play: two rAFs so the browser paints the inverted position first,
-      // then the transition to zero takes effect.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (!rowRefs.current[name]) return;
@@ -3165,7 +3179,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       const passed = others
         .filter((o) => o.total >= oldTotal && o.total < newTotal)
         .sort((a, b) => a.total - b.total)
-        .slice(-5);
+        .slice(-4);
 
       if (passed.length === 0) return;
 
@@ -3180,7 +3194,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         }
         setAnimOverride({ name: scoringName, total: steps[i] });
         i++;
-        setTimeout(runStep, 400);
+        setTimeout(runStep, 1500);
       };
       setTimeout(runStep, 100);
     }, 3000);
@@ -3188,7 +3202,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   }, [knockouts, displayedKnockouts, players, fullRosterFromDB, seasonPreGameTotals, gameStartedAt, config.gameType]);
   useEffect(() => {
     if (justScored.size === 0) return;
-    const t = setTimeout(() => setJustScored(new Set()), 3000);
+    const t = setTimeout(() => setJustScored(new Set()), 8000);
     return () => clearTimeout(t);
   }, [justScored]);
 
