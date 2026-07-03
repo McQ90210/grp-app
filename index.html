@@ -2945,6 +2945,33 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // STANDINGS rail. Skips the "which player" step of the full eliminate
   // modal — the player is already known — and just asks OUT vs REBUY.
   const [standingsAction, setStandingsAction] = useState(null); // { player } | null
+  // Ref + scroll-tracked top offset so the desktop side rail behaves like
+  // position: sticky — starts aligned with the timer box top, then locks
+  // to a small viewport offset once you've scrolled past it. Simpler than
+  // a full grid restructure and works with the portal we already use.
+  const timerBoxRef = useRef(null);
+  const RAIL_STICKY_MIN_PX = 32;
+  const [railTopPx, setRailTopPx] = useState(RAIL_STICKY_MIN_PX);
+  useEffect(() => {
+    const update = () => {
+      if (!timerBoxRef.current) return;
+      const rect = timerBoxRef.current.getBoundingClientRect();
+      setRailTopPx(Math.max(RAIL_STICKY_MIN_PX, Math.round(rect.top)));
+    };
+    update();
+    window.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    // Re-measure a couple of times after mount in case fonts / images finish
+    // loading and shift the timer box down.
+    const t1 = setTimeout(update, 100);
+    const t2 = setTimeout(update, 500);
+    return () => {
+      window.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
   // If resuming and only one player remains active, infer the winner so the
   // overlay surfaces immediately and the save flow is reachable.
   const [winner, setWinner] = useState(() => {
@@ -4248,10 +4275,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                   // Force position/coordinates inline so nothing in Tailwind
                   // or an ancestor stylesheet can override them. Portal
                   // renders this into <body> so `fixed` = viewport-fixed.
+                  // `top` is driven by a scroll listener so the rail starts
+                  // aligned with the timer box top and locks near the top of
+                  // the viewport once scrolled past — i.e. real sticky.
                   position: 'fixed',
-                  top: '6rem',
+                  top: `${railTopPx}px`,
                   right: 'max(2rem, calc((100vw - 1408px) / 4))',
-                  maxHeight: 'calc(100vh - 7rem)',
+                  maxHeight: `calc(100vh - ${railTopPx + 16}px)`,
                   zIndex: 40,
                 }}
               >
@@ -4300,7 +4330,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             );
           })()}
 
-          <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12 mb-6">
+          <div ref={timerBoxRef} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-8 sm:p-12 mb-6">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
               <div className="text-center">
                 <div className="font-mono text-[11px] sm:text-xs text-yellow-500/70 tracking-widest mb-1">REMAINING</div>
