@@ -3058,45 +3058,34 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const rowRefs = useRef({});
   const prevRowPositions = useRef({});
   useLayoutEffect(() => {
-    // Cancel any in-flight FLIP animations FIRST so getBoundingClientRect
-    // measures each row's real slot position, not a mid-slide interpolated
-    // one. Without this reset, restarting an animation on a still-moving
-    // row measures a bogus "old" position and the row teleports.
-    Object.values(rowRefs.current).forEach((el) => {
-      if (!el) return;
-      el.style.transition = 'none';
-      el.style.transform = 'translateY(0)';
-    });
-    // Force a synchronous reflow so the browser flushes the reset transforms
-    // before we measure. Without this, the browser may skip the intermediate
-    // state.
-    if (Object.values(rowRefs.current).find((el) => !!el)) {
-      // eslint-disable-next-line no-unused-expressions
-      Object.values(rowRefs.current)[0]?.offsetHeight;
-    }
-
+    // Only fires when the STANDINGS data actually changes (delayed reveal
+    // arrived, or a rank-climb step ticked). Every-render firing was
+    // killing in-flight slides because the timer tick every second was
+    // resetting transforms to 0 mid-animation.
     const current = {};
     Object.entries(rowRefs.current).forEach(([name, el]) => {
       if (el) current[name] = el.getBoundingClientRect().top;
     });
     Object.entries(current).forEach(([name, newTop]) => {
       const oldTop = prevRowPositions.current[name];
-      if (oldTop === undefined || oldTop === newTop) return;
+      if (oldTop === undefined || Math.abs(oldTop - newTop) < 0.5) return;
       const el = rowRefs.current[name];
       if (!el) return;
       const dy = oldTop - newTop;
       el.style.transition = 'none';
       el.style.transform = `translateY(${dy}px)`;
+      // Force a reflow before the transition so the browser paints the
+      // inverted position first.
+      // eslint-disable-next-line no-unused-expressions
+      el.offsetHeight;
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (!rowRefs.current[name]) return;
-          el.style.transition = 'transform 1500ms cubic-bezier(0.4, 0, 0.2, 1)';
-          el.style.transform = 'translateY(0)';
-        });
+        if (!rowRefs.current[name]) return;
+        el.style.transition = 'transform 1500ms cubic-bezier(0.4, 0, 0.2, 1)';
+        el.style.transform = 'translateY(0)';
       });
     });
     prevRowPositions.current = current;
-  });
+  }, [displayedKnockouts, animOverride]);
 
   // Standings-rail delayed reveal + rank-climb animation. Deps below
   // include state declared above (players, fullRosterFromDB, etc), which
@@ -3202,9 +3191,12 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   }, [knockouts, displayedKnockouts, players, fullRosterFromDB, seasonPreGameTotals, gameStartedAt, config.gameType]);
   useEffect(() => {
     if (justScored.size === 0) return;
-    const t = setTimeout(() => setJustScored(new Set()), 8000);
+    // Wait for any active climb to finish before clearing the flash so the
+    // row stays highlighted through the whole slide.
+    if (animOverride !== null) return;
+    const t = setTimeout(() => setJustScored(new Set()), 2000);
     return () => clearTimeout(t);
-  }, [justScored]);
+  }, [justScored, animOverride]);
 
   const intervalRef = useRef(null);
   const scrubDraggingRef = useRef(false);
