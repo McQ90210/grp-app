@@ -1867,6 +1867,9 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     }
   };
   const [newPlayer, setNewPlayer] = useState('');
+  // Name of a just-added brand-new club member awaiting the optional
+  // birthday/email capture modal. Null when the modal is closed.
+  const [newPlayerDetailsFor, setNewPlayerDetailsFor] = useState(null);
   // Pending confirm for a round-payment toggle. Set on any tap of the
   // upfront chip; cleared on confirm/cancel. Guards both directions so
   // a stray tap can't add or remove without an explicit yes.
@@ -2050,6 +2053,13 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     } else {
       setRoster([...roster, { name, sound: 'none' }]);
       setPlayingTonight((prev) => new Set([...prev, name]));
+      // Brand-new to the CLUB (not just this game)? Offer the optional
+      // birthday/email capture so their bounty can apply from this very
+      // game and the results email reaches them.
+      const inGrp = allGrpPlayers.some(
+        (p) => (p.name || '').toLowerCase() === name.toLowerCase()
+      );
+      if (!inGrp) setNewPlayerDetailsFor(name);
     }
     setBuyInsPaidByName((m) => ({ ...m, [name]: false }));
     setSubsPaidByName((m) => ({ ...m, [name]: false }));
@@ -2653,6 +2663,14 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
         />
       )}
 
+      {newPlayerDetailsFor && (
+        <NewPlayerDetailsModal
+          name={newPlayerDetailsFor}
+          fbUser={fbUser}
+          onClose={() => setNewPlayerDetailsFor(null)}
+        />
+      )}
+
       {pendingUpfrontToggle && (
         <ConfirmDialog
           title={pendingUpfrontToggle.nextIsUpfront
@@ -2945,6 +2963,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // STANDINGS rail. Skips the "which player" step of the full eliminate
   // modal — the player is already known — and just asks OUT vs REBUY.
   const [standingsAction, setStandingsAction] = useState(null); // { player } | null
+  // Late-entry name awaiting the optional birthday/email capture modal.
+  const [newPlayerDetailsFor, setNewPlayerDetailsFor] = useState(null);
   // Rail top offset — measured once from the timer container's document-Y
   // position so the desktop side rail sits aligned with the timer's top
   // edge and scrolls naturally with the page (position: absolute inside
@@ -3816,6 +3836,10 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     }
     setPlayers([...players, { name, sound }]);
     setNewPlayerName('');
+    // Free-typed name = brand-new club member (roster picks come through
+    // `pick`). Offer the optional birthday/email capture so a birthday
+    // bounty can apply from this very game.
+    if (!pick) setNewPlayerDetailsFor(name);
     // Default a late-entry player to "paid" — common case. Admin can
     // un-tick them after the fact via the Subs Ledger.
     setBuyInsPaidByName((m) => ({ ...m, [name]: false }));
@@ -5226,6 +5250,24 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             )}
           </div>
         </div>
+      )}
+
+      {/* Optional birthday/email capture for a late-entry new player.
+          Saving refreshes the Firestore roster copy so a birthday bounty
+          applies immediately — even mid-game. */}
+      {newPlayerDetailsFor && (
+        <NewPlayerDetailsModal
+          name={newPlayerDetailsFor}
+          fbUser={fbUser}
+          onClose={() => setNewPlayerDetailsFor(null)}
+          onSaved={() => {
+            if (window.GRP_DB) {
+              window.GRP_DB.getAllPlayers()
+                .then((all) => setFullRosterFromDB(all || []))
+                .catch(() => {});
+            }
+          }}
+        />
       )}
 
       {/* Standings-rail shortcut: skip the "which player" step of the
@@ -7969,6 +8011,115 @@ function ManagePlayersModal({ onClose, onSaved }) {
 
 // ============ CONFIRM DIALOG (shared) ============
 // For destructive ops: requires typing "DELETE" to confirm.
+// ============ NEW PLAYER DETAILS MODAL ============
+// Shown right after a brand-new name is added to a game (setup wizard or
+// in-game late entry). Captures optional birthday + email and creates the
+// Firestore player doc immediately — so a birthday bounty can apply from
+// this very game and results emails reach them. Fully skippable: the
+// save-time auto-create still covers players registered without details.
+function NewPlayerDetailsModal({ name, fbUser, onClose, onSaved }) {
+  const [month, setMonth] = useState('');
+  const [day, setDay] = useState('');
+  const [email, setEmail] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  const save = async () => {
+    setError(null);
+    setSaving(true);
+    try {
+      const doc = { displayName: name, sound: 'none', active: true };
+      const m = parseInt(month), d = parseInt(day);
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31) doc.birthday = { month: m, day: d };
+      if (email.trim()) doc.email = email.trim();
+      await window.GRP_DB.upsertPlayer(doc);
+      if (onSaved) onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message || 'Save failed');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-sm w-full">
+        <div className="font-display text-2xl gold-text mb-1">NEW PLAYER</div>
+        <div className="text-emerald-100 text-lg mb-4">{name}</div>
+        <div className="text-yellow-100/60 text-xs font-mono mb-4">
+          Optional — birthday enables their birthday bounty (even this game if it's their month); email gets them the results recap.
+        </div>
+
+        <div className="space-y-3 mb-4">
+          <div>
+            <div className="font-mono text-[10px] text-yellow-100/50 tracking-widest mb-1">BIRTHDAY</div>
+            <div className="flex gap-2">
+              <select
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm focus:outline-none focus:border-yellow-500/50"
+              >
+                <option value="" style={{ background: '#0a3d1f' }}>Month…</option>
+                {MONTH_NAMES.map((mn, i) => (
+                  <option key={mn} value={i + 1} style={{ background: '#0a3d1f' }}>{mn}</option>
+                ))}
+              </select>
+              <select
+                value={day}
+                onChange={(e) => setDay(e.target.value)}
+                className="w-24 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm focus:outline-none focus:border-yellow-500/50"
+              >
+                <option value="" style={{ background: '#0a3d1f' }}>Day…</option>
+                {Array.from({ length: 31 }, (_, i) => (
+                  <option key={i + 1} value={i + 1} style={{ background: '#0a3d1f' }}>{i + 1}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <div className="font-mono text-[10px] text-yellow-100/50 tracking-widest mb-1">EMAIL (results delivery)</div>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="player@example.com"
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm placeholder-yellow-100/30 focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+        </div>
+
+        {!fbUser && (
+          <div className="mb-3 p-2 rounded-lg bg-yellow-950/40 border border-yellow-500/30 text-yellow-200/80 font-mono text-[11px]">
+            Sign in as admin to save these details — or SKIP and add them later via Manage Players.
+          </div>
+        )}
+        {error && (
+          <div className="mb-3 p-2 rounded-lg bg-red-950/40 border border-red-500/40 text-red-200 font-mono text-xs">{error}</div>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="flex-1 px-4 py-2.5 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm disabled:opacity-30"
+          >
+            SKIP
+          </button>
+          <button
+            onClick={save}
+            disabled={saving || !fbUser}
+            className="flex-1 px-4 py-2.5 rounded-full font-display text-lg text-black disabled:opacity-30"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            {saving ? 'SAVING…' : 'SAVE'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConfirmDialog({ title, message, requireType, onConfirm, onCancel }) {
   const [typed, setTyped] = useState('');
   const ok = requireType ? typed === requireType : true;
