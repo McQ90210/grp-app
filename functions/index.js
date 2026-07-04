@@ -219,10 +219,11 @@ Context:
 - Podium: ${podium || 'no results recorded'}
 
 Match events from the night, in chronological order. Pick the ONE or TWO most
-interesting for the recap, do not list them all. A player racking up several
-knockouts is a story. A birthday bounty being claimed (or kept) is a story.
-Someone rebuying repeatedly is a story. The first player out is gentle
-material for a friendly dig:
+interesting for the recap, do not list them all. If any single player racked
+up THREE OR MORE knockouts, that is the lead story and must be mentioned with
+their knockout count. Otherwise: a birthday bounty being claimed (or kept) is
+a story, someone rebuying repeatedly is a story, and the first player out is
+gentle material for a friendly dig:
 - ${eventsBlurb || '(none recorded)'}
 
 When referring to the next game, say "next month" or "the next game", never "next week" or "tonight".
