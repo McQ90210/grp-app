@@ -978,6 +978,63 @@ exports.resendLatestHRResults = onCall(
   }
 );
 
+// Callable: admin tool. Renders the most recent LEAGUE results email
+// (recap, podium, standings — the full pipeline including the Gemini
+// call) and sends it to exactly ONE address. Subject prefixed [TEST].
+// League twin of sendTestHRResults below — for previewing recap/prompt
+// changes without emailing the whole league.
+//
+// Input:  { email: 'someone@example.com' }
+exports.sendTestResults = onCall(
+  {
+    region: REGION,
+    secrets: [GMAIL_USER, GMAIL_APP_PASSWORD, GEMINI_API_KEY],
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'You must be signed in as admin.');
+    }
+    const email = ((request.data && request.data.email) || '').trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new HttpsError('invalid-argument', 'Provide a valid recipient email.');
+    }
+    const game = await getMostRecentLeagueGame();
+    if (!game) {
+      throw new HttpsError('not-found', 'No league games found.');
+    }
+    if (!game.seasonId) {
+      throw new HttpsError('failed-precondition', `Game ${game.id} has no seasonId.`);
+    }
+    try {
+      const [season, seasonGames, players] = await Promise.all([
+        getSeason(game.seasonId),
+        getGamesForSeason(game.seasonId),
+        getAllPlayers(),
+      ]);
+      if (!season) {
+        throw new HttpsError('not-found', `Season ${game.seasonId} not found.`);
+      }
+      const standings = computeStandings(seasonGames, players, game.id);
+      const recap = await generateRecap({ game, season, standings, players });
+      const html = renderResultsEmail({ game, season, standings, players, recap });
+      const subject = `[TEST] GRP Berkhamsted: ${season.name} · Game ${game.gameNumber}${
+        game.isFinal ? ' FINAL' : ''
+      } results`;
+      const result = await sendEmailAndLog({
+        game,
+        subject,
+        html,
+        recipients: [{ id: 'test-recipient', email }],
+        extra: { seasonId: game.seasonId, type: 'results-test', testRecipient: email },
+      });
+      return { ok: true, gameId: game.id, sent: result.sent, hadRecap: !!recap };
+    } catch (err) {
+      logger.error('sendTestResults failed:', err);
+      throw new HttpsError('internal', err.message || 'Test email failed.');
+    }
+  }
+);
+
 // Callable: admin tool. Renders the most recent HR results email and sends
 // it to exactly ONE address — bypassing the usual attendee-with-email
 // recipient filter. Subject is prefixed with [TEST] so it's obvious in the
