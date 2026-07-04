@@ -218,12 +218,16 @@ Context:
 - ${(game.attendees || []).length} players, pot £${game.pot || 0}, ${game.totalRebuys || 0} rebuys
 - Podium: ${podium || 'no results recorded'}
 
-Match events from the night, in chronological order. Pick the ONE or TWO most
-interesting for the recap, do not list them all. If any single player racked
-up THREE OR MORE knockouts, that is the lead story and must be mentioned with
-their knockout count. Otherwise: a birthday bounty being claimed (or kept) is
-a story, someone rebuying repeatedly is a story, and the first player out is
-gentle material for a friendly dig:
+Match facts from the night, already tallied for you. Pick the ONE or TWO most
+interesting for the recap, do not list them all. If a KNOCKOUT LEADER line is
+present, that is the lead story and must be mentioned with their exact
+knockout count. Otherwise: a birthday bounty being claimed (or kept) is a
+story, someone rebuying repeatedly is a story, and the first player out is
+gentle material for a friendly dig.
+STRICT ACCURACY: every name, count and £ figure you write must appear exactly
+in the data in this prompt. Never swap who claimed a bounty and who was
+bountied. The only £ figures you may use are the pot and the podium payouts
+above. Do not invent, round, or recompute anything:
 - ${eventsBlurb || '(none recorded)'}
 
 When referring to the next game, say "next month" or "the next game", never "next week" or "tonight".
@@ -336,17 +340,38 @@ async function generateRecap({ game, season, standings, players }) {
     `${i + 1}. ${s.displayName} (${s.total.toLocaleString()} pts, ${s.gamesPlayed} games)`
   ).join('\n');
 
-  // Narrative events — the chronological KO log, bounty claims, first-out
-  // and rebuys give Gemini an actual story to tell instead of just the
-  // podium. Everything is stored as PIDs; translate to nicknames.
+  // Narrative events — KO tallies, bounty claims, first-out and rebuys
+  // give Gemini an actual story to tell instead of just the podium.
+  // IMPORTANT: aggregate in code and hand the model finished counts.
+  // An earlier version passed the raw chronological KO log and asked the
+  // model to tally it — it miscounted, swapped claimer/bountied, and
+  // invented money figures. Models are bad accountants.
   const nameOf = (pid) => playersById[pid]?.displayName || pid;
-  const koLines = (game.knockouts || [])
-    .filter((k) => k.knocker)
-    .map((k) => `${nameOf(k.knocker)} knocked out ${nameOf(k.eliminated)}${k.rebought ? ' (who rebought)' : ''}`);
+  const koCountByKnocker = {};
+  const victimsByKnocker = {};
+  (game.knockouts || []).forEach((k) => {
+    if (!k.knocker) return;
+    koCountByKnocker[k.knocker] = (koCountByKnocker[k.knocker] || 0) + 1;
+    (victimsByKnocker[k.knocker] = victimsByKnocker[k.knocker] || []).push(k.eliminated);
+  });
+  const koLines = Object.entries(koCountByKnocker)
+    .sort((a, b) => b[1] - a[1])
+    .map(([pid, n]) => {
+      const victimCounts = {};
+      victimsByKnocker[pid].forEach((v) => { victimCounts[v] = (victimCounts[v] || 0) + 1; });
+      const victims = Object.entries(victimCounts)
+        .map(([v, c]) => (c > 1 ? `${nameOf(v)} x${c}` : nameOf(v)))
+        .join(', ');
+      return `${nameOf(pid)} made ${n} knockout${n > 1 ? 's' : ''} (victims: ${victims})`;
+    });
+  const koLeaderLine = (() => {
+    const top = Object.entries(koCountByKnocker).sort((a, b) => b[1] - a[1])[0];
+    return top && top[1] >= 3 ? `KNOCKOUT LEADER: ${nameOf(top[0])} with ${top[1]} knockouts.` : null;
+  })();
   const bountyLines = (game.bountyClaims || []).map((c) =>
     c.claimedBy === c.bountied
-      ? `${nameOf(c.bountied)} survived the night and kept their own birthday bounty`
-      : `${nameOf(c.claimedBy)} claimed ${nameOf(c.bountied)}'s birthday bounty`
+      ? `${nameOf(c.bountied)} was the bountied player and survived the night, keeping their own birthday bounty`
+      : `${nameOf(c.claimedBy)} knocked out the bountied player ${nameOf(c.bountied)} and claimed ${nameOf(c.bountied)}'s birthday bounty (the points go to ${nameOf(c.claimedBy)})`
   );
   const firstOutLine = game.firstOut
     ? `First player eliminated on the night: ${nameOf(game.firstOut)}`
@@ -355,9 +380,10 @@ async function generateRecap({ game, season, standings, players }) {
     .filter(([, n]) => n > 0)
     .map(([pid, n]) => `${nameOf(pid)} rebought ${n} time${n > 1 ? 's' : ''}`);
   const eventsBlurb = [
-    ...(firstOutLine ? [firstOutLine] : []),
+    ...(koLeaderLine ? [koLeaderLine] : []),
     ...koLines,
     ...bountyLines,
+    ...(firstOutLine ? [firstOutLine] : []),
     ...rebuyLines,
   ].join('\n- ');
 
