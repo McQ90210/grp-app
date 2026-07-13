@@ -17,7 +17,7 @@ A Progressive Web App for the **Greene Room Poker** league in Berkhamsted. Publi
 ### State as of last session (2026-07-04)
 
 - ✅ Season **2026-r2** active ("2026 — Round 2", 7 games: 6 regular + Dec final), v2 scoring rules live. R2 G1 played 2026-07-01, audited + patched (leagueMoney 0 that night, first-out = Duck, Cactus May-carryover bounty).
-- ✅ **2026-r1 marked complete** — rollover now auto-flips the previous season's stored status (v7.91). R1 G6 (June final) has an empty attendees list in Firestore; whether it was recorded is unresolved.
+- ✅ **2026-r1 marked complete** — rollover now auto-flips the previous season's stored status (v7.91). R1 G6 (June final, 2026-06-05) was played and recorded: 12 players, top-4 paid from a £590 pot (£300/£170/£80/£40), Beans won. Its `attendees` array had been left empty (saved via an edit path that only set finishOrder); backfilled from finishOrder on 2026-07-13. Fully reconciled.
 - ✅ Timer screen now carries a right-side rail: 🎂 BOUNTIES + LIVE STANDINGS (full league table, money→KO tiebreaks, click a name to record OUT/REBUY, 1s delayed reveal, FLIP climb animation, yellow flash = scorer, red flash = eliminated). Rail toggles per-box via header buttons; position: absolute portal so it scrolls with the page.
 - ✅ Winner overlay: **auto-saves the game** on appearance (silent SaveGameModal instance; falls back to a manual button for test mode / signed-out / resume-inferred winners / failure), two-column layout with UPDATED STANDINGS + per-player narrative breakdowns (place, KO victims by name, bounty counts, first-out).
 - ✅ New-player registration modal (birthday + email) fires when a brand-new name is added in the wizard or as a late entry — creates the Firestore player doc immediately so the birthday bounty applies from that game.
@@ -486,7 +486,6 @@ In rough priority order:
 1. **End-of-round AWARDS screen** — for the Christmas (R2) final: scan the round's game docs and compute award winners automatically. Agreed award ideas (all computable from existing data): Nemesis (most KOs of the same victim), The Hitman (most total KOs), Most Rebuys, The Early Bath (most first-outs), Bounty Hunter (most bounty claims), The Marked Man (most-claimed bountied player), The Bridesmaid (most 2nds, no win), Bubble Boy (most just-out-of-the-money), Iron Man (perfect attendance), The Banker (most £ won), Best ROI, The Philanthropist (most £ in, least back), The Punchbag (most times KO'd), Giant Killer (most KOs of the round champion), Mr Consistent (best avg finish), The Comeback (biggest climb), Wooden Spoon. Could feed the Gemini recap for the final's results email.
 2. **Real-time multi-device sync (deferred)** — phone-as-controller + laptop/TV-as-display via Firebase Realtime Database (Mark wants this "one day", not yet)
 3. **`firebase-admin` / `nodemailer` major-version bumps** — 13→14 and 6→9 respectively. Both have breaking changes; check release notes before bumping. Not urgent — current versions are stable.
-4. **R1 G6 (June 2026 final) reconciliation** — the game doc exists with an empty attendees list; confirm whether the final was played and backfill if so.
 
 ### Done in previous sessions
 - ~~Roster sync from Firestore into SetupWizard~~ — v7.8
