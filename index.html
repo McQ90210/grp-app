@@ -814,6 +814,28 @@ const SOUND_LIBRARY = {
   },
 };
 
+// Play a remote audio URL (a per-player uploaded Storage file) through an
+// HTMLAudioElement. Unlike fetch() + decodeAudioData (Web Audio), a media
+// element plays cross-origin audio WITHOUT the bucket needing a CORS policy
+// for the app origin — it never exposes the raw samples to JS. This is why
+// uploaded elimination sounds play even though the gr-poker Storage bucket
+// has no CORS config. Resolves true when playback ends, false on any error
+// so the caller can fall through to the player's library soundKey.
+function playAudioUrl(url) {
+  return new Promise((resolve) => {
+    try {
+      const audio = new Audio(url);
+      audio.volume = 0.9;
+      audio.onended = () => resolve(true);
+      audio.onerror = () => resolve(false);
+      const p = audio.play();
+      if (p && typeof p.catch === 'function') p.catch(() => resolve(false));
+    } catch (e) {
+      resolve(false);
+    }
+  });
+}
+
 // Play a sound. Tries to use the bundled MP3 file first; falls back to synthesis.
 // Play a sound. Resolves when the sound has finished playing (so callers can
 // chain follow-up actions like winner announcements without overlap).
@@ -844,12 +866,13 @@ async function playSound(soundKey, customSounds = {}, customUrl = null) {
     src.start();
   });
 
-  // Per-player upload wins if provided.
+  // Per-player upload wins if provided. Played via an <audio> element
+  // (playAudioUrl) rather than Web Audio decode so it works without a
+  // CORS policy on the Storage bucket. Falls through to the library
+  // soundKey only if the element fails (bad URL / offline).
   if (customUrl) {
-    const buffer = await loadAudioBuffer(customUrl);
-    if (buffer) return playBuffer(buffer);
-    // If the URL fetch failed (e.g. offline), fall through to whatever
-    // soundKey the player also had picked.
+    const ok = await playAudioUrl(customUrl);
+    if (ok) return;
   }
 
   if (!soundKey || soundKey === 'none') return;
