@@ -2494,7 +2494,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                                   </select>
                                   <button
                                     onClick={() => playSound(player.sound || 'none', customSounds, player.customSoundUrl || null)}
-                                    disabled={!player.sound || player.sound === 'none'}
+                                    disabled={!player.customSoundUrl && (!player.sound || player.sound === 'none')}
                                     className="px-3 py-1 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-100 text-xs disabled:opacity-30"
                                     title="Preview sound"
                                   >
