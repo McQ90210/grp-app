@@ -4181,9 +4181,18 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const nextLvl = levels[currentLevel + 1];
   const activePlayers = players.filter((p) => !eliminatedPlayers.includes(p.name));
   const progress = 1 - timeLeft / ((level.duration || 1) * 60);
-  // Prize pool includes rebuys
+  // Pot includes rebuys. `prizePool` here is the raw pot (shown under the
+  // "POT" stat). The money actually paid out is the pot minus the league
+  // money — 10% of the pot rounded to the nearest £10, taken off the top
+  // for the club kitty on regular league games (finals and High Rollers
+  // collect none). `payoutPool` feeds every payout calculation + the
+  // "PRIZE POOL" displays; the formula matches SaveGameModal's default.
   const totalEntries = players.length + totalRebuys;
   const prizePool = config.buyIn * totalEntries;
+  const leagueMoney = (config.gameType === 'league' && !config.leagueContext?.isFinal)
+    ? Math.round(prizePool * 0.1 / 10) * 10
+    : 0;
+  const payoutPool = Math.max(0, prizePool - leagueMoney);
   // Avg stack: sum of all starting stacks (per-player if set, else config.stackSize) + rebuy chips, ÷ active players
   const baseChipsFromStarting = config.playerStartingStacks
     ? Object.values(config.playerStartingStacks).reduce((a, b) => a + b, 0)
@@ -4957,7 +4966,12 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 <div className="flex justify-between items-center">
                   <div>
                     <div className="font-mono text-xs text-yellow-500/60 tracking-widest">PRIZE POOL</div>
-                    <div className="font-display text-4xl gold-text">£{prizePool.toLocaleString()}</div>
+                    <div className="font-display text-4xl gold-text">£{payoutPool.toLocaleString()}</div>
+                    {leagueMoney > 0 && (
+                      <div className="font-mono text-[11px] text-yellow-100/40 mt-1">
+                        £{prizePool.toLocaleString()} pot − £{leagueMoney.toLocaleString()} league money
+                      </div>
+                    )}
                   </div>
                   <div className="text-right text-xs font-mono text-yellow-100/60">
                     <div>{players.length} buy-ins</div>
@@ -4989,7 +5003,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 {(() => {
                   const splits = PAYOUT_STRUCTURES[payoutKey].splits;
                   const paidCount = splits.length;
-                  const amounts = computePayouts(prizePool, config.buyIn, paidCount);
+                  const amounts = computePayouts(payoutPool, config.buyIn, paidCount);
                   const places = ['1st', '2nd', '3rd', '4th', '5th'];
                   const colors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
                   return splits.map((pct, i) => {
@@ -5585,7 +5599,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             }
 
             const splits = PAYOUT_STRUCTURES[payoutKey].splits;
-            const amounts = computePayouts(prizePool, config.buyIn, splits.length);
+            const amounts = computePayouts(payoutPool, config.buyIn, splits.length);
             const placeLabels = ['1st', '2nd', '3rd', '4th', '5th'];
             const placeColors = ['text-yellow-300', 'text-gray-300', 'text-amber-600', 'text-emerald-300', 'text-blue-300'];
             const reversedOut = [...eliminatedPlayers].reverse();
@@ -5609,7 +5623,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       {winner.name}
                     </div>
                     <div className="font-mono text-xs text-yellow-300/60 tracking-widest mb-1">PRIZE POOL</div>
-                    <div className="font-display text-4xl gold-text mb-6">£{prizePool.toLocaleString()}</div>
+                    <div className="font-display text-4xl gold-text mb-1">£{payoutPool.toLocaleString()}</div>
+                    {leagueMoney > 0 && (
+                      <div className="font-mono text-[11px] text-yellow-100/40 mb-5">
+                        £{prizePool.toLocaleString()} pot − £{leagueMoney.toLocaleString()} league money
+                      </div>
+                    )}
+                    {leagueMoney === 0 && <div className="mb-6" />}
 
                     <div className="max-w-sm mx-auto space-y-1.5 mb-8">
                       {splits.map((pct, i) => {
@@ -8462,6 +8482,13 @@ function SaveGameModal({
   const initialFinishOrder = finishOrder.map(resolvePid);
   const initialPlayerCount = players.length;
   const initialPot = config.buyIn * (initialPlayerCount + totalRebuys);
+  // League money (10% of pot, rounded to £10) comes off the top before
+  // payouts are split — matches the leagueMoney state default below and
+  // the timer/winner-overlay payout maths. Finals and HR take none.
+  const initialLeagueMoney = (gameType === 'league' && !isFinal)
+    ? Math.round(initialPot * 0.1 / 10) * 10
+    : 0;
+  const initialPayoutPool = Math.max(0, initialPot - initialLeagueMoney);
 
   // Bountied for today
   const bountyIds = computeBountyHolders(fullRosterFromDB, today);
@@ -8525,7 +8552,7 @@ function SaveGameModal({
 
   // Payouts (new rule: last paid place gets buy-in, rest split remaining)
   const splits = PAYOUT_STRUCTURES[payoutKey].splits;
-  const payoutAmounts = computePayouts(initialPot, config.buyIn, splits.length);
+  const payoutAmounts = computePayouts(initialPayoutPool, config.buyIn, splits.length);
   const initialPayouts = {};
   payoutAmounts.forEach((amt, i) => {
     if (amt > 0) initialPayouts[String(i + 1)] = amt;
@@ -8544,9 +8571,7 @@ function SaveGameModal({
   // League money is 10% of the pot, rounded to the nearest £10 (the club
   // rarely holds change smaller than that; over a season the rounding
   // averages out). Finals collect no league money.
-  const [leagueMoney, setLeagueMoney] = useState(
-    !isLeague || isFinal ? '0' : String(Math.round(initialPot * 0.1 / 10) * 10)
-  );
+  const [leagueMoney, setLeagueMoney] = useState(String(initialLeagueMoney));
   const [subs, setSubs] = useState(isLeague ? String(initialPlayerCount * 3) : '0');
   const [pointsAwarded, setPointsAwarded] = useState(initialPoints);
   const [payouts, setPayouts] = useState(initialPayouts);
