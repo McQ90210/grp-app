@@ -61,7 +61,7 @@ PLAYERS = [
     "Toby", "Fire Truck John", "David", "Graham Barlow",
     "The Dentist", "Dom", "The Agent", "Anthony Boden", "PTH",
     "Jay Gohil", "Simon Wilkins", "Santa", "Stephen",
-    "Kelvin The Detective", "Ben Conolly", "Tinker-Bell",
+    "Kelvin The Detective", "Ben", "Ben Conolly", "Tinker-Bell",
     "Michael Barnes", "Oli Elsaesser", "Sam Maffia", "Jimmy",
 ]
 
@@ -75,8 +75,13 @@ STATIC = {
     "final-3":    "We are down to the final three!",
     "complete":   "Tournament complete. Well played.",
     "voice-ready":"Voice ready.",
-    # Seat draw — played in sequence via speakClipQueue, e.g.
-    # table-1, seat-1, dealer, name-beans for "Table 1, Seat 1, dealer... Beans."
+}
+
+# Seat draw — played in sequence via speakClipQueue, e.g. table-1,
+# seat-1, dealer, name-beans for "Table 1, Seat 1, dealer... Beans."
+# Generated with EXCITED_SETTINGS (see generate()) for a punchier,
+# more game-show read than the flatter default phrases above.
+STATIC_SEAT_DRAW = {
     "table-1":    "Table 1.",
     "table-2":    "Table 2.",
     "table-3":    "Table 3.",
@@ -98,7 +103,30 @@ def slugify(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
-def generate(text, filename):
+# Default delivery — used for everything except the seat draw (see
+# EXCITED_SETTINGS below). Lower stability + higher style = more
+# expressive/varied delivery; this is the flatter, more consistent end
+# of that range, which is what the original 104 clips were built with.
+DEFAULT_SETTINGS = {
+    "stability": 0.5,
+    "similarity_boost": 0.75,
+    "style": 0.3,
+    "use_speaker_boost": True,
+}
+
+# More energetic read for the seat draw's live-reveal phrases (table /
+# seat / dealer / bare names) — lower stability and higher style push
+# the same voice toward a punchier, more excited delivery rather than
+# the flatter read used for the original static/per-player phrases.
+EXCITED_SETTINGS = {
+    "stability": 0.35,
+    "similarity_boost": 0.75,
+    "style": 0.65,
+    "use_speaker_boost": True,
+}
+
+
+def generate(text, filename, voice_settings=None):
     """Call ElevenLabs API and save MP3 to disk."""
     path = OUT / f"{filename}.mp3"
     if path.exists():
@@ -114,12 +142,7 @@ def generate(text, filename):
     body = {
         "text": text,
         "model_id": MODEL,
-        "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.75,
-            "style": 0.3,
-            "use_speaker_boost": True,
-        },
+        "voice_settings": voice_settings or DEFAULT_SETTINGS,
     }
     r = requests.post(url, headers=headers, json=body, timeout=60)
     if r.status_code != 200:
@@ -142,6 +165,12 @@ def main():
         generate(text, key)
         time.sleep(0.5)  # be nice to the API
 
+    # Seat draw static phrases — excited delivery
+    print("\n=== Seat draw (table / seat / dealer) ===")
+    for key, text in STATIC_SEAT_DRAW.items():
+        generate(text, key, voice_settings=EXCITED_SETTINGS)
+        time.sleep(0.5)
+
     # Per-player elimination phrases
     print("\n=== Eliminations (Goodbye, X) ===")
     for name in PLAYERS:
@@ -162,9 +191,10 @@ def main():
 
     # Per-player bare name — for the seat draw, chained after table/seat/
     # dealer clips via speakClipQueue rather than embedded in a phrase.
+    # Excited delivery, matching the table/seat/dealer clips above.
     print("\n=== Bare names (seat draw) ===")
     for name in PLAYERS:
-        generate(f"{name}.", f"name-{slugify(name)}")
+        generate(f"{name}!", f"name-{slugify(name)}", voice_settings=EXCITED_SETTINGS)
         time.sleep(0.5)
 
     print(f"\n✅ Done. Files in {OUT.absolute()}/")
