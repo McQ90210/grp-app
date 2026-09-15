@@ -54,11 +54,14 @@ MODEL = "eleven_turbo_v2_5"
 OUT = Path("sounds/voice")
 OUT.mkdir(parents=True, exist_ok=True)
 
-# 32 players from the GR Poker roster
+# 32 players from the GR Poker roster. Names here must match Firestore
+# displayName exactly — the app looks up clips via
+# slugifyName(player.name), not by any stored player ID (which doesn't
+# change on a rename, e.g. Mr Toby's doc ID is still "toby").
 PLAYERS = [
     "Cactus", "Chicken", "Duck", "Ostrich", "River Dan", "Quads",
     "Beans", "The Boxer", "Chit Chat", "Hair", "Shoes", "Moth",
-    "Toby", "Fire Truck John", "David", "Graham Barlow",
+    "Mr Toby", "Fire Truck John", "David", "Graham Barlow",
     "The Dentist", "Dom", "The Agent", "Anthony Boden", "PTH",
     "Jay Gohil", "Simon Wilkins", "Santa", "Stephen",
     "Kelvin The Detective", "Ben", "Ben Conolly", "Tinker-Bell",
@@ -103,21 +106,12 @@ def slugify(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
-# Toby gets his own voice and his own nickname in every clip that says
-# his name — everything else about him (filenames, which the app looks
-# up via slugifyName(player.name)) stays keyed on the real roster name
-# "Toby", only the TEXT and VOICE change.
+# Mr Toby gets his own voice on every clip that says his name.
 TOBY_VOICE_ID = "9lHjugDhwqoxA5MhX0az"
 
 
 def is_toby(name):
-    return name == "Toby"
-
-
-def display_name(name):
-    """The name as spoken in a clip — everyone gets their own name,
-    Toby gets his nickname."""
-    return "Mr Toby" if is_toby(name) else name
+    return name == "Mr Toby"
 
 
 def voice_id_for(name):
@@ -192,7 +186,7 @@ def main():
         generate(text, key, voice_settings=EXCITED_SETTINGS)
         time.sleep(0.5)
 
-    # Per-player elimination phrases. Toby gets a fully custom line
+    # Per-player elimination phrases. Mr Toby gets a fully custom line
     # instead of the template, in his own voice.
     print("\n=== Eliminations (Goodbye, X) ===")
     for name in PLAYERS:
@@ -206,13 +200,22 @@ def main():
     # Per-player winner announcement
     print("\n=== Winner announcements ===")
     for name in PLAYERS:
-        generate(f"And the winner is... {display_name(name)}!", f"winner-{slugify(name)}", voice_id=voice_id_for(name))
+        generate(f"And the winner is... {name}!", f"winner-{slugify(name)}", voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     # Per-player congratulations
     print("\n=== Congratulations ===")
     for name in PLAYERS:
-        generate(f"Congratulations, {display_name(name)}!", f"congrats-{slugify(name)}", voice_id=voice_id_for(name))
+        generate(f"Congratulations, {name}!", f"congrats-{slugify(name)}", voice_id=voice_id_for(name))
+        time.sleep(0.5)
+
+    # Per-player rebuy announcement (app plays this on every rebuy). Not
+    # previously tracked by this script — most already exist from an
+    # earlier ad-hoc pass, this just fills in any gaps (Ben never had
+    # one) and keeps everyone on the right voice going forward.
+    print("\n=== Rebuys ===")
+    for name in PLAYERS:
+        generate(f"Rebuy for {name}.", f"rebuy-{slugify(name)}", voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     # Per-player bare name — for the seat draw, chained after table/seat/
@@ -220,7 +223,7 @@ def main():
     # Excited delivery, matching the table/seat/dealer clips above.
     print("\n=== Bare names (seat draw) ===")
     for name in PLAYERS:
-        generate(f"{display_name(name)}!", f"name-{slugify(name)}", voice_settings=EXCITED_SETTINGS, voice_id=voice_id_for(name))
+        generate(f"{name}!", f"name-{slugify(name)}", voice_settings=EXCITED_SETTINGS, voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     print(f"\n✅ Done. Files in {OUT.absolute()}/")

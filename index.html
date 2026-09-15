@@ -2459,8 +2459,15 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   // (managed via the + picker and × delete button).
   useEffect(() => {
     let cancelled = false;
-    const finalize = (allMembers) => {
+    const finalize = (rawMembers) => {
       if (cancelled) return;
+      // Firestore's getAllPlayers() has no orderBy — sort by the current
+      // displayName here so every consumer (this roster, the HR picker
+      // modal) shows alphabetical order. Doc IDs don't change when a
+      // player is renamed (Mr Toby's doc is still "toby"), so sorting by
+      // ID/insertion order would keep showing a renamed player in their
+      // old alphabetical slot.
+      const allMembers = [...rawMembers].sort((a, b) => a.name.localeCompare(b.name));
       setAllGrpPlayers(allMembers);
       if (gameType === 'highrollers') {
         const hrReg = readHrRegulars();
@@ -2471,7 +2478,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
         const nonGrp = hrReg
           .filter(n => !allMembers.find(p => p.name === n))
           .map(n => ({ name: n, sound: 'none' }));
-        setRoster([...grpInAllow, ...nonGrp]);
+        setRoster([...grpInAllow, ...nonGrp].sort((a, b) => a.name.localeCompare(b.name)));
       } else {
         setRoster(allMembers);
       }
@@ -3037,6 +3044,9 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                         CLEAR
                       </button>
                     </div>
+                    <div className="text-center mb-3 font-mono text-[11px] text-yellow-100/40">
+                      👑 tap to pick a dealer
+                    </div>
                     <div className="max-w-md mx-auto space-y-2 max-h-80 overflow-y-auto pr-1">
                       {roster.map((player) => {
                         const playing = playingTonight.has(player.name);
@@ -3405,7 +3415,9 @@ function PlayerPickerModal({ allPlayers, alreadyAdded, onAdd, onClose }) {
   const [selected, setSelected] = useState(new Set());
   const [newName, setNewName] = useState('');
 
-  const available = allPlayers.filter((p) => !alreadyAdded.includes(p.name));
+  const available = allPlayers
+    .filter((p) => !alreadyAdded.includes(p.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const toggle = (name) => {
     setSelected((prev) => {
