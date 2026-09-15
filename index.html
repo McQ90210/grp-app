@@ -1220,6 +1220,39 @@ function slugifyName(name) {
   return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+// Fisher-Yates. Used by the seat draw (and anywhere else that needs an
+// unbiased shuffle rather than Array.sort(() => Math.random() - 0.5),
+// which is neither unbiased nor a true shuffle).
+function shuffleArray(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Standalone clip-with-TTS-fallback, for use outside PokerTimerMain (which
+// has its own voiceEnabled-aware speakClip/speakClipQueue). The seat draw
+// runs during setup, before that component exists, and always wants voice
+// — there's no mute toggle to check yet, only the modal's own skip button.
+function seatDrawSpeak(key, fallbackText) {
+  return new Promise((resolve) => {
+    playVoiceClip(key).then(resolve, () => {
+      if (!fallbackText || typeof window === 'undefined' || !window.speechSynthesis) { resolve(); return; }
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(fallbackText);
+      u.rate = 0.95;
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      u.onend = finish;
+      u.onerror = finish;
+      window.speechSynthesis.speak(u);
+      setTimeout(finish, 4000);
+    });
+  });
+}
+
 // Round-2-2026 was the first season with the new scoring engine. Games dated
 // on/after this cutoff use v2 rules; earlier games keep v1 so re-saving an
 // older game from EditGameModal doesn't silently retro-score it.
@@ -1957,6 +1990,385 @@ function LeagueContextScreen({ onConfirm, onBack, fbUser }) {
   );
 }
 
+// ============ SEAT DRAW ============
+// Assigns confirmed attendees to tables/seats. Vegas-style dramatic
+// reveal (one seat at a time, voiced), a password lock gating redraw
+// and manual edits so nothing moves from a stray tap, and drag-and-drop
+// once unlocked. Runs from the wizard's WHO'S PLAYING step, after
+// dealers are picked there — see the "seat draw" comments in
+// SetupWizard for how it's wired in.
+const SEAT_DRAW_PASSWORD = 'Poker123!';
+const SEAT_DRAW_MAX_PER_TABLE = 9;
+
+function seatDrawTableCount(n) {
+  return Math.max(1, Math.ceil(n / SEAT_DRAW_MAX_PER_TABLE));
+}
+
+function seatDrawKey(s) { return `${s.table}-${s.seat}`; }
+
+// Balanced split (e.g. 13 -> 7+6, not 9+4), dealers pinned to seat 1 at
+// each table, everyone else shuffled into the rest.
+function buildSeatDraw(players, dealerNames, tableCount) {
+  const pinned = Object.values(dealerNames);
+  const others = shuffleArray(players.filter((n) => !pinned.includes(n)));
+  const base = Math.floor(players.length / tableCount);
+  const remainder = players.length % tableCount;
+  const sizes = [];
+  for (let t = 0; t < tableCount; t++) sizes.push(base + (t < remainder ? 1 : 0));
+  const result = [];
+  for (let t = 1; t <= tableCount; t++) {
+    result.push({ table: t, seat: 1, name: dealerNames[t] || null, isDealer: true });
+  }
+  let cursor = 0;
+  for (let t = 1; t <= tableCount; t++) {
+    const seatCount = Math.max(0, sizes[t - 1] - 1);
+    for (let s = 0; s < seatCount; s++) {
+      result.push({ table: t, seat: 2 + s, name: others[cursor] || null, isDealer: false });
+      cursor++;
+    }
+  }
+  return result;
+}
+
+function SeatDrawModal({ players, initialDealers, rosterNames, onConfirm, onCancel }) {
+  const tableCount = seatDrawTableCount(players.length);
+
+  const [dealerNames, setDealerNames] = useState(() => {
+    const m = {};
+    initialDealers.forEach((name, i) => { m[i + 1] = name; });
+    return m;
+  });
+  const [seats, setSeats] = useState(() => buildSeatDraw(players, dealerNames, tableCount));
+
+  const [locked, setLocked] = useState(true);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwValue, setPwValue] = useState('');
+  const [pwError, setPwError] = useState(false);
+
+  const [revealing, setRevealing] = useState(false);
+  const [revealedSeats, setRevealedSeats] = useState(() => new Set());
+  const [callingKey, setCallingKey] = useState(null);
+  const [lastRevealedKey, setLastRevealedKey] = useState(null);
+  const skipRef = useRef(false);
+
+  const [addingKey, setAddingKey] = useState(null);
+  const [addValue, setAddValue] = useState('');
+  const [addError, setAddError] = useState(false);
+
+  const dragKeyRef = useRef(null);
+  const dragDealerTableRef = useRef(null);
+
+  const runReveal = useCallback(async (seatList) => {
+    skipRef.current = false;
+    setRevealing(true);
+    setRevealedSeats(new Set());
+    setCallingKey(null);
+    setLastRevealedKey(null);
+
+    for (let t = 1; t <= tableCount; t++) {
+      if (!skipRef.current) await seatDrawSpeak(`table-${t}`, `Table ${t}`);
+      const rows = seatList.filter((s) => s.table === t).sort((a, b) => a.seat - b.seat);
+      for (const s of rows) {
+        const key = seatDrawKey(s);
+        if (skipRef.current) {
+          setRevealedSeats((prev) => new Set(prev).add(key));
+          continue;
+        }
+        setLastRevealedKey(null);
+        setCallingKey(key);
+        await seatDrawSpeak(`seat-${s.seat}`, `Seat ${s.seat}`);
+        if (s.isDealer && !skipRef.current) await seatDrawSpeak('dealer', 'dealer');
+        if (!skipRef.current) await new Promise((r) => setTimeout(r, 200));
+        if (!skipRef.current) await seatDrawSpeak(`name-${slugifyName(s.name)}`, s.name);
+        setRevealedSeats((prev) => new Set(prev).add(key));
+        setCallingKey(null);
+        setLastRevealedKey(key);
+        await new Promise((r) => setTimeout(r, skipRef.current ? 0 : 450));
+      }
+    }
+
+    setRevealing(false);
+    setCallingKey(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tableCount]);
+
+  useEffect(() => {
+    runReveal(seats);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const redraw = () => {
+    if (locked || revealing) return;
+    const next = buildSeatDraw(players, dealerNames, tableCount);
+    setSeats(next);
+    runReveal(next);
+  };
+
+  const skipReveal = () => {
+    skipRef.current = true;
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  };
+
+  const tryUnlock = () => {
+    if (pwValue === SEAT_DRAW_PASSWORD) {
+      setLocked(false); setPwOpen(false); setPwError(false); setPwValue('');
+    } else {
+      setPwError(true); setPwValue('');
+    }
+  };
+
+  const updateSeat = (key, patch) => {
+    setSeats((prev) => prev.map((s) => (seatDrawKey(s) === key ? { ...s, ...patch } : s)));
+  };
+
+  const removeFromSeat = (key) => updateSeat(key, { name: null });
+
+  const startAdd = (key) => { setAddingKey(key); setAddValue(''); setAddError(false); };
+
+  const confirmAdd = (key) => {
+    const typed = addValue.trim();
+    const seated = new Set(seats.filter((s) => s.name).map((s) => s.name));
+    const match = rosterNames.find((n) => n.toLowerCase() === typed.toLowerCase() && !seated.has(n));
+    if (!typed || !match) { setAddError(true); return; }
+    updateSeat(key, { name: match });
+    setAddingKey(null);
+  };
+
+  const addSeatToTable = (t) => {
+    const maxSeat = Math.max(...seats.filter((s) => s.table === t).map((s) => s.seat));
+    setSeats((prev) => [...prev, { table: t, seat: maxSeat + 1, name: null, isDealer: false }]);
+  };
+
+  const onDropOnSeat = (targetKey, targetTable, isTargetDealer) => {
+    if (dragDealerTableRef.current !== null) {
+      const fromTable = dragDealerTableRef.current;
+      dragDealerTableRef.current = null;
+      if (fromTable !== targetTable || isTargetDealer) return;
+      setSeats((prev) => {
+        const next = prev.map((s) => ({ ...s }));
+        const dealerSeat = next.find((s) => s.table === fromTable && s.isDealer);
+        const target = next.find((s) => seatDrawKey(s) === targetKey);
+        const tmp = dealerSeat.name;
+        dealerSeat.name = target.name;
+        target.name = tmp;
+        setDealerNames((dn) => ({ ...dn, [fromTable]: dealerSeat.name }));
+        return next;
+      });
+      return;
+    }
+    const dragKey = dragKeyRef.current;
+    dragKeyRef.current = null;
+    if (!dragKey || dragKey === targetKey || isTargetDealer) return;
+    setSeats((prev) => {
+      const next = prev.map((s) => ({ ...s }));
+      const a = next.find((s) => seatDrawKey(s) === dragKey);
+      const b = next.find((s) => seatDrawKey(s) === targetKey);
+      if (!a || !b || a.isDealer) return prev;
+      const an = a.name;
+      a.name = b.name;
+      b.name = an;
+      return next;
+    });
+  };
+
+  const handleConfirm = () => {
+    if (revealing) return;
+    onConfirm(seats);
+  };
+
+  const interactive = !locked && !revealing;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[92vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-1">
+          <div className="font-mono text-xs text-yellow-500/60 tracking-widest">
+            {revealing ? 'DEALING...' : 'DEALT'}
+          </div>
+          {!revealing && (
+            <div>
+              {locked ? (
+                pwOpen ? (
+                  <div className="flex items-center gap-1.5">
+                    {pwError && <span className="text-[10px] text-red-400 font-mono">wrong password</span>}
+                    <input
+                      type="password"
+                      value={pwValue}
+                      onChange={(e) => { setPwValue(e.target.value); setPwError(false); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') tryUnlock(); if (e.key === 'Escape') setPwOpen(false); }}
+                      autoFocus
+                      placeholder="password"
+                      className="w-28 px-2 py-1 rounded bg-black/40 border border-yellow-500/30 text-yellow-50 text-xs font-mono focus:outline-none focus:border-yellow-500/60"
+                    />
+                    <button onClick={tryUnlock} className="px-2 py-1 rounded bg-yellow-500/15 border border-yellow-500/40 text-yellow-300 text-xs font-mono">UNLOCK</button>
+                  </div>
+                ) : (
+                  <button onClick={() => { setPwOpen(true); setPwError(false); }} className="w-8 h-8 rounded-full bg-black/30 border border-yellow-500/30 text-yellow-100/60 flex items-center justify-center" title="Unlock">🔒</button>
+                )
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-emerald-300">unlocked</span>
+                  <button onClick={() => { setLocked(true); setPwOpen(false); setAddingKey(null); }} className="w-8 h-8 rounded-full bg-emerald-600/20 border border-emerald-400/50 text-emerald-200 flex items-center justify-center" title="Lock">🔓</button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="font-display text-3xl gold-text text-center mb-1">SEAT DRAW</div>
+        <div className="text-center font-mono text-xs text-yellow-100/40 mb-2">
+          {players.length} players &middot; {tableCount} table{tableCount === 1 ? '' : 's'} &middot; drawn at random
+        </div>
+        {revealing && (
+          <div className="text-center font-mono text-xs text-yellow-300 tracking-widest mb-3 min-h-[16px]">
+            {callingKey ? `Table ${callingKey.split('-')[0]} · Seat ${callingKey.split('-')[1]}...` : ''}
+          </div>
+        )}
+
+        <div className={`grid gap-4 mb-4 ${tableCount > 1 ? 'sm:grid-cols-2' : ''}`}>
+          {Array.from({ length: tableCount }, (_, i) => i + 1).map((t) => {
+            const rows = seats.filter((s) => s.table === t).sort((a, b) => a.seat - b.seat);
+            return (
+              <div key={t} className="rounded-2xl bg-gradient-to-br from-emerald-900/40 to-black/40 border border-yellow-500/10 p-4">
+                <div className="flex justify-between items-baseline mb-3">
+                  <div className="font-display text-xl gold-text">TABLE {t}</div>
+                  <div className="font-mono text-[11px] text-yellow-100/40">{rows.length} seats</div>
+                </div>
+                <div className="space-y-2">
+                  {rows.map((s) => {
+                    const key = seatDrawKey(s);
+                    if (revealing) {
+                      const isRevealed = revealedSeats.has(key);
+                      const isCalling = callingKey === key;
+                      return (
+                        <div key={key} className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
+                          isCalling ? 'border-yellow-400 bg-yellow-500/10' :
+                          isRevealed ? (key === lastRevealedKey ? 'border-emerald-400/60 bg-yellow-500/20' : 'border-emerald-500/20 bg-emerald-950/40') :
+                          'border-dashed border-yellow-500/15 bg-black/20'
+                        }`}>
+                          <span className="font-mono text-xs text-yellow-500 w-4 text-center">{s.seat}</span>
+                          <span className={`flex-1 text-sm ${isRevealed ? 'text-yellow-50' : 'text-yellow-100/20'}`}>
+                            {isRevealed ? s.name : (isCalling ? '...' : '—')}
+                          </span>
+                          {s.isDealer && isRevealed && (
+                            <span className="font-mono text-[9px] tracking-wide bg-yellow-500/20 border border-yellow-500/50 text-yellow-300 rounded-full px-2 py-0.5">DEALER</span>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    const isEmpty = s.name === null;
+                    if (isEmpty && addingKey === key && interactive) {
+                      const seated = new Set(seats.filter((x) => x.name).map((x) => x.name));
+                      const options = rosterNames.filter((n) => !seated.has(n));
+                      return (
+                        <div key={key} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-yellow-500/30 bg-black/20">
+                          <span className="font-mono text-xs text-yellow-500 w-4 text-center">{s.seat}</span>
+                          <div className="flex-1">
+                            <input
+                              type="text"
+                              list={`seat-draw-roster-${key}`}
+                              value={addValue}
+                              onChange={(e) => { setAddValue(e.target.value); setAddError(false); }}
+                              onKeyDown={(e) => { if (e.key === 'Enter') confirmAdd(key); }}
+                              autoFocus
+                              autoComplete="off"
+                              placeholder="Player name"
+                              className="w-full px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-xs font-mono focus:outline-none focus:border-yellow-500/50"
+                            />
+                            <datalist id={`seat-draw-roster-${key}`}>
+                              {options.map((n) => <option key={n} value={n} />)}
+                            </datalist>
+                            {addError && <div className="text-[10px] text-red-400 font-mono mt-0.5">Not on the roster &mdash; pick an existing player</div>}
+                          </div>
+                          <button onClick={() => confirmAdd(key)} className="px-2 py-1 rounded bg-yellow-500/15 border border-yellow-500/40 text-yellow-300 text-xs font-mono">ADD</button>
+                        </div>
+                      );
+                    }
+                    if (isEmpty) {
+                      return (
+                        <div
+                          key={key}
+                          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-yellow-500/20 bg-black/20"
+                          onDragOver={interactive ? (e) => e.preventDefault() : undefined}
+                          onDrop={interactive ? (e) => { e.preventDefault(); onDropOnSeat(key, t, false); } : undefined}
+                        >
+                          <span className="font-mono text-xs text-yellow-500 w-4 text-center">{s.seat}</span>
+                          <span className="flex-1 text-sm text-yellow-100/20">&mdash; empty &mdash;</span>
+                          {interactive && (
+                            <button onClick={() => startAdd(key)} className="px-2 py-1 rounded bg-yellow-500/15 border border-yellow-500/40 text-yellow-300 text-xs font-mono">+ ADD</button>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    const rowDraggable = interactive && !s.isDealer;
+                    return (
+                      <div
+                        key={key}
+                        draggable={rowDraggable}
+                        onDragStart={rowDraggable ? () => { dragKeyRef.current = key; } : undefined}
+                        onDragOver={interactive ? (e) => e.preventDefault() : undefined}
+                        onDrop={interactive ? (e) => { e.preventDefault(); onDropOnSeat(key, t, s.isDealer); } : undefined}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-500/20 bg-emerald-950/30 ${rowDraggable ? 'cursor-grab' : ''}`}
+                      >
+                        <span className="font-mono text-xs text-yellow-500 w-4 text-center">{s.seat}</span>
+                        <span className="flex-1 text-sm text-yellow-50">{s.name}</span>
+                        {s.isDealer && (
+                          <span
+                            draggable={interactive}
+                            onDragStart={interactive ? (e) => { e.stopPropagation(); dragDealerTableRef.current = t; } : undefined}
+                            title="Drag onto another seat at this table to reassign"
+                            className={`font-mono text-[9px] tracking-wide bg-yellow-500/20 border border-yellow-500/50 text-yellow-300 rounded-full px-2 py-0.5 ${interactive ? 'cursor-grab' : ''}`}
+                          >
+                            DEALER
+                          </span>
+                        )}
+                        {rowDraggable && (
+                          <>
+                            <button onClick={() => removeFromSeat(key)} title="Remove from seat" className="w-4 h-4 flex items-center justify-center text-yellow-100/40 hover:text-red-400 text-xs">&#10005;</button>
+                            <span className="text-yellow-100/20 text-xs">&#8942;&#8942;</span>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {interactive && (
+                  <button onClick={() => addSeatToTable(t)} className="w-full mt-2 py-1.5 rounded-lg border border-yellow-500/30 text-yellow-300 font-mono text-xs hover:bg-yellow-500/10">
+                    + ADD SEAT
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex gap-3">
+          <button onClick={onCancel} disabled={revealing} className="px-6 py-3 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm hover:border-yellow-500/50 disabled:opacity-30">
+            CANCEL
+          </button>
+          <button onClick={redraw} disabled={locked || revealing} className="px-6 py-3 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm hover:border-yellow-500/50 disabled:opacity-30">
+            REDRAW
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={revealing}
+            className="flex-1 px-6 py-3 rounded-full font-display text-xl text-black disabled:opacity-30"
+            style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
+          >
+            CONFIRM &amp; CONTINUE
+          </button>
+        </div>
+        {revealing && (
+          <div className="text-center mt-3">
+            <button onClick={skipReveal} className="text-yellow-100/40 hover:text-yellow-100/70 font-mono text-xs underline">SKIP TO END</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============ SETUP WIZARD ============
 function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext = null, onBack, fbUser }) {
   const isFinal = leagueContext?.isFinal === true;
@@ -2018,6 +2430,17 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   // the level-5 cutoff). See generateVegasBlindStructure.
   const [addOnsEnabled, setAddOnsEnabled] = useState(false);
   const [rosterLoaded, setRosterLoaded] = useState(false);
+  // Seat draw — dealer picks (names) made inline on the WHO'S PLAYING
+  // step, one per table (seatDrawTableCount). showSeatDraw opens the
+  // modal in place of the normal NEXT action for that step; seating is
+  // the confirmed result, carried through to onStart once set.
+  const [dealers, setDealers] = useState(new Set());
+  const [showSeatDraw, setShowSeatDraw] = useState(false);
+  const [seating, setSeating] = useState(null);
+  // Shown only after tapping SEAT DRAW with too few dealers picked — not
+  // a persistent status line, and the button itself stays enabled rather
+  // than disabled (see the bottom-nav onClick below).
+  const [showDealerWarning, setShowDealerWarning] = useState(false);
 
   const readHrRegulars = () => {
     try {
@@ -2214,6 +2637,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
         next.delete(name);
         setBuyInsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
         setSubsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
+        setDealers((d) => { if (!d.has(name)) return d; const n = new Set(d); n.delete(name); return n; });
       } else {
         next.add(name);
         setBuyInsPaidByName((m) => ({ ...m, [name]: false }));
@@ -2246,6 +2670,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     });
     setBuyInsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
     setSubsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
+    setDealers((d) => { if (!d.has(name)) return d; const n = new Set(d); n.delete(name); return n; });
     if (gameType === 'highrollers') {
       setHrRegulars((prev) => prev.filter((n) => n !== name));
     }
@@ -2263,6 +2688,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     setPlayingTonight(new Set());
     setBuyInsPaidByName({});
     setSubsPaidByName({});
+    setDealers(new Set());
   };
 
   const playersArray = roster.filter((p) => playingTonight.has(p.name));
@@ -2273,6 +2699,19 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     if (step === 2) return playersArray.length >= 2;
     if (step === 3) return parseInt(duration) >= 30;
     return true;
+  };
+
+  // SEAT DRAW replaces NEXT on the players step. One dealer per table is
+  // required, but the button itself stays enabled — tapping it with too
+  // few picked shows a warning instead of leaving it permanently
+  // disabled with a persistent message.
+  const handleSeatDrawTap = () => {
+    if (dealers.size < seatDrawTableCount(playersArray.length)) {
+      setShowDealerWarning(true);
+      return;
+    }
+    setShowDealerWarning(false);
+    setShowSeatDraw(true);
   };
 
   const finish = () => {
@@ -2335,6 +2774,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       // Vegas-only, default off (see the wizard toggle on the duration
       // step). Ignored for every other format.
       addOnsEnabled: format === 'vegas' && addOnsEnabled,
+      // Seat draw result — [{ table, seat, name, isDealer }, ...] — or
+      // null if this wizard run somehow bypassed the WHO'S PLAYING gate
+      // (shouldn't happen; canAdvance() requires it).
+      seating,
       // Per-attendee payment status captured during selection. Keyed by
       // displayName for now; SaveGameModal converts to PIDs at save time.
       buyInsPaidByName,
@@ -2627,6 +3070,34 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                               >
                                 {player.name}
                               </button>
+                              {playing && dealers.has(player.name) && (
+                                <span className="font-mono text-[9px] tracking-wide bg-yellow-500/20 border border-yellow-500/50 text-yellow-300 rounded-full px-2 py-0.5 shrink-0">DEALER</span>
+                              )}
+                              {playing && (() => {
+                                const isDealer = dealers.has(player.name);
+                                const atCap = dealers.size >= seatDrawTableCount(playersArray.length) && !isDealer;
+                                return (
+                                  <button
+                                    onClick={() => setDealers((d) => {
+                                      const next = new Set(d);
+                                      if (isDealer) next.delete(player.name);
+                                      else if (!atCap) next.add(player.name);
+                                      return next;
+                                    })}
+                                    disabled={atCap}
+                                    title={isDealer ? 'Remove as dealer' : (atCap ? 'Enough dealers picked already' : 'Pick as dealer')}
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center text-xs shrink-0 border transition-all ${
+                                      isDealer
+                                        ? 'bg-yellow-500/20 border-yellow-400'
+                                        : atCap
+                                        ? 'border-yellow-500/15 opacity-30 cursor-not-allowed grayscale'
+                                        : 'border-yellow-500/25 opacity-50 grayscale hover:opacity-100 hover:grayscale-0'
+                                    }`}
+                                  >
+                                    👑
+                                  </button>
+                                );
+                              })()}
                               <button
                                 onClick={() => removeFromRoster(player.name)}
                                 className="text-yellow-100/30 hover:text-red-400"
@@ -2852,6 +3323,13 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
           </div>
         </div>
 
+        {step === 2 && showDealerWarning && dealers.size < seatDrawTableCount(playersArray.length) && (
+          <div className="text-center mt-4 font-mono text-xs text-red-300/80">
+            {dealers.size === 0
+              ? (seatDrawTableCount(playersArray.length) === 1 ? '👑 Pick a dealer first' : '👑 Pick a dealer for each table first')
+              : '👑 Pick another dealer first'}
+          </div>
+        )}
         <div className="flex gap-3 mt-6">
           {step > 0 && (
             <button onClick={() => setStep(step - 1)} className="px-6 py-3 rounded-full bg-black/40 border border-yellow-500/20 text-yellow-100 font-mono text-sm hover:border-yellow-500/50 flex items-center gap-2">
@@ -2859,15 +3337,29 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
             </button>
           )}
           <button
-            onClick={step === 4 ? finish : () => setStep(step + 1)}
+            onClick={step === 4 ? finish : step === 2 ? handleSeatDrawTap : () => setStep(step + 1)}
             disabled={!canAdvance()}
             className="flex-1 px-6 py-3 rounded-full font-display text-xl text-black disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             style={{ background: 'linear-gradient(135deg, #f4d03f, #d4ac0d)' }}
           >
-            {step === 4 ? 'START TOURNAMENT' : <>NEXT <ChevronRight size={18} /></>}
+            {step === 4 ? 'START TOURNAMENT' : step === 2 ? <>SEAT DRAW <ChevronRight size={18} /></> : <>NEXT <ChevronRight size={18} /></>}
           </button>
         </div>
       </div>
+
+      {showSeatDraw && (
+        <SeatDrawModal
+          players={playersArray.map((p) => p.name)}
+          initialDealers={Array.from(dealers)}
+          rosterNames={allGrpPlayers.map((p) => p.name)}
+          onCancel={() => setShowSeatDraw(false)}
+          onConfirm={(result) => {
+            setSeating(result);
+            setShowSeatDraw(false);
+            setStep(step + 1);
+          }}
+        />
+      )}
 
       {showPlayerPicker && (
         <PlayerPickerModal
@@ -3694,6 +4186,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         rebuyCutoffLevel: config.rebuyCutoffLevel ?? null,
         rebuyCutoffLevelNumber: config.rebuyCutoffLevelNumber ?? null,
         addOnsEnabled: config.addOnsEnabled || false,
+        seating: config.seating || null,
       },
       levels,
       players,
@@ -10889,6 +11382,7 @@ function App() {
       rebuyCutoffLevel: oc.rebuyCutoffLevel ?? null,
       rebuyCutoffLevelNumber: oc.rebuyCutoffLevelNumber ?? null,
       addOnsEnabled: oc.addOnsEnabled || false,
+      seating: oc.seating || null,
       gameType: liveResume.gameType || 'league',
       leagueContext: liveResume.leagueContext || null,
       levels: lvls,

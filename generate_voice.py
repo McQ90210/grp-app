@@ -21,8 +21,8 @@ RUN:
   python3 generate_voice.py
 
 OUTPUT:
-  Creates ./sounds/voice/*.mp3 — one file per phrase. About 104 files,
-  ~5MB total. Takes ~3-5 minutes to generate.
+  Creates ./sounds/voice/*.mp3 — one file per phrase. About 149 files,
+  ~7MB total. Takes ~5-7 minutes to generate.
 """
 
 import os
@@ -75,6 +75,21 @@ STATIC = {
     "final-3":    "We are down to the final three!",
     "complete":   "Tournament complete. Well played.",
     "voice-ready":"Voice ready.",
+    # Seat draw — played in sequence via speakClipQueue, e.g.
+    # table-1, seat-1, dealer, name-beans for "Table 1, Seat 1, dealer... Beans."
+    "table-1":    "Table 1.",
+    "table-2":    "Table 2.",
+    "table-3":    "Table 3.",
+    "seat-1":     "Seat 1.",
+    "seat-2":     "Seat 2.",
+    "seat-3":     "Seat 3.",
+    "seat-4":     "Seat 4.",
+    "seat-5":     "Seat 5.",
+    "seat-6":     "Seat 6.",
+    "seat-7":     "Seat 7.",
+    "seat-8":     "Seat 8.",
+    "seat-9":     "Seat 9.",
+    "dealer":     "Dealer...",
 }
 
 
@@ -143,6 +158,13 @@ def main():
     print("\n=== Congratulations ===")
     for name in PLAYERS:
         generate(f"Congratulations, {name}!", f"congrats-{slugify(name)}")
+        time.sleep(0.5)
+
+    # Per-player bare name — for the seat draw, chained after table/seat/
+    # dealer clips via speakClipQueue rather than embedded in a phrase.
+    print("\n=== Bare names (seat draw) ===")
+    for name in PLAYERS:
+        generate(f"{name}.", f"name-{slugify(name)}")
         time.sleep(0.5)
 
     print(f"\n✅ Done. Files in {OUT.absolute()}/")
