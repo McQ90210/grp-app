@@ -103,6 +103,27 @@ def slugify(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
+# Toby gets his own voice and his own nickname in every clip that says
+# his name — everything else about him (filenames, which the app looks
+# up via slugifyName(player.name)) stays keyed on the real roster name
+# "Toby", only the TEXT and VOICE change.
+TOBY_VOICE_ID = "9lHjugDhwqoxA5MhX0az"
+
+
+def is_toby(name):
+    return name == "Toby"
+
+
+def display_name(name):
+    """The name as spoken in a clip — everyone gets their own name,
+    Toby gets his nickname."""
+    return "Mr Toby" if is_toby(name) else name
+
+
+def voice_id_for(name):
+    return TOBY_VOICE_ID if is_toby(name) else VOICE_ID
+
+
 # Default delivery — used for everything except the seat draw (see
 # EXCITED_SETTINGS below). Lower stability + higher style = more
 # expressive/varied delivery; this is the flatter, more consistent end
@@ -126,14 +147,14 @@ EXCITED_SETTINGS = {
 }
 
 
-def generate(text, filename, voice_settings=None):
+def generate(text, filename, voice_settings=None, voice_id=None):
     """Call ElevenLabs API and save MP3 to disk."""
     path = OUT / f"{filename}.mp3"
     if path.exists():
         print(f"  ✓ skip (exists): {path}")
         return
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id or VOICE_ID}"
     headers = {
         "xi-api-key": API_KEY,
         "Content-Type": "application/json",
@@ -171,22 +192,27 @@ def main():
         generate(text, key, voice_settings=EXCITED_SETTINGS)
         time.sleep(0.5)
 
-    # Per-player elimination phrases
+    # Per-player elimination phrases. Toby gets a fully custom line
+    # instead of the template, in his own voice.
     print("\n=== Eliminations (Goodbye, X) ===")
     for name in PLAYERS:
-        generate(f"Goodbye, {name}.", f"goodbye-{slugify(name)}")
+        text = (
+            "Goodbye Mr Toby, I see you very very soon. Love you long time."
+            if is_toby(name) else f"Goodbye, {name}."
+        )
+        generate(text, f"goodbye-{slugify(name)}", voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     # Per-player winner announcement
     print("\n=== Winner announcements ===")
     for name in PLAYERS:
-        generate(f"And the winner is... {name}!", f"winner-{slugify(name)}")
+        generate(f"And the winner is... {display_name(name)}!", f"winner-{slugify(name)}", voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     # Per-player congratulations
     print("\n=== Congratulations ===")
     for name in PLAYERS:
-        generate(f"Congratulations, {name}!", f"congrats-{slugify(name)}")
+        generate(f"Congratulations, {display_name(name)}!", f"congrats-{slugify(name)}", voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     # Per-player bare name — for the seat draw, chained after table/seat/
@@ -194,7 +220,7 @@ def main():
     # Excited delivery, matching the table/seat/dealer clips above.
     print("\n=== Bare names (seat draw) ===")
     for name in PLAYERS:
-        generate(f"{name}!", f"name-{slugify(name)}", voice_settings=EXCITED_SETTINGS)
+        generate(f"{display_name(name)}!", f"name-{slugify(name)}", voice_settings=EXCITED_SETTINGS, voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     print(f"\n✅ Done. Files in {OUT.absolute()}/")
