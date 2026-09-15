@@ -118,6 +118,23 @@ def voice_id_for(name):
     return TOBY_VOICE_ID if is_toby(name) else VOICE_ID
 
 
+# Mr Toby's voice needs its own settings regardless of category — a low
+# "style" value (what DEFAULT_SETTINGS and EXCITED_SETTINGS both use,
+# tuned for Adam) mutes how much of a voice's own natural character
+# comes through, which is why his clips sounded like a flattened
+# version of what ElevenLabs' own preview plays. Style pushed near max
+# and stability dropped to let the accent come through consistently.
+def voice_settings_for(name, base_settings):
+    if not is_toby(name):
+        return base_settings
+    return {
+        "stability": 0.2,
+        "similarity_boost": 0.75,
+        "style": 1.0,
+        "use_speaker_boost": True,
+    }
+
+
 # Default delivery — used for everything except the seat draw (see
 # EXCITED_SETTINGS below). Lower stability + higher style = more
 # expressive/varied delivery; this is the flatter, more consistent end
@@ -194,28 +211,33 @@ def main():
             "Goodbye Mr Toby, I see you very very soon. Love you long time."
             if is_toby(name) else f"Goodbye, {name}."
         )
-        generate(text, f"goodbye-{slugify(name)}", voice_id=voice_id_for(name))
+        generate(text, f"goodbye-{slugify(name)}", voice_settings=voice_settings_for(name, DEFAULT_SETTINGS), voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     # Per-player winner announcement
     print("\n=== Winner announcements ===")
     for name in PLAYERS:
-        generate(f"And the winner is... {name}!", f"winner-{slugify(name)}", voice_id=voice_id_for(name))
+        generate(f"And the winner is... {name}!", f"winner-{slugify(name)}", voice_settings=voice_settings_for(name, DEFAULT_SETTINGS), voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     # Per-player congratulations
     print("\n=== Congratulations ===")
     for name in PLAYERS:
-        generate(f"Congratulations, {name}!", f"congrats-{slugify(name)}", voice_id=voice_id_for(name))
+        generate(f"Congratulations, {name}!", f"congrats-{slugify(name)}", voice_settings=voice_settings_for(name, DEFAULT_SETTINGS), voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     # Per-player rebuy announcement (app plays this on every rebuy). Not
     # previously tracked by this script — most already exist from an
     # earlier ad-hoc pass, this just fills in any gaps (Ben never had
-    # one) and keeps everyone on the right voice going forward.
+    # one) and keeps everyone on the right voice going forward. Mr Toby
+    # gets his own tag line, same running joke as his goodbye.
     print("\n=== Rebuys ===")
     for name in PLAYERS:
-        generate(f"Rebuy for {name}.", f"rebuy-{slugify(name)}", voice_id=voice_id_for(name))
+        text = (
+            "Rebuy for Mr Toby. Love you longtime!"
+            if is_toby(name) else f"Rebuy for {name}."
+        )
+        generate(text, f"rebuy-{slugify(name)}", voice_settings=voice_settings_for(name, DEFAULT_SETTINGS), voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     # Per-player bare name — for the seat draw, chained after table/seat/
@@ -223,7 +245,7 @@ def main():
     # Excited delivery, matching the table/seat/dealer clips above.
     print("\n=== Bare names (seat draw) ===")
     for name in PLAYERS:
-        generate(f"{name}!", f"name-{slugify(name)}", voice_settings=EXCITED_SETTINGS, voice_id=voice_id_for(name))
+        generate(f"{name}!", f"name-{slugify(name)}", voice_settings=voice_settings_for(name, EXCITED_SETTINGS), voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     print(f"\n✅ Done. Files in {OUT.absolute()}/")
