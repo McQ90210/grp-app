@@ -11,10 +11,10 @@ A Progressive Web App for the **Greene Room Poker** league in Berkhamsted. Publi
 **Live URL**: https://mcq90210.github.io/grp-app/
 **Repo**: https://github.com/McQ90210/grp-app
 **Hosting**: GitHub Pages via `.github/workflows/pages.yml` (actions/deploy-pages; Settings → Pages → Source = "GitHub Actions"). The legacy "Deploy from a branch" mode was retired after it repeatedly wedged in `deployment_queued`.
-**Current version**: v8.41 (see `sw.js` `CACHE_NAME` for what's deployed)
-**Cloud Functions**: deployed in `europe-west2`, Node 22 — `dailyResultsEmail` (cron 09:00 UK), `resendLatestResults`, `resendLatestHRResults`, `sendTestHRResults`, `auditGame`, `applyGamePatch` (whitelisted one-off game repairs incl. `setLeagueMoney`/`setPrizePool`), `migrateSeason` (break-glass — no UI), `wipeSimData`, `simulateGames`
+**Current version**: v8.45 (see `sw.js` `CACHE_NAME` for what's deployed)
+**Cloud Functions**: deployed in `europe-west2`, Node 22 — `dailyResultsEmail` (cron 09:00 UK), `resendLatestResults`, `resendLatestHRResults`, `sendTestResults`, `sendTestHRResults`, `auditGame`, `applyGamePatch` (whitelisted one-off game repairs incl. `setLeagueMoney`/`setPrizePool`), `migrateSeason` (break-glass — no UI), `wipeSimData`, `simulateGames`
 
-### State as of last session (2026-07-04)
+### State as of last session (2026-08-06)
 
 - ✅ Season **2026-r2** active ("2026 — Round 2", 7 games: 6 regular + Dec final), v2 scoring rules live. R2 G1 played 2026-07-01, audited + patched (leagueMoney 0 that night, first-out = Duck, Cactus May-carryover bounty).
 - ✅ **2026-r1 marked complete** — rollover now auto-flips the previous season's stored status (v7.91). R1 G6 (June final, 2026-06-05) was played and recorded: 12 players, top-4 paid from a £590 pot (£300/£170/£80/£40), Beans won. Its `attendees` array had been left empty (saved via an edit path that only set finishOrder); backfilled from finishOrder on 2026-07-13. Fully reconciled.
@@ -22,8 +22,12 @@ A Progressive Web App for the **Greene Room Poker** league in Berkhamsted. Publi
 - ✅ Winner overlay: **auto-saves the game** on appearance (silent SaveGameModal instance; falls back to a manual button for test mode / signed-out / resume-inferred winners / failure), two-column layout with UPDATED STANDINGS + per-player narrative breakdowns (place, KO victims by name, bounty counts, first-out).
 - ✅ New-player registration modal (birthday + email) fires when a brand-new name is added in the wizard or as a late entry — creates the Firestore player doc immediately so the birthday bounty applies from that game.
 - ✅ Subs Ledger redesigned (aggregate OUTSTANDING view + upfront chips + collapsible per-game grid, plain-text cells); paid-for-round toggles confirm in both directions.
+- ✅ **Payouts now split `pot − leagueMoney`** (v8.45) at all three sites — timer PAYOUTS panel, winner overlay, SaveGameModal seed. Previously they ran ~10% high on league games and got trimmed by hand. "POT" still shows the raw pot; "PRIZE POOL" shows the payable pool with a `£X pot − £Y league money` note.
+- ✅ **Uploaded custom sounds play again** (v8.43/v8.44) — they route through an `HTMLAudioElement` (`playAudioUrl()`) instead of Web Audio `fetch` + `decodeAudioData`, which needed a CORS policy the `gr-poker` Storage bucket doesn't have. The wizard's 🎵 preview also now enables on `customSoundUrl`, not just a library sound.
 - ⚠️ **GitHub Pages deploys flake often** ("Deployment failed, try again later" at the deploy step, ~50% some evenings). Remedy: empty commit + push again, retry until success. The Actions workflow itself is fine.
 - ⏳ Next league game: R2 G2, early August 2026.
+
+> **Handover note (2026-09-15).** Development moved off the Mac to a Windows PC and a different Claude account. See "Working environment" below — in particular, `grp-app.jsx` and the build sandbox described in older revisions of this file **no longer exist**, and `index.html` is now edited directly.
 
 ### Two game modes
 - **League** — the formal monthly league with seasons, points, bounties, finals
@@ -47,7 +51,7 @@ Deliberately simple — no build system on the deployed side.
 - **PWA** — service worker (`sw.js`), web manifest (`manifest.json`), installable
 - **No bundler, no npm install required to run** — everything resolves at runtime via CDN
 
-The single `index.html` is self-contained: the JSX source is inlined inside a `<script type="text/babel">` block. To rebuild it locally we run a sed/python pipeline on `grp-app.jsx` (see Build pipeline below).
+The single `index.html` is self-contained: the JSX source is inlined inside a `<script type="text/babel">` block and compiled in the browser on every page load. It is edited in place — there is no separate source file and no build step (see Build pipeline below).
 
 Why this architecture: zero-tooling deploys (just push files to GitHub Pages), simple for one-person maintenance, fast to iterate on without a Node build.
 
@@ -75,60 +79,49 @@ grp-app/                           # repo root
     └── logo-02.svg                # chip mark only (used as app icon source)
 ```
 
-**Source-of-truth file** (NOT in the deployed repo, lives in build sandbox):
-`/mnt/user-data/outputs/grp-app.jsx` — the canonical React source. `index.html` is rebuilt from this.
+**`index.html` is the source of truth.** Edit it directly.
 
-**Build sandbox layout** (`/home/claude/grp-app/`):
-```
-app.jsx              # grp-app.jsx with imports stripped
-combined.jsx         # icons.jsx + app.jsx with hooks destructure prepended
-icons.jsx            # SVG icon components inlined as React fns
-index.html           # final assembled output
-firebase-init.js, sw.js, manifest.json, import-data.json  # deployed files
-logos/, icon-*.png   # assets
-```
+Earlier revisions of this file described a canonical `grp-app.jsx` at `/mnt/user-data/outputs/` plus a sed/python assembly pipeline in a `/home/claude/grp-app/` sandbox. That sandbox belonged to the original Claude.ai chat and **is gone** — the `.jsx` was never in the repo and no copy survives. Every commit from v8.43 onward is a surgical edit to the inlined JSX inside `index.html`, and that is the workflow now. Don't go looking for the `.jsx`, and don't try to regenerate `index.html` from one.
 
 ---
 
 ## Build / deploy pipeline
 
-The deployed `index.html` is *generated* from `grp-app.jsx`. Steps:
+There is no build step. The edit-to-live loop is:
 
-1. Edit `grp-app.jsx` (the master source).
-2. Strip the top 2 lines (the `import React...` and blank line, which the in-browser Babel can't resolve).
-3. Replace `export default function App` with `function App`.
-4. Swap `window.storage.get/set` calls (legacy from Claude artefacts) with direct `localStorage.getItem/setItem`.
-5. Prepend a hooks destructure (`const { useState, useEffect, useRef, useCallback } = React;`) and the inline icon shim component.
-6. Append `const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<App />);`.
-7. Inject the combined JSX into the HTML template inside `<script type="text/babel">`.
-8. Bump `CACHE_NAME` in `sw.js` to the new version (e.g. `gr-poker-v7.8`) — this invalidates the old cache on phones.
-9. Zip everything for the user to download and drag-drop into the GitHub repo.
+1. Edit the JSX inline in `index.html` (inside the `<script type="text/babel">` block).
+2. Bump `CACHE_NAME` in `sw.js` to the new version (e.g. `gr-poker-v8.46`) — this is what invalidates the old cache on phones. **Every user-visible change needs this**, or installed PWAs keep serving the old bundle.
+3. Commit and push to `main`.
+4. The Pages action (`.github/workflows/pages.yml`) deploys the repo root as-is.
+5. On the phone: force-close and reopen to pick up the new service worker. If the cache is stubborn, long-press app icon → App info → Storage → **Clear cache** (NOT "Clear storage" — that wipes localStorage).
 
-The build script is roughly:
+Because Babel compiles the JSX **in the browser at load time**, a syntax error doesn't fail a build — it ships and the app renders a blank screen. There is no compile check running anywhere in CI. So: after editing, load the page locally before pushing.
 
 ```bash
-sed '1,2d' /mnt/user-data/outputs/grp-app.jsx > app.jsx
-sed -i 's/export default function App/function App/' app.jsx
-sed -i 's|await window\.storage\.get(.poker-roster.)|({ value: localStorage.getItem("poker-roster") })|' app.jsx
-sed -i 's|await window\.storage\.set(.poker-roster., JSON\.stringify(roster))|localStorage.setItem("poker-roster", JSON.stringify(roster))|' app.jsx
-{ echo "const { useState, useEffect, useRef, useCallback } = React;"; cat icons.jsx; cat app.jsx; \
-  echo "const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<App />);"; } > combined.jsx
-# then inject into index.html template via Python str.replace
-sed -i 's/gr-poker-vX\.X/gr-poker-vY.Y/g' sw.js
+python -m http.server 8000
 ```
 
-Pre-flight: ALWAYS run a Babel compile check on `grp-app.jsx` before bundling:
+Then open http://localhost:8000 and check the console. Firebase, React and Tailwind all come from CDNs, so a local server behaves like production apart from the Pages path prefix.
 
-```bash
-node -e "
-const babel = require('@babel/core');
-const fs = require('fs');
-try { babel.transformSync(fs.readFileSync('/mnt/user-data/outputs/grp-app.jsx', 'utf8'), { presets: ['@babel/preset-react'] }); console.log('OK'); }
-catch (e) { console.error('Line', e.loc?.line, ':', e.message.split('\n')[0]); process.exit(1); }
-"
-```
+Two recurring hazards documented the hard way (see the v8.01–v8.31 changelog entry): **TDZ crashes** from a hook referencing state declared further down the component blanked the timer twice, and stale-closure bugs in the timer tick. Both present as a blank or frozen screen, not an error toast.
 
-**Deployment** (the user-side step): user downloads the bundled zip, replaces files in the GitHub repo via the web UI, the GitHub Pages action rebuilds, the phone needs a force-close + reopen to pick up the new service worker. If the cache is stubborn, long-press app icon → App info → Storage → **Clear cache** (NOT "Clear storage" — that wipes localStorage).
+---
+
+## Working environment
+
+Development moved from Mark's Mac to a **Windows PC** on 2026-09-15 (and to a different Claude account).
+
+- **Working copy**: `C:\Claude\grp-app`. A copy also sits at `I:\My Drive\CLAUDE\grp-app` — that was only the transport vehicle for the handover and is **not** a working clone (no commits, dead remote). Don't edit it.
+- **Repo name**: the canonical name is `McQ90210/grp-app`. `McQ90210/poker-timer` is an **old name that 301-redirects** — git operations through it still work, which makes it easy to think they're two repos. They aren't.
+- **Two GitHub accounts.** The repo belongs to the personal account **McQ90210**, but this PC's stored HTTPS credential is the work account `mark-flwls`, which gets `403 Permission to McQ90210/grp-app.git denied`. The remote therefore uses a dedicated SSH alias, matching the Mac:
+
+  ```
+  origin  git@github-mcq90210:McQ90210/grp-app.git
+  ```
+
+  backed by `~/.ssh/id_ed25519_mcq90210` and a `Host github-mcq90210` block in `~/.ssh/config`. If push ever 403s, check the remote hasn't been reset to HTTPS.
+- **Commits** are authored as `Mark McQueen <mark.mcqueen@flawlessai.com>` (matches all existing history), set repo-locally — there is no global `.gitconfig` on this PC.
+- **Missing toolchain**: no Node, npm, Firebase CLI or `gh` on the Windows PC. The app needs none of them (no build step, CDN everything) and Python 3.11 covers local preview. But **`functions/` work and `firebase deploy` are not possible from this machine** until Node + `firebase-tools` are installed.
 
 ---
 
@@ -324,7 +317,7 @@ Stored in `import-data.json` and Firestore. Slugs are lowercase, hyphenated.
 
 ## Component architecture
 
-Top-level: `App` (in `grp-app.jsx`) handles routing via `route` state.
+Top-level: `App` (in `index.html`) handles routing via `route` state.
 
 ```
 App (route state: 'home' | 'league-context' | 'setup' | 'timer' | 'league-info' | 'highrollers-info')
@@ -555,41 +548,33 @@ Each version is summarised here so a new session can pick up at the right point.
 - **v8.01–v8.31** (2026-07-03) — the LIVE STANDINGS side-rail saga: full league table with money→KO tiebreaks on the timer's right side (toggleable, portal-rendered, scrolls with the page), click-a-name OUT/REBUY shortcut (replaces the eliminate button when the rail is on), 1s delayed reveal, FLIP-animated single-slide rank climb (yellow flash on the scorer, 1s fade-out). Hard-won lessons encoded in the code comments: TDZ crashes from hooks referencing later-declared state blanked the timer twice (v8.11, v8.13); FLIP needs deps-gated effects (timer tick was resetting transforms mid-slide), per-variant ref namespaces (hidden mobile copy of the list was hijacking refs → measurements of display:none rows), inline-transition cleanup after slides (inline `transition: transform` overrides class-based colour fades), and a single shared `computeNaturalStandings()` for rail + animation (two sort implementations drifted and the climb overshot). Also: paid-for-round chip confirms both directions.
 - **v8.32–v8.41** (2026-07-03/04) — new-player registration modal (birthday + email → immediate player doc, bounty applies same game); winner overlay rebuilt: two-column layout (champion/payouts left, UPDATED STANDINGS right, one page, ✕ to exit), per-player narrative breakdowns (place, KO victims by name, bounty counts, first-out — no point arithmetic), **auto-save on winner** (silent SaveGameModal instance; manual button kept for test mode / signed-out / resume-inferred winners / failures); eliminated player always flashes red on the rail reveal.
 - **v8.42 + functions** (2026-07-04) — KO timestamps (`at: Date.now()` on every knockouts entry, carried to Firestore; null pre-v8.42) accumulating for the Christmas awards; **storyful Gemini recap**: prompt gets a pre-tallied match-facts block (per-knocker KO totals + victim lists, KNOCKOUT LEADER line at 3+, direction-proof bounty-claim wording, first-out, rebuys) with a STRICT ACCURACY clause — an earlier raw-log version made Gemini miscount and swap names; **`sendTestResults` callable** (league twin of `sendTestHRResults`: full pipeline, one recipient, [TEST] subject) — tested end-to-end against R2 G1, recap verified factually correct (River Dan's 6 KOs lead, £240 winner payout confirmed by Mark: £20 was moved from 1st to fund a 4th payout at save time).
+- **v8.43–v8.45** (2026-08-05/06) — **uploaded sounds fixed**: custom per-player sounds in Firebase Storage never played, because `playSound` fetched the download URL and decoded it through Web Audio (`fetch` + `decodeAudioData`), which reads raw bytes cross-origin and needs a CORS policy on the `gr-poker` bucket allowing `mcq90210.github.io` — there is none (uploads work because Firebase's *upload* endpoint sets its own permissive CORS; the download fetch doesn't). New `playAudioUrl()` streams the URL through an `HTMLAudioElement`, which needs no CORS because it never exposes samples to JS; the `customUrl` branch routes through it and falls back to the library `soundKey` if the element errors. No bucket change needed. v8.44 then enabled the wizard's 🎵 preview for those players (its disabled check only looked at `player.sound` and ignored `player.customSoundUrl`, though the onClick already passed the URL). **v8.45: payouts split `pot − leagueMoney`** at all three sites (timer PAYOUTS panel, winner overlay, SaveGameModal seed) — the 10% league money was tracked but never deducted, so suggested payouts ran ~10% high on league games and were trimmed by hand every time. `leagueMoney` = 10% of pot rounded to nearest £10 on regular league games, 0 for finals and High Rollers; subs stay separate and never touch payouts. "POT" still shows the raw pot; "PRIZE POOL" shows the payable pool with a `£X pot − £Y league money` note. SaveGameModal's default reuses the same computed value so seed and field can't drift.
 
 ---
 
 ## Transcript pointer
 
-The full conversation history for this build lives in:
-`/mnt/transcripts/2026-05-19-15-30-43-gr-poker-pwa-build.txt`
+Older revisions pointed at `/mnt/transcripts/2026-05-19-15-30-43-gr-poker-pwa-build.txt` for the full build history (scoring-rule decisions, the Mixkit sound walkthrough, Firebase setup, service-worker debugging). **That transcript is gone** — it lived in the original Claude.ai sandbox, which did not survive the 2026-09-15 handover.
 
-That transcript contains every iteration, including:
-- All the decisions about scoring rules and verification against spreadsheets
-- The Mixkit sound-download walkthrough
-- The Firebase setup walkthrough (project creation, rules, admin account)
-- The AirPlay-to-Mac casting discussion
-- Service worker caching debug cycles
-- The full grp-app.jsx source at multiple points
-
-If the user references something we did "before" that isn't covered in this CLAUDE.md, check the transcript.
+So this file plus `git log` are now the only history. If Mark references something done "before" that isn't covered here, ask rather than guess — and when the answer turns out to be load-bearing, write it into this file.
 
 ---
 
 ## Useful one-liners
 
-**Babel compile check**:
+**Serve locally** (Babel compiles in-browser, so this is the only syntax check there is):
 ```bash
-node -e "const b=require('@babel/core'); const fs=require('fs'); try{b.transformSync(fs.readFileSync('grp-app.jsx','utf8'),{presets:['@babel/preset-react']});console.log('OK')}catch(e){console.error('Line',e.loc?.line,':',e.message.split('\\n')[0]);process.exit(1)}"
+python -m http.server 8000
 ```
 
 **Find a function in the source**:
 ```bash
-grep -n "function ComponentName" grp-app.jsx
+grep -n "function ComponentName" index.html
 ```
 
 **Inspect import-data.json structure**:
 ```bash
-python3 -c "import json; d=json.load(open('import-data.json')); print(f'{len(d[\"players\"])} players, {len(d[\"seasons\"])} seasons, {len(d[\"games\"])} games'); [print(' ', s['name'], s['status']) for s in d['seasons']]"
+python -c "import json; d=json.load(open('import-data.json')); print(f'{len(d[\"players\"])} players, {len(d[\"seasons\"])} seasons, {len(d[\"games\"])} games'); [print(' ', s['name'], s['status']) for s in d['seasons']]"
 ```
 
 **Force cache invalidation on phone**: bump `CACHE_NAME` in `sw.js`, then on phone: long-press app icon → App info → Storage → **Clear cache** (NOT Clear storage).
