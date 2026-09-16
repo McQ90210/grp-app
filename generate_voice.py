@@ -46,9 +46,12 @@ if not API_KEY or not VOICE_ID:
     print("See top of script for how to pick a voice ID.")
     sys.exit(1)
 
-# Model — eleven_turbo_v2_5 is fast and high quality. eleven_multilingual_v2
-# is the highest quality but a bit slower. Choose:
-MODEL = "eleven_turbo_v2_5"
+# Model — eleven_v3 (ElevenLabs' latest/most expressive model as of this
+# session). Note: v3 uses a discrete stability scale (0.0 "Creative",
+# 0.5 "Natural", 1.0 "Robust") rather than a continuous one, and doesn't
+# use the "style" knob the older turbo/multilingual models did — see
+# DEFAULT_SETTINGS / EXCITED_SETTINGS below.
+MODEL = "eleven_v3"
 
 # Output folder
 OUT = Path("sounds/voice")
@@ -136,24 +139,21 @@ def voice_settings_for(name, base_settings):
 
 
 # Default delivery — used for everything except the seat draw (see
-# EXCITED_SETTINGS below). Lower stability + higher style = more
-# expressive/varied delivery; this is the flatter, more consistent end
-# of that range, which is what the original 104 clips were built with.
+# EXCITED_SETTINGS below). v3's stability is "Natural" (0.5): steady
+# and consistent, closest to how the original turbo-model clips read.
 DEFAULT_SETTINGS = {
     "stability": 0.5,
     "similarity_boost": 0.75,
-    "style": 0.3,
     "use_speaker_boost": True,
 }
 
 # More energetic read for the seat draw's live-reveal phrases (table /
-# seat / dealer / bare names) — lower stability and higher style push
-# the same voice toward a punchier, more excited delivery rather than
-# the flatter read used for the original static/per-player phrases.
+# seat / dealer / bare names). v3's stability "Creative" (0.0) is the
+# most expressive/varied setting the model offers — used here in place
+# of the old low-stability/high-style combo for a punchier read.
 EXCITED_SETTINGS = {
-    "stability": 0.35,
+    "stability": 0.0,
     "similarity_boost": 0.75,
-    "style": 0.65,
     "use_speaker_boost": True,
 }
 
