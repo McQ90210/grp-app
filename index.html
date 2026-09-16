@@ -4406,7 +4406,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       speakClip(`break-${level.duration}`, `Break time. ${level.duration} minute break. Stretch your legs.`);
     } else {
       const anteText = level.ante > 0 ? `, with an ante of ${level.ante}` : '';
-      const key = level.ante > 0 ? `blinds-${level.bb}-ante` : `blinds-${level.bb}`;
+      const key = level.ante > 0 ? `blinds-${level.bb}-ante-${level.ante}` : `blinds-${level.bb}`;
       const fallback = opts.silentIfNoClip
         ? ''
         : `Blinds are now ${level.sb} and ${level.bb}${anteText}.`;
@@ -4522,7 +4522,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         await speakClip('blinds-up', 'Blinds up!');
         await new Promise((r) => setTimeout(r, 200));
         const anteText = newAnte > 0 ? `, with an ante of ${newAnte}` : '';
-        const key = newAnte > 0 ? `blinds-${newBB}-ante` : `blinds-${newBB}`;
+        const key = newAnte > 0 ? `blinds-${newBB}-ante-${newAnte}` : `blinds-${newBB}`;
         speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
       } catch (e) { /* ignore */ }
     }, 100);
@@ -4577,7 +4577,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           await speakClip('blinds-up', 'Blinds up!');
           await new Promise((r) => setTimeout(r, 200));
           const anteText = newAnte > 0 ? `, with an ante of ${newAnte}` : '';
-          const key = newAnte > 0 ? `blinds-${newBB}-ante` : `blinds-${newBB}`;
+          const key = newAnte > 0 ? `blinds-${newBB}-ante-${newAnte}` : `blinds-${newBB}`;
           speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
         } catch (e) { /* ignore */ }
       }, 100);

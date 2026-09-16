@@ -81,7 +81,38 @@ STATIC = {
     "final-3":    "We are down to the final three!",
     "complete":   "Tournament complete. Well played.",
     "voice-ready":"Voice ready.",
+    "welcome":    "Welcome to the home game, everyone. Best of luck.",
+    "blinds-up":  "Blinds up!",
 }
+
+# Every big-blind value either blind-structure generator can produce —
+# copied from VEGAS_BB_LADDER in index.html, which is a strict superset
+# of generateBlindStructure's BB_SCHEDULE. One no-ante clip per value
+# covers both formats since sb is a pure function of bb in both.
+BLINDS_LADDER = [
+    100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500,
+    2000, 2500, 3000, 4000, 5000, 6000, 8000, 10000, 12000, 15000,
+    20000, 25000, 30000, 40000, 50000, 60000, 80000, 100000, 125000, 150000,
+    200000, 250000, 300000, 400000, 500000, 600000, 800000, 1000000,
+]
+
+# generateBlindStructure's own schedule (a subset of BLINDS_LADDER) — the
+# only bb values the standard/League format can ever produce. Needed
+# separately because its optional ante is bb/4, a different amount than
+# Vegas's mandatory full-bb ante at the same bb value, so the two need
+# distinct clips (see the ante loop in main() — key is now
+# blinds-{bb}-ante-{ante}, encoding the actual spoken number, instead of
+# a single ambiguous blinds-{bb}-ante).
+STANDARD_BB_SCHEDULE = [
+    100, 200, 300, 400, 500, 600, 800, 1000,
+    2000, 3000, 4000, 5000, 6000, 8000,
+    10000, 15000, 20000, 30000, 40000, 50000,
+    60000, 80000, 100000, 150000, 200000,
+]
+
+
+def blind_sb(bb):
+    return bb // 2 if bb < 1000 else round(bb / 200) * 100
 
 # Seat draw — played in sequence via speakClipQueue, e.g. table-1,
 # seat-1, dealer, name-beans for "Table 1, Seat 1, dealer... Beans."
@@ -197,6 +228,33 @@ def main():
         generate(text, key)
         time.sleep(0.5)  # be nice to the API
 
+    # Blind level announcements — no-ante clip for every bb either format
+    # can produce.
+    print("\n=== Blind level announcements (no ante) ===")
+    for bb in BLINDS_LADDER:
+        sb = blind_sb(bb)
+        generate(f"Blinds are now {sb} and {bb}.", f"blinds-{bb}")
+        time.sleep(0.5)
+
+    # Ante variants — one clip per real (bb, ante) combination that can
+    # actually occur, keyed as blinds-{bb}-ante-{ante} so the spoken
+    # number is always correct. Standard format's optional ante is bb/4;
+    # Vegas's mandatory ante is a full bb — both get recorded separately
+    # even where bb overlaps between the two schedules.
+    print("\n=== Blind level announcements (standard ante, bb/4) ===")
+    for bb in STANDARD_BB_SCHEDULE:
+        sb = blind_sb(bb)
+        ante = bb // 4
+        generate(f"Blinds are now {sb} and {bb}, with an ante of {ante}.", f"blinds-{bb}-ante-{ante}")
+        time.sleep(0.5)
+
+    print("\n=== Blind level announcements (Vegas ante, full bb) ===")
+    for bb in BLINDS_LADDER:
+        sb = blind_sb(bb)
+        ante = bb
+        generate(f"Blinds are now {sb} and {bb}, with an ante of {ante}.", f"blinds-{bb}-ante-{ante}")
+        time.sleep(0.5)
+
     # Seat draw static phrases — excited delivery
     print("\n=== Seat draw (table / seat / dealer) ===")
     for key, text in STATIC_SEAT_DRAW.items():
@@ -246,6 +304,21 @@ def main():
     print("\n=== Bare names (seat draw) ===")
     for name in PLAYERS:
         generate(f"{name}!", f"name-{slugify(name)}", voice_settings=voice_settings_for(name, EXCITED_SETTINGS), voice_id=voice_id_for(name))
+        time.sleep(0.5)
+
+    # Per-player late-join welcome — played when a name is added to a
+    # game that's already under way. Previously unrecorded; fell back to
+    # browser TTS for every player.
+    print("\n=== Welcome (late join) ===")
+    for name in PLAYERS:
+        generate(f"Welcome to the game, {name}.", f"welcome-{slugify(name)}", voice_settings=voice_settings_for(name, DEFAULT_SETTINGS), voice_id=voice_id_for(name))
+        time.sleep(0.5)
+
+    # Per-player add-on announcement. The Add-On feature was never wired
+    # up with clips at all — every add-on fell back to browser TTS.
+    print("\n=== Add-ons ===")
+    for name in PLAYERS:
+        generate(f"Add-on for {name}.", f"addon-{slugify(name)}", voice_settings=voice_settings_for(name, DEFAULT_SETTINGS), voice_id=voice_id_for(name))
         time.sleep(0.5)
 
     print(f"\n✅ Done. Files in {OUT.absolute()}/")
