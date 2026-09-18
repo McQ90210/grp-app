@@ -1,6 +1,6 @@
 // GR Poker service worker — caches the app for offline use.
 
-const CACHE_NAME = 'gr-poker-v8.56';
+const CACHE_NAME = 'gr-poker-v8.57';
 const ASSETS = [
   './',
   './index.html',
@@ -8,11 +8,11 @@ const ASSETS = [
   './firebase-init.js',
   './icon-192.png',
   './icon-512.png',
+  './vendor/react.production.min.js',
+  './vendor/react-dom.production.min.js',
+  './vendor/babel.min.js',
   // External dependencies cached after first fetch
   'https://cdn.tailwindcss.com',
-  'https://unpkg.com/react@18/umd/react.production.min.js',
-  'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
-  'https://unpkg.com/@babel/standalone/babel.min.js',
 ];
 
 self.addEventListener('install', (event) => {
@@ -68,7 +68,6 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached;
       return fetch(req).then((res) => {
         if (res.ok && (req.url.startsWith(self.location.origin) ||
-                       req.url.includes('unpkg.com') ||
                        req.url.includes('cdn.tailwindcss.com') ||
                        req.url.includes('gstatic.com/firebasejs'))) {
           const copy = res.clone();

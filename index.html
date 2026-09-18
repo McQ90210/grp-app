@@ -22,9 +22,16 @@
   <!-- Preload the logos so they're ready when React first paints them. -->
   <link rel="preload" as="image" href="logos/GreeneRoomPokerLogo-02.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <!-- React/ReactDOM/Babel are vendored locally (vendor/) rather than loaded
+       from unpkg.com — a routing/filtering issue between some ISPs and
+       unpkg's Cloudflare IPs was intermittently resetting these requests
+       (surfaced 2026-09-18: "React is not defined", blank page, VPN to a
+       different country worked around it). Vendoring removes the
+       dependency on that specific CDN entirely; pinned to the same
+       versions (React 18, Babel 7.26.4) the app was already using. -->
+  <script crossorigin src="vendor/react.production.min.js"></script>
+  <script crossorigin src="vendor/react-dom.production.min.js"></script>
+  <script src="vendor/babel.min.js"></script>
   <script>
     // Force the CLASSIC JSX runtime. Newer @babel/preset-react defaults to the
     // "automatic" runtime, which emits `import {jsx} from "react/jsx-runtime"`.
