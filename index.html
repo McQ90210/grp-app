@@ -6461,24 +6461,37 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                     <div className="text-left">
                       <div className="font-mono text-xs text-yellow-300/60 tracking-widest mb-2">UPDATED STANDINGS</div>
                       <div className="rounded-xl bg-black/40 border border-yellow-500/10 p-2.5 max-h-[82vh] overflow-y-auto space-y-0.5">
-                        {standingsRows.map((r) => {
+                        {standingsRows.map((r, i) => {
                           const delta = (standingsPreRanks[r.name] || 0) - (standingsFinalRanks[r.name] || 0);
                           return (
-                            <div key={r.name} className={`px-2 py-0.5 rounded ${r.isAttendee ? 'bg-emerald-500/10' : ''}`}>
-                              <div className="flex items-center gap-1.5 text-sm min-w-0">
-                                <span className={`font-mono text-xs shrink-0 w-6 text-right ${standingsFinalRanks[r.name] <= 3 ? 'text-yellow-300' : 'text-yellow-100/50'}`}>#{standingsFinalRanks[r.name]}</span>
-                                <span className={`font-mono text-[10px] shrink-0 w-5 ${delta > 0 ? 'text-emerald-300' : delta < 0 ? 'text-red-300' : 'text-yellow-100/20'}`}>
-                                  {delta > 0 ? `↑${delta}` : delta < 0 ? `↓${-delta}` : '·'}
-                                </span>
-                                <span className={`flex-1 min-w-0 truncate ${r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
-                                <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>{r.total.toLocaleString()}</span>
+                            <React.Fragment key={r.name}>
+                              <div className={`px-2 py-0.5 rounded ${r.isAttendee ? 'bg-emerald-500/10' : ''}`}>
+                                <div className="flex items-center gap-1.5 text-sm min-w-0">
+                                  <span className={`font-mono text-xs shrink-0 w-6 text-right ${standingsFinalRanks[r.name] <= 3 ? 'text-yellow-300' : 'text-yellow-100/50'}`}>#{standingsFinalRanks[r.name]}</span>
+                                  <span className={`font-mono text-[10px] shrink-0 w-5 ${delta > 0 ? 'text-emerald-300' : delta < 0 ? 'text-red-300' : 'text-yellow-100/20'}`}>
+                                    {delta > 0 ? `↑${delta}` : delta < 0 ? `↓${-delta}` : '·'}
+                                  </span>
+                                  <span className={`flex-1 min-w-0 truncate ${r.isAttendee ? 'text-emerald-100' : 'text-yellow-100/50'}`}>{r.name}</span>
+                                  <span className={`font-mono text-xs shrink-0 tabular-nums ${r.isAttendee ? 'text-yellow-100' : 'text-yellow-100/50'}`}>{r.total.toLocaleString()}</span>
+                                </div>
+                                {r.isAttendee && r.parts.length > 0 && (
+                                  <div className="pl-14 font-mono text-[10px] leading-tight text-yellow-100/45 truncate">
+                                    {r.parts.join(' · ')}
+                                  </div>
+                                )}
                               </div>
-                              {r.isAttendee && r.parts.length > 0 && (
-                                <div className="pl-14 font-mono text-[10px] leading-tight text-yellow-100/45 truncate">
-                                  {r.parts.join(' · ')}
+                              {/* Only the top 10 make the round final — mark the
+                                  cutoff so it's visible on the post-game overlay
+                                  all season, not just at the end. */}
+                              {i === 9 && standingsRows.length > 10 && (
+                                <div className="relative my-2 py-1 text-center">
+                                  <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-yellow-500/30" />
+                                  <span className="relative bg-black/40 px-2 font-mono text-[9px] text-yellow-300/60 tracking-widest">
+                                    TOP 10 QUALIFY FOR THE FINAL
+                                  </span>
                                 </div>
                               )}
-                            </div>
+                            </React.Fragment>
                           );
                         })}
                       </div>
@@ -6638,7 +6651,7 @@ function SignInModal({ onClose }) {
 }
 
 // ============ GAME TYPE PICKER (shown before setup wizard) ============
-function GameTypePicker({ onPick }) {
+function GameTypePicker({ onPick, fbUser }) {
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4" style={{
       background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
@@ -6666,7 +6679,7 @@ function GameTypePicker({ onPick }) {
           box-shadow: 0 12px 40px rgba(20, 163, 123, 0.3);
         }
       `}</style>
-      <div className="w-full max-w-2xl">
+      <div className="w-full max-w-4xl">
         <div className="text-center mb-10">
           <img
             src="logos/GreeneRoomPokerLogo-01.svg"
@@ -6689,9 +6702,10 @@ function GameTypePicker({ onPick }) {
             <div className="flex flex-col gap-2 mt-auto">
               <button
                 onClick={() => onPick('league', 'setup')}
-                className="game-card px-4 py-3 rounded-xl font-display text-lg text-black"
-                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+                className="game-card px-4 py-3 rounded-xl font-display text-lg text-black flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)', opacity: fbUser ? 1 : 0.6 }}
               >
+                {!fbUser && <span className="text-sm">🔒</span>}
                 SET UP GAME
               </button>
               <button
@@ -6716,23 +6730,22 @@ function GameTypePicker({ onPick }) {
             <div className="flex flex-col gap-2 mt-auto">
               <button
                 onClick={() => onPick('highrollers', 'setup')}
-                className="game-card px-4 py-3 rounded-xl font-display text-lg text-black"
-                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+                className="game-card px-4 py-3 rounded-xl font-display text-lg text-black flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)', opacity: fbUser ? 1 : 0.6 }}
               >
+                {!fbUser && <span className="text-sm">🔒</span>}
                 SET UP GAME
               </button>
               <button
                 onClick={() => onPick('highrollers', 'info')}
-                className="game-card px-4 py-3 rounded-xl font-mono text-sm text-emerald-200 bg-black/40 border border-emerald-500/30 hover:bg-black/60"
+                className="game-card px-4 py-3 rounded-xl font-mono text-sm text-emerald-200 bg-black/40 border border-emerald-500/30 hover:bg-black/60 flex items-center justify-center gap-2"
+                style={{ opacity: fbUser ? 1 : 0.6 }}
               >
+                {!fbUser && <span className="text-xs">🔒</span>}
                 GAME HISTORY
               </button>
             </div>
           </div>
-        </div>
-
-        <div className="text-center mt-8 text-xs font-mono text-yellow-100/30">
-          League games count toward season standings · High Rollers are casual
         </div>
       </div>
     </div>
@@ -11550,6 +11563,15 @@ function App() {
   };
 
   const handlePick = (type, action) => {
+    // Setting up a game (either mode) and High Rollers' game history are
+    // signed-in-only — HR results shouldn't be browsable by every league
+    // member, and starting a game is an admin action. League & Player Info
+    // stays open to everyone (public standings).
+    const needsAuth = action === 'setup' || (type === 'highrollers' && action === 'info');
+    if (needsAuth && !fbUser) {
+      setShowSignIn(true);
+      return;
+    }
     setGameType(type);
     if (action === 'setup') {
       // League games go through context confirmation first
@@ -11572,7 +11594,7 @@ function App() {
   if (route === 'home') {
     content = (
       <>
-        <GameTypePicker onPick={handlePick} />
+        <GameTypePicker onPick={handlePick} fbUser={fbUser} />
         {liveResume && <ResumeGameBanner snap={liveResume} onResume={acceptResume} onDiscard={dismissResume} />}
         <div className="fixed bottom-4 right-4 z-40">
           {fbUser ? (

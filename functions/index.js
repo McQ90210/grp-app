@@ -660,8 +660,7 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
     </table>
 
     <div style="margin-top:28px;padding-top:14px;border-top:1px solid rgba(20,163,123,0.18);color:#6b7280;font-size:11px;text-align:center;letter-spacing:0.05em;">
-      Greene Room Poker, Berkhamsted &nbsp;·&nbsp;
-      <a href="https://mcq90210.github.io/grp-app/" style="color:${BRAND_GREEN_LIGHT};text-decoration:none;">View full standings</a>
+      Greene Room Poker, Berkhamsted
     </div>
   </div>
 </body>
