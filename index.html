@@ -6781,6 +6781,8 @@ function HighRollersHistory({ onBack, fbUser }) {
   // Game being edited (admin only). Reuses the league EditGameModal which
   // is type-aware (hides league-only sections for HR).
   const [editingGame, setEditingGame] = useState(null);
+  // Game being viewed as a read-only report (anyone — click the date).
+  const [viewingGame, setViewingGame] = useState(null);
 
   const refreshGames = async () => {
     try {
@@ -7057,7 +7059,13 @@ function HighRollersHistory({ onBack, fbUser }) {
                   return (
                     <div key={g.id} className="p-3 rounded-lg bg-black/40 border border-emerald-500/10 font-mono text-sm">
                       <div className="flex justify-between items-center mb-2 gap-2">
-                        <div className="text-yellow-100/80">{g.date || 'unknown date'}</div>
+                        <div
+                          onClick={() => setViewingGame(g)}
+                          className="text-yellow-100/80 cursor-pointer hover:text-yellow-100 hover:underline"
+                          title="View game report"
+                        >
+                          {g.date || 'unknown date'}
+                        </div>
                         <div className="flex items-center gap-2">
                           <div className="text-emerald-100/80 text-xs">
                             {g.attendees?.length || 0} players · £{g.pot || 0} pot
@@ -7138,6 +7146,122 @@ function HighRollersHistory({ onBack, fbUser }) {
             }}
           />
         )}
+
+        {viewingGame && (
+          <HRGameReportModal
+            game={viewingGame}
+            players={players}
+            onClose={() => setViewingGame(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============ HR GAME REPORT MODAL ============
+// Read-only summary of a single High Rollers game — same underlying data
+// as EditGameModal (date, buy-in, payouts, finishing order, rebuys), laid
+// out as a report rather than an edit form. Opened by clicking the date
+// in RECENT GAMES.
+function HRGameReportModal({ game, players, onClose }) {
+  const playersById = {};
+  players.forEach((p) => { playersById[p.id] = p; });
+
+  const attendees = game.attendees || [];
+  const finishOrder = game.finishOrder || [];
+  const rebuys = game.rebuys || {};
+  const payouts = game.payouts || {};
+  const buyIn = game.buyIn || 0;
+  const totalRebuys = Object.values(rebuys).reduce((a, b) => a + (b || 0), 0);
+  const medal = ['🥇', '🥈', '🥉'];
+
+  // Finishing order first, then any attendees missing from it (shouldn't
+  // normally happen, but keeps the report complete on incomplete data).
+  const orderedPids = [...finishOrder, ...attendees.filter((pid) => !finishOrder.includes(pid))];
+
+  const rows = orderedPids.map((pid) => {
+    const idx = finishOrder.indexOf(pid);
+    const rebuyCount = rebuys[pid] || 0;
+    const buyIns = buyIn * (1 + rebuyCount);
+    const winnings = idx >= 0 ? (payouts[String(idx + 1)] || 0) : 0;
+    return {
+      pid,
+      place: idx >= 0 ? idx + 1 : null,
+      name: playersById[pid]?.displayName || pid,
+      rebuyCount,
+      buyIns,
+      winnings,
+      net: winnings - buyIns,
+    };
+  });
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[92vh] overflow-y-auto">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="font-display text-3xl gold-text">GAME REPORT</div>
+            <div className="text-yellow-100/60 font-mono text-sm mt-1">{game.date || 'unknown date'}</div>
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Stats grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">PLAYERS</div>
+            <div className="font-display text-2xl text-emerald-200">{attendees.length}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">BUY-IN</div>
+            <div className="font-display text-2xl text-emerald-200">£{buyIn}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">REBUYS</div>
+            <div className="font-display text-2xl text-emerald-200">{totalRebuys}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20">
+            <div className="font-mono text-xs text-yellow-100/40">POT</div>
+            <div className="font-display text-2xl text-emerald-200">£{game.pot || 0}</div>
+          </div>
+        </div>
+
+        <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">FINISHING ORDER</div>
+        <div className="flex items-center justify-between gap-3 px-3 mb-1">
+          <div className="flex-1" />
+          <div className="flex items-center gap-4 flex-shrink-0 font-mono text-[10px] text-yellow-100/30 tracking-widest">
+            <span className="w-16 text-right">BUY-INS</span>
+            <span className="w-16 text-right">WON</span>
+            <span className="w-16 text-right">NET</span>
+          </div>
+        </div>
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div key={r.pid} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-black/30 border border-emerald-500/10">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <span className="w-6 text-center flex-shrink-0 font-mono text-sm text-yellow-100/60">
+                  {r.place ? (medal[r.place - 1] || r.place) : '—'}
+                </span>
+                <span className="truncate text-emerald-100 font-mono text-sm">{r.name}</span>
+                {r.rebuyCount > 0 && (
+                  <span className="flex-shrink-0 text-[10px] font-mono text-yellow-100/50 bg-yellow-500/10 border border-yellow-500/20 rounded-full px-1.5 py-0.5">
+                    +{r.rebuyCount} rebuy{r.rebuyCount > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-4 flex-shrink-0 font-mono text-sm">
+                <span className="text-yellow-100/60 w-16 text-right">£{Math.round(r.buyIns)}</span>
+                <span className="text-emerald-300 w-16 text-right">£{Math.round(r.winnings)}</span>
+                <span className={`w-16 text-right font-bold ${r.net >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
+                  {r.net >= 0 ? '+' : ''}£{Math.round(r.net)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
