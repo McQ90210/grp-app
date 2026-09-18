@@ -1,6 +1,6 @@
 // GR Poker service worker — caches the app for offline use.
 
-const CACHE_NAME = 'gr-poker-v8.55';
+const CACHE_NAME = 'gr-poker-v8.56';
 const ASSETS = [
   './',
   './index.html',
@@ -75,7 +75,12 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((c) => c.put(req, copy));
         }
         return res;
-      }).catch(() => cached);
+      // If the network fetch fails and there was nothing cached either,
+      // `cached` here is undefined — returning that to respondWith()
+      // throws "Failed to convert value to 'Response'" and hangs the
+      // request instead of just failing it (this is what stalled page
+      // load into a permanent spinner when unpkg.com had a blip).
+      }).catch(() => cached || Response.error());
     })
   );
 });
