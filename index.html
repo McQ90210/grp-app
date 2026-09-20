@@ -300,6 +300,22 @@ function nextBlindStep(current) {
   return next || current * 2;
 }
 
+// Next level when the game runs past the last preset level. Keeps the
+// ante at the same proportion of the BB as the level it follows (Vegas is
+// a full BB; standard antes are BB/4) and uses the format's own BB ladder
+// and SB rounding, so the extension matches the structure it extends.
+function nextLevelAfter(cur, format) {
+  const vegas = format === 'vegas';
+  const bb = vegas
+    ? (VEGAS_BB_LADDER.find((v) => v > cur.bb) || cur.bb * 2)
+    : nextBlindStep(cur.bb);
+  const sb = vegas
+    ? (bb < 1000 ? bb / 2 : Math.round(bb / 200) * 100)
+    : Math.floor(bb / 2);
+  const ante = cur.ante > 0 && cur.bb > 0 ? Math.round(bb * (cur.ante / cur.bb)) : 0;
+  return { sb, bb, ante, duration: cur.duration, isBreak: false };
+}
+
 // (Retained for any legacy callers — not used by the generator any more)
 function roundBlind(value) {
   if (value < 100) return Math.max(100, Math.round(value / 50) * 50);
@@ -3647,6 +3663,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // instead of starting fresh.
   const resume = config._resume || null;
   const [levels, setLevels] = useState(resume?.levels || config.levels);
+  // Level index after which the rebuy period ends (null = no cutoff).
+  // Editable mid-game from the blind-structure editor; starts from the
+  // structure's baked-in cutoff. Soft marker only — rebuys are never locked.
+  const [rebuyCutoff, setRebuyCutoff] = useState(config.rebuyCutoffLevel ?? null);
+  const rebuyCutoffNumber = rebuyCutoff == null
+    ? null
+    : levels.slice(0, rebuyCutoff + 1).filter((l) => !l.isBreak).length;
   const [players, setPlayers] = useState(resume?.players || config.players); // [{name, sound}, ...]
   const [currentLevel, setCurrentLevel] = useState(resume?.currentLevel ?? 0);
   const [timeLeft, setTimeLeft] = useState(
@@ -4202,8 +4225,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         stackSize: config.stackSize,
         playerStartingStacks: config.playerStartingStacks || null,
         format: config.format || 'rebuy',
-        rebuyCutoffLevel: config.rebuyCutoffLevel ?? null,
-        rebuyCutoffLevelNumber: config.rebuyCutoffLevelNumber ?? null,
+        rebuyCutoffLevel: rebuyCutoff,
+        rebuyCutoffLevelNumber: rebuyCutoffNumber,
         addOnsEnabled: config.addOnsEnabled || false,
         seating: config.seating || null,
       },
@@ -4232,7 +4255,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         console.error('[grp] live save to Firestore failed:', e);
       });
     }
-  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, knockouts, buyInsPaidByName, subsPaidByName, payoutKey, gameStartedAt, fbUser, config]);
+  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, knockouts, buyInsPaidByName, subsPaidByName, payoutKey, gameStartedAt, fbUser, config, rebuyCutoff]);
 
   // Load the full club roster from Firestore so late-entry can suggest existing names
   useEffect(() => {
@@ -4513,10 +4536,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       setIsRunning(false);
       return;
     }
-    const newBB = nextBlindStep(cur.bb);
-    const newSB = Math.floor(newBB / 2);
-    const newAnte = cur.ante > 0 ? Math.floor(newBB / 4) : 0;
-    const newLevel = { sb: newSB, bb: newBB, ante: newAnte, duration: cur.duration, isBreak: false };
+    const newLevel = nextLevelAfter(cur, config.format);
+    const { sb: newSB, bb: newBB, ante: newAnte } = newLevel;
     // Append BEFORE bumping currentLevel — React 18 auto-batches these
     // sequential calls so they commit together (the v7.47 crash came from
     // calling setLevels from INSIDE setCurrentLevel's updater).
@@ -4533,7 +4554,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
       } catch (e) { /* ignore */ }
     }, 100);
-  }, [announceLevelTransition, speakClip, sendWledEffect]);
+  }, [announceLevelTransition, speakClip, sendWledEffect, config.format]);
 
   const togglePlay = () => {
     // iOS / Safari requires the very first speak() call to happen synchronously
@@ -4569,10 +4590,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     // blind step so the tournament can keep going.
     const cur = levels[currentLevel];
     if (!cur || cur.isBreak) return;
-    const newBB = nextBlindStep(cur.bb);
-    const newSB = Math.floor(newBB / 2);
-    const newAnte = cur.ante > 0 ? Math.floor(newBB / 4) : 0;
-    const newLevel = { sb: newSB, bb: newBB, ante: newAnte, duration: cur.duration, isBreak: false };
+    const newLevel = nextLevelAfter(cur, config.format);
+    const { sb: newSB, bb: newBB, ante: newAnte } = newLevel;
     const nextIdx = currentLevel + 1;
     setLevels((prev) => [...prev, newLevel]);
     setCurrentLevel(nextIdx);
@@ -4712,8 +4731,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // safety-capped for short schedules — see generateVegasBlindStructure).
   // Every other format has no cutoff (rebuyCutoffLevel is null), matching
   // today's unlimited-rebuy behavior.
-  const rebuysOpen = config.format !== 'freezeout' &&
-    (config.rebuyCutoffLevel == null || currentLevel <= config.rebuyCutoffLevel);
+  const rebuysOpen = config.format !== 'freezeout';
+  // The rebuy period itself still ends at the (editable) cutoff, but that's
+  // now only a marker/banner — the admin is the only one entering rebuys,
+  // and a hard lock meant stepping back a level to add a missed one.
+  const rebuyPeriodOver = rebuysOpen && rebuyCutoff != null && currentLevel > rebuyCutoff;
 
   // Eliminate a player: voice "Goodbye <name>", then play their sound.
   // Also triggers "final 3" announcement and winner announcement when appropriate.
@@ -4892,7 +4914,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     const last = levels[levels.length - 1];
     // Skip back past any trailing break to find the last play level for doubling.
     const lastPlay = [...levels].reverse().find((l) => !l.isBreak) || last;
-    setLevels([...levels, { ...lastPlay, sb: lastPlay.sb * 2, bb: lastPlay.bb * 2, isBreak: false }]);
+    setLevels([...levels, { ...lastPlay, sb: lastPlay.sb * 2, bb: lastPlay.bb * 2, ante: (lastPlay.ante || 0) * 2, isBreak: false }]);
   };
 
   const addBreak = () => {
@@ -4905,6 +4927,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
     if (levels.length > 1) {
       setLevels(levels.filter((_, i) => i !== idx));
       if (currentLevel >= levels.length - 1) setCurrentLevel(Math.max(0, levels.length - 2));
+      // Keep the rebuy cutoff pinned to the same level after a row above
+      // (or at) it is removed.
+      if (rebuyCutoff != null && idx <= rebuyCutoff) setRebuyCutoff(Math.max(0, rebuyCutoff - 1));
     }
   };
 
@@ -5394,7 +5419,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               </div>
             </div>
 
-            {config.rebuyCutoffLevel != null && currentLevel === config.rebuyCutoffLevel && (
+            {rebuyCutoff != null && currentLevel === rebuyCutoff && (
               <div className="text-center -mb-4">
                 <span className="inline-block px-4 py-1.5 rounded-full bg-red-950/50 border border-red-500/40 text-red-200 font-mono text-xs sm:text-sm tracking-widest animate-pulse">
                   ⏳ END OF REBUY — NEXT ROUND
@@ -5919,6 +5944,30 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               </div>
 
               <div className="font-display text-xl gold-text mb-3">BLIND STRUCTURE</div>
+              {config.format !== 'freezeout' && (() => {
+                // A cutoff baked in at a break row is shown against the play
+                // level just before it.
+                let selVal = rebuyCutoff;
+                while (selVal != null && selVal > 0 && levels[selVal]?.isBreak) selVal -= 1;
+                let playNo = 0;
+                return (
+                  <div className="flex items-center gap-2 mb-3 px-2">
+                    <div className="font-mono text-xs text-yellow-100/60 tracking-widest">REBUY PERIOD ENDS</div>
+                    <select
+                      value={selVal == null ? '' : String(selVal)}
+                      onChange={(e) => setRebuyCutoff(e.target.value === '' ? null : parseInt(e.target.value, 10))}
+                      className="flex-1 min-w-0 px-2 py-1 rounded bg-black/40 border border-yellow-500/20 text-yellow-50 text-sm font-mono"
+                    >
+                      <option value="">No cutoff</option>
+                      {levels.map((lvl, idx) => {
+                        if (lvl.isBreak) return null;
+                        playNo += 1;
+                        return <option key={idx} value={String(idx)}>After level {playNo} ({lvl.sb}/{lvl.bb})</option>;
+                      })}
+                    </select>
+                  </div>
+                );
+              })()}
               <div className="space-y-2 max-h-80 overflow-y-auto pr-2">
                 <div className="grid grid-cols-12 gap-2 text-xs font-mono text-yellow-500/60 tracking-widest px-2 pb-1">
                   <div className="col-span-1">#</div>
@@ -5942,7 +5991,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                   };
                   const durationDisplay = lvl.duration > 0 ? lvl.duration : '';
                   const durationWarn = !lvl.duration || lvl.duration <= 0;
-                  const isRebuyCutoff = config.rebuyCutoffLevel != null && idx === config.rebuyCutoffLevel;
+                  const isRebuyCutoff = rebuyCutoff != null && idx === rebuyCutoff;
                   const rowClass = `grid grid-cols-12 gap-2 items-center p-2 rounded-lg ${
                     idx === currentLevel ? 'bg-yellow-500/10 border border-yellow-500/30' :
                     lvl.isBreak ? 'bg-blue-500/10 border border-blue-500/20' :
@@ -6056,10 +6105,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             <div className="text-yellow-100/60 text-sm mb-4">
               {config.format === 'freezeout' ? (
                 <>Tap <span className="text-red-300 font-bold">OUT</span> to eliminate. No rebuys this game.</>
-              ) : rebuysOpen ? (
-                <>Tap <span className="text-emerald-300 font-bold">REBUY</span> to put them back in, or <span className="text-red-300 font-bold">OUT</span> to eliminate.</>
               ) : (
-                <>Rebuys closed after level {config.rebuyCutoffLevelNumber} — tap <span className="text-red-300 font-bold">OUT</span> to eliminate.</>
+                <>
+                  Tap <span className="text-emerald-300 font-bold">REBUY</span> to put them back in, or <span className="text-red-300 font-bold">OUT</span> to eliminate.
+                  {rebuyPeriodOver && <span className="block text-red-300/70 text-xs mt-1">Rebuy period ended after level {rebuyCutoffNumber}.</span>}
+                </>
               )}
             </div>
             <div className="space-y-2 overflow-y-auto flex-1 pr-1">
@@ -6154,9 +6204,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             <div className="text-yellow-100/60 text-sm mb-4">
               {config.format === 'freezeout'
                 ? 'No rebuys tonight — tap OUT to eliminate.'
-                : rebuysOpen
-                ? 'Tap REBUY to put them back in, or OUT to eliminate.'
-                : `Rebuys closed after level ${config.rebuyCutoffLevelNumber} — tap OUT to eliminate.`}
+                : `Tap REBUY to put them back in, or OUT to eliminate.${rebuyPeriodOver ? ` (Rebuy period ended after level ${rebuyCutoffNumber}.)` : ''}`}
             </div>
             <div className="flex gap-2">
               {rebuysOpen && (
