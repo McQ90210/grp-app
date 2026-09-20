@@ -1044,6 +1044,10 @@ async function playSound(soundKey, customSounds = {}, customUrl = null) {
 // the welcome) was sporadically failing with NotAllowedError and causing
 // the Web Speech fallback to fire in a different system voice. Reusing a
 // single element preserves the audio unlock across the whole session.
+// Bump whenever clips in sounds/voice/ are regenerated/replaced. Clip URLs
+// are otherwise identical, and GitHub Pages serves them with max-age=600,
+// so browsers kept playing the previous voice for already-heard clips.
+const VOICE_CLIP_VERSION = '8.63';
 let _voiceAudio = null;
 let _voiceResolve = null;
 let _voiceReject = null;
@@ -1066,7 +1070,7 @@ function playVoiceClip(key) {
     try { _voiceAudio.pause(); } catch (e) {}
     _voiceResolve = resolve;
     _voiceReject = reject;
-    _voiceAudio.src = `sounds/voice/${key}.mp3`;
+    _voiceAudio.src = `sounds/voice/${key}.mp3?v=${VOICE_CLIP_VERSION}`;
     try { _voiceAudio.currentTime = 0; } catch (e) {}
     _voiceAudio.play().catch((e) => {
       const r = _voiceReject; _voiceResolve = _voiceReject = null;
