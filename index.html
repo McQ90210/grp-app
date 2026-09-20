@@ -208,6 +208,16 @@ const VEGAS_BB_LADDER = [
   200000, 250000, 300000, 400000, 500000, 600000, 800000, 1000000,
 ];
 
+// Small blind for a Vegas BB, following the chip cash-ups: exact half
+// below 1000; nearest 100 from 1000 up to (not incl.) 2000 (the 50s are
+// gone by then); from 2000 the 100s are cashed up too, so SB is a
+// multiple of 500 (BB and ante already are on the ladder from 2000 up).
+function vegasSmallBlind(bb) {
+  if (bb < 1000) return bb / 2;
+  if (bb < 2000) return Math.round(bb / 200) * 100;
+  return Math.round(bb / 1000) * 500;
+}
+
 function generateVegasBlindStructure(buyIn, stackSize, durationMinutes, numPlayers) {
   const isBigBuyIn = buyIn >= 50;
   const levelLength = isBigBuyIn ? 30 : 20;
@@ -271,14 +281,7 @@ function generateVegasBlindStructure(buyIn, stackSize, durationMinutes, numPlaye
   let rebuyCutoffIndex = null;
   for (let idx = startIdx; idx <= endIdx; idx++) {
     const bb = VEGAS_BB_LADDER[idx];
-    // Exact half below 1000 — chips that fine are normal at the low
-    // blinds. At/above it, round to the nearest 100 instead: an exact
-    // half would need a 50-denomination chip at several rungs (300, 500,
-    // 1500, 2500...), some of them quite late. Matches the chip-
-    // availability rule generateBlindStructure already follows (its
-    // schedule skips 1500 for the same reason) and how real venues
-    // handle it — color up the 50s at a break and round SB from there.
-    const sb = bb < 1000 ? bb / 2 : Math.round(bb / 200) * 100;
+    const sb = vegasSmallBlind(bb);
     levels.push({ sb, bb, ante: bb, duration: levelLength, isBreak: false });
     playLevelCount++;
     const isCutoffLevel = playLevelCount === rebuyCutoffPlayLevels;
@@ -295,7 +298,7 @@ function generateVegasBlindStructure(buyIn, stackSize, durationMinutes, numPlaye
 
 // Step to the next sensible blind value above the given one (used for manual "add level")
 function nextBlindStep(current) {
-  const SCHEDULE = [100, 200, 300, 400, 500, 600, 800, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 8000, 10000, 15000, 20000, 30000, 40000, 50000, 60000, 80000, 100000];
+  const SCHEDULE = [100, 200, 300, 400, 500, 600, 800, 1000, 2000, 3000, 4000, 5000, 6000, 8000, 10000, 15000, 20000, 30000, 40000, 50000, 60000, 80000, 100000];
   const next = SCHEDULE.find((v) => v > current);
   return next || current * 2;
 }
@@ -310,7 +313,7 @@ function nextLevelAfter(cur, format) {
     ? (VEGAS_BB_LADDER.find((v) => v > cur.bb) || cur.bb * 2)
     : nextBlindStep(cur.bb);
   const sb = vegas
-    ? (bb < 1000 ? bb / 2 : Math.round(bb / 200) * 100)
+    ? vegasSmallBlind(bb)
     : Math.floor(bb / 2);
   const ante = cur.ante > 0 && cur.bb > 0 ? Math.round(bb * (cur.ante / cur.bb)) : 0;
   return { sb, bb, ante, duration: cur.duration, isBreak: false };

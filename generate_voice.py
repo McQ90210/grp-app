@@ -112,7 +112,13 @@ STANDARD_BB_SCHEDULE = [
 
 
 def blind_sb(bb):
-    return bb // 2 if bb < 1000 else round(bb / 200) * 100
+    # Mirrors vegasSmallBlind() in index.html — SB is a multiple of 500
+    # from BB 2000 up (100s are cashed up). JS Math.round rounds .5 up.
+    if bb < 1000:
+        return bb // 2
+    if bb < 2000:
+        return int(bb / 200 + 0.5) * 100
+    return int(bb / 1000 + 0.5) * 500
 
 # Seat draw — played in sequence via speakClipQueue, e.g. table-1,
 # seat-1, dealer, name-beans for "Table 1, Seat 1, dealer... Beans."
