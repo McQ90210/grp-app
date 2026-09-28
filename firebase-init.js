@@ -121,6 +121,15 @@ async function getAllHighRollerGames() {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+async function getAllPokerTourGames() {
+  const snap = await getDocs(query(
+    collection(db, 'games'),
+    where('type', '==', 'pokertour'),
+    orderBy('date', 'desc')
+  ));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
 async function getGameById(id) {
   const snap = await getDoc(doc(db, 'games', id));
   if (!snap.exists()) return null;
@@ -278,7 +287,7 @@ window.GRP_DB = {
   // Seasons
   getAllSeasons, getActiveSeason, upsertSeason,
   // Games
-  getGamesForSeason, getAllLeagueGames, getAllHighRollerGames, getGameById, saveGame, deleteGame, subscribeToSeasonGames,
+  getGamesForSeason, getAllLeagueGames, getAllHighRollerGames, getAllPokerTourGames, getGameById, saveGame, deleteGame, subscribeToSeasonGames,
   // Live (in-progress) game persistence
   saveLiveGame, getLiveGame, clearLiveGame,
   // Email

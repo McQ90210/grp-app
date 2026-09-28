@@ -6734,7 +6734,7 @@ function GameTypePicker({ onPick, fbUser }) {
           box-shadow: 0 12px 40px rgba(20, 163, 123, 0.3);
         }
       `}</style>
-      <div className="w-full max-w-4xl">
+      <div className="w-full max-w-6xl">
         <div className="text-center mb-10">
           <img
             src="logos/GreeneRoomPokerLogo-01.svg"
@@ -6743,7 +6743,7 @@ function GameTypePicker({ onPick, fbUser }) {
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {/* LEAGUE CARD */}
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-6 flex flex-col">
             <div className="font-display text-4xl gold-text mb-2 leading-none whitespace-nowrap">LEAGUE</div>
@@ -6801,7 +6801,457 @@ function GameTypePicker({ onPick, fbUser }) {
               </button>
             </div>
           </div>
+
+          {/* POKER TOUR CARD */}
+          <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-6 flex flex-col">
+            <div className="font-display text-4xl gold-text mb-2 leading-none whitespace-nowrap">POKER TOUR</div>
+            <div className="text-yellow-100/70 text-sm mb-4 min-h-[20px]">Holiday trophy standings</div>
+            <ul className="text-emerald-200/80 text-xs font-mono space-y-1.5 mb-5">
+              <li>• Any game, timed or not</li>
+              <li>• Top 3 scored 3/2/1 points</li>
+              <li>• Bigger games weighted higher</li>
+              <li>• Most points wins the trophy</li>
+            </ul>
+            <div className="flex flex-col gap-2 mt-auto">
+              <button
+                onClick={() => onPick('pokertour', 'setup')}
+                className="game-card px-4 py-3 rounded-xl font-display text-lg text-black flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)', opacity: fbUser ? 1 : 0.6 }}
+              >
+                {!fbUser && <span className="text-sm">🔒</span>}
+                LOG A GAME
+              </button>
+              <button
+                onClick={() => onPick('pokertour', 'info')}
+                className="game-card px-4 py-3 rounded-xl font-mono text-sm text-emerald-200 bg-black/40 border border-emerald-500/30 hover:bg-black/60 flex items-center justify-center gap-2"
+                style={{ opacity: fbUser ? 1 : 0.6 }}
+              >
+                {!fbUser && <span className="text-xs">🔒</span>}
+                STANDINGS
+              </button>
+            </div>
+          </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ POKER TOUR ============
+// Holiday trophy standings — separate from League and High Rollers.
+// Any game (timed or not) gets logged with its top 3 finishers; points
+// are 3/2/1 for 1st/2nd/3rd, multiplied by the game's weight (bigger
+// games count for more). Admin-only end to end, per Mark.
+const POKER_TOUR_WEIGHTS = { 1: 'STANDARD', 2: 'BIG', 3: 'MASSIVE' };
+
+function pokerTourPoints(weight) {
+  return { 1: 3 * weight, 2: 2 * weight, 3: 1 * weight };
+}
+
+function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled }) {
+  const [games, setGames] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [showLog, setShowLog] = useState(false);
+  const [viewingGame, setViewingGame] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
+
+  const refresh = async () => {
+    try {
+      const [g, p] = await Promise.all([
+        window.GRP_DB.getAllPokerTourGames(),
+        window.GRP_DB.getAllPlayers(),
+      ]);
+      setGames(g || []);
+      setPlayers(p || []);
+    } catch (e) { setError(e.message); }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const doLoad = async () => {
+      try {
+        const [g, p] = await Promise.all([
+          window.GRP_DB.getAllPokerTourGames(),
+          window.GRP_DB.getAllPlayers(),
+        ]);
+        if (cancelled) return;
+        setGames(g || []);
+        setPlayers(p || []);
+        setLoading(false);
+      } catch (e) {
+        if (!cancelled) { setError(e.message); setLoading(false); }
+      }
+    };
+    if (window.GRP_DB) doLoad();
+    else {
+      const onReady = () => doLoad();
+      window.addEventListener('firebase-ready', onReady);
+      const t = setTimeout(() => {
+        if (!cancelled && !window.GRP_DB) { setError('Firebase did not load.'); setLoading(false); }
+      }, 8000);
+      return () => { cancelled = true; window.removeEventListener('firebase-ready', onReady); clearTimeout(t); };
+    }
+    return () => { cancelled = true; };
+  }, []);
+
+  // Home screen's "LOG A GAME" lands here with the quick-log modal already
+  // open, since most tour games aren't run through the timer at all.
+  useEffect(() => {
+    if (autoLog) {
+      setShowLog(true);
+      onAutoLogHandled();
+    }
+  }, [autoLog]);
+
+  const playersById = {};
+  players.forEach((p) => { playersById[p.id] = p; });
+
+  const standings = (() => {
+    const totals = {};
+    games.forEach((g) => {
+      Object.entries(g.pointsAwarded || {}).forEach(([pid, pts]) => {
+        if (!totals[pid]) totals[pid] = { pid, points: 0, firsts: 0, podiums: 0 };
+        totals[pid].points += pts || 0;
+        totals[pid].podiums += 1;
+      });
+      const firstPid = (g.finishOrder || [])[0];
+      if (firstPid && totals[firstPid]) totals[firstPid].firsts += 1;
+    });
+    return Object.values(totals)
+      .map((t) => ({ ...t, name: playersById[t.pid]?.displayName || t.pid }))
+      .sort((a, b) => b.points - a.points || b.firsts - a.firsts || b.podiums - a.podiums || a.name.localeCompare(b.name));
+  })();
+
+  const doDelete = async (id) => {
+    try {
+      await window.GRP_DB.deleteGame(id);
+      setPendingDelete(null);
+      setViewingGame(null);
+      await refresh();
+    } catch (e) { setError(e.message); }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center" style={{ background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)' }}>
+        <div className="text-emerald-300 font-mono text-sm animate-pulse">Loading Poker Tour…</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen w-full" style={{
+      background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
+      fontFamily: "'Inter', system-ui, sans-serif",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+        .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.02em; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .gold-text {
+          background: linear-gradient(135deg, #14a37b 0%, #1ec890 50%, #0e8c69 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .gold-border {
+          border: 1px solid rgba(20, 163, 123, 0.4);
+          box-shadow: 0 0 40px rgba(20, 163, 123, 0.15);
+        }
+      `}</style>
+      <div className="p-4 sm:p-8 max-w-[1200px] mx-auto">
+        <div className="mb-6 flex justify-between items-start gap-3">
+          <div>
+            <button onClick={onBack} className="font-mono text-xs text-yellow-100/40 hover:text-yellow-100/80 mb-2">
+              ← back
+            </button>
+            <div className="flex items-center gap-3">
+              <img src="logos/GreeneRoomPokerLogo-02.svg" alt="" className="h-10 w-10 shrink-0" />
+              <div className="font-display text-4xl gold-text">POKER TOUR</div>
+            </div>
+            <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">
+              HOLIDAY STANDINGS · {games.length} GAME{games.length === 1 ? '' : 'S'}
+            </div>
+          </div>
+          <button
+            onClick={() => setShowLog(true)}
+            className="px-4 py-2.5 rounded-xl font-display text-base text-black whitespace-nowrap hover:brightness-110"
+            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+          >
+            + LOG A GAME
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-red-950/40 border border-red-500/30 text-red-200 text-sm font-mono">
+            {error}
+          </div>
+        )}
+
+        {standings.length > 0 && (
+          <div className="text-center mb-8 p-6 rounded-2xl gold-border bg-gradient-to-br from-emerald-950/80 to-black/80">
+            <div className="font-mono text-xs text-yellow-300/60 tracking-widest mb-2">🏆 CURRENT LEADER</div>
+            <div className="font-display text-5xl gold-text leading-none mb-1">{standings[0].name}</div>
+            <div className="font-mono text-sm text-emerald-200/70">{standings[0].points} points</div>
+          </div>
+        )}
+
+        {standings.length > 0 && (
+          <div className="mb-8 rounded-xl bg-black/30 border border-emerald-500/15 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-emerald-500/20">
+                  <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest">#</th>
+                  <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest">PLAYER</th>
+                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">POINTS</th>
+                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">1ST</th>
+                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">PODIUMS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {standings.map((s, i) => (
+                  <tr key={s.pid} className="border-b border-emerald-500/10 last:border-0">
+                    <td className="py-2.5 px-4 font-mono text-yellow-100/60">{i + 1}</td>
+                    <td className="py-2.5 px-4 text-emerald-100">{s.name}</td>
+                    <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-300">{s.points}</td>
+                    <td className="py-2.5 px-4 text-right font-mono text-yellow-100/70">{s.firsts}</td>
+                    <td className="py-2.5 px-4 text-right font-mono text-yellow-100/50">{s.podiums}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">RECENT GAMES</div>
+        {games.length === 0 ? (
+          <div className="text-yellow-100/40 text-sm text-center py-8 font-mono">No games logged yet.</div>
+        ) : (
+          <div className="space-y-3">
+            {games.map((g) => {
+              const podium = [1, 2, 3].map((place) => {
+                const pid = (g.finishOrder || [])[place - 1];
+                return {
+                  place,
+                  name: pid ? (playersById[pid]?.displayName || pid) : null,
+                  points: g.pointsAwarded?.[pid] || 0,
+                };
+              });
+              const medal = ['🥇', '🥈', '🥉'];
+              return (
+                <div key={g.id} className="p-3 rounded-lg bg-black/40 border border-emerald-500/10 font-mono text-sm">
+                  <div className="flex justify-between items-center mb-2 gap-2">
+                    <div
+                      onClick={() => setViewingGame(g)}
+                      className="text-yellow-100/80 cursor-pointer hover:text-yellow-100 hover:underline flex items-center gap-2 min-w-0"
+                      title="View game report"
+                    >
+                      <span className="truncate">{g.gameName || 'Untitled game'}</span>
+                      <span className="text-yellow-100/40 shrink-0">· {g.date || 'unknown date'}</span>
+                    </div>
+                    <span className="shrink-0 text-[10px] tracking-widest px-2 py-0.5 rounded-full border border-yellow-500/30 text-yellow-300/80">
+                      {POKER_TOUR_WEIGHTS[g.weight] || 'STANDARD'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {podium.map((p) => (
+                      <div key={p.place} className="flex items-center justify-between gap-1.5 min-w-0 px-2 py-1.5 rounded bg-black/30">
+                        <span className="flex items-center gap-1.5 min-w-0 flex-1 text-emerald-100">
+                          <span className="flex-shrink-0">{medal[p.place - 1]}</span>
+                          <span className="truncate min-w-0">{p.name || '—'}</span>
+                        </span>
+                        {p.points > 0 && <span className="flex-shrink-0 text-emerald-300/80 text-xs">+{p.points}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {showLog && (
+          <QuickLogGameModal
+            players={players}
+            onClose={() => setShowLog(false)}
+            onSaved={async () => { setShowLog(false); await refresh(); }}
+          />
+        )}
+
+        {viewingGame && (
+          <div onClick={() => setViewingGame(null)} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[85vh] overflow-y-auto">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <div className="font-display text-2xl gold-text">{viewingGame.gameName || 'Untitled game'}</div>
+                  <div className="text-yellow-100/60 font-mono text-sm mt-1">
+                    {viewingGame.date || 'unknown date'} · {POKER_TOUR_WEIGHTS[viewingGame.weight] || 'STANDARD'} game
+                  </div>
+                </div>
+                <button onClick={() => setViewingGame(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+              </div>
+              <div className="space-y-2">
+                {(viewingGame.finishOrder || []).map((pid, i) => (
+                  <div key={pid} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-black/30 border border-emerald-500/10">
+                    <span className="flex items-center gap-2.5 min-w-0 flex-1 font-mono text-sm">
+                      <span className="w-6 text-center flex-shrink-0 text-yellow-100/60">{['🥇', '🥈', '🥉'][i] || i + 1}</span>
+                      <span className="truncate text-emerald-100">{playersById[pid]?.displayName || pid}</span>
+                    </span>
+                    <span className="font-mono text-sm text-emerald-300 shrink-0">+{viewingGame.pointsAwarded?.[pid] || 0}</span>
+                  </div>
+                ))}
+              </div>
+              {fbUser && (
+                <button
+                  onClick={() => setPendingDelete({ id: viewingGame.id, label: viewingGame.gameName || 'this game' })}
+                  className="mt-4 w-full px-4 py-2 rounded-lg bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-950/60"
+                >
+                  DELETE GAME
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {pendingDelete && (
+          <ConfirmDialog
+            title="Delete this game?"
+            message={`Removes "${pendingDelete.label}" and its points from the Poker Tour standings. This can't be undone.`}
+            requireType="DELETE"
+            onConfirm={() => doDelete(pendingDelete.id)}
+            onCancel={() => setPendingDelete(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Quick-log a Poker Tour result — no timer, no wizard. Game name, weight,
+// top 3 finishers, save. Used for the holiday's "silly games" and for
+// recording a timed poker night's result after the fact (run that on the
+// existing High Rollers timer, then log the same finish here).
+function QuickLogGameModal({ players, onClose, onSaved }) {
+  const [gameName, setGameName] = useState('');
+  const [weight, setWeight] = useState(1);
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [p1, setP1] = useState('');
+  const [p2, setP2] = useState('');
+  const [p3, setP3] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const sorted = [...players].sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const taken = new Set([p1, p2, p3].filter(Boolean));
+  const optionsFor = (current) => sorted.filter((p) => p.id === current || !taken.has(p.id));
+
+  const save = async () => {
+    if (!gameName.trim()) { setError('Enter a game name.'); return; }
+    if (!p1) { setError('Pick at least a 1st place.'); return; }
+    setBusy(true);
+    setError(null);
+    const finishOrder = [p1, p2, p3].filter(Boolean);
+    const pts = pokerTourPoints(weight);
+    const pointsAwarded = {};
+    finishOrder.forEach((pid, i) => { pointsAwarded[pid] = pts[i + 1]; });
+    try {
+      await window.GRP_DB.saveGame({
+        type: 'pokertour',
+        date,
+        gameName: gameName.trim(),
+        weight,
+        finishOrder,
+        pointsAwarded,
+      });
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div onClick={busy ? null : onClose} className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-4">
+          <div className="font-display text-2xl gold-text">LOG A GAME</div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        </div>
+
+        <div className="mb-4">
+          <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">GAME</div>
+          <input
+            type="text"
+            value={gameName}
+            onChange={(e) => setGameName(e.target.value)}
+            placeholder="Ring of Fire, Mario Kart, Hold'em…"
+            autoFocus
+            className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">DATE</div>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            />
+          </div>
+          <div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">SIZE</div>
+            <div className="flex gap-1">
+              {[1, 2, 3].map((w) => (
+                <button
+                  key={w}
+                  onClick={() => setWeight(w)}
+                  className={`flex-1 px-1 py-2 rounded-lg font-mono text-[10px] tracking-widest border ${
+                    weight === w
+                      ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-100'
+                      : 'bg-black/40 border-yellow-500/20 text-yellow-100/50'
+                  }`}
+                >
+                  {POKER_TOUR_WEIGHTS[w]}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {[
+          { label: '🥇 1ST', value: p1, set: setP1 },
+          { label: '🥈 2ND', value: p2, set: setP2 },
+          { label: '🥉 3RD', value: p3, set: setP3 },
+        ].map((row, i) => (
+          <div key={i} className="mb-3">
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">{row.label}</div>
+            <select
+              value={row.value}
+              onChange={(e) => row.set(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+            >
+              <option value="">—</option>
+              {optionsFor(row.value).map((p) => (
+                <option key={p.id} value={p.id}>{p.displayName}</option>
+              ))}
+            </select>
+          </div>
+        ))}
+
+        {error && <div className="text-red-400 text-xs mb-3 font-mono">{error}</div>}
+
+        <button
+          onClick={save}
+          disabled={busy}
+          className="control-btn w-full px-6 py-2.5 rounded-full font-display text-xl text-black disabled:opacity-30"
+          style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+        >
+          {busy ? 'SAVING…' : 'SAVE RESULT'}
+        </button>
       </div>
     </div>
   );
@@ -11532,6 +11982,7 @@ function App() {
   const [config, setConfig] = useState(null);
   const [customSounds, setCustomSounds] = useState({});
   const [showSignIn, setShowSignIn] = useState(false);
+  const [pokerTourAutoLog, setPokerTourAutoLog] = useState(false);
   const [liveResume, setLiveResume] = useState(null); // saved in-progress game snapshot
   const [resumeChecked, setResumeChecked] = useState(false);
   const { ready: fbReady, user: fbUser } = useFirebase();
@@ -11618,13 +12069,22 @@ function App() {
   };
 
   const handlePick = (type, action) => {
-    // Setting up a game (either mode) and High Rollers' game history are
-    // signed-in-only — HR results shouldn't be browsable by every league
-    // member, and starting a game is an admin action. League & Player Info
-    // stays open to everyone (public standings).
-    const needsAuth = action === 'setup' || (type === 'highrollers' && action === 'info');
+    // Setting up a game (either mode), High Rollers' game history, and
+    // Poker Tour (both buttons) are signed-in-only — starting/logging a
+    // game is an admin action, and Poker Tour is admin-only end to end
+    // per Mark. League & Player Info stays open to everyone (public
+    // standings).
+    const needsAuth = action === 'setup' || type === 'pokertour' || (type === 'highrollers' && action === 'info');
     if (needsAuth && !fbUser) {
       setShowSignIn(true);
+      return;
+    }
+    // Poker Tour has no timed-setup wizard of its own — "LOG A GAME" opens
+    // straight into the standings page with the quick-log modal up, since
+    // most tour games aren't run through the timer at all.
+    if (type === 'pokertour') {
+      setPokerTourAutoLog(action === 'setup');
+      setRoute('pokertour-info');
       return;
     }
     setGameType(type);
@@ -11676,6 +12136,15 @@ function App() {
     content = <LeagueDashboard onBack={goHome} fbUser={fbUser} />;
   } else if (route === 'highrollers-info') {
     content = <HighRollersHistory onBack={goHome} fbUser={fbUser} />;
+  } else if (route === 'pokertour-info') {
+    content = (
+      <PokerTourHistory
+        onBack={goHome}
+        fbUser={fbUser}
+        autoLog={pokerTourAutoLog}
+        onAutoLogHandled={() => setPokerTourAutoLog(false)}
+      />
+    );
   } else if (route === 'league-context') {
     content = (
       <LeagueContextScreen
