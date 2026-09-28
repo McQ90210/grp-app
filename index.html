@@ -7587,15 +7587,11 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed, existingGa
         <div className="flex justify-between items-start mb-4">
           <div>
             <div className="font-display text-2xl gold-text">{eg ? 'EDIT GAME' : 'LOG A GAME'}</div>
-            <div className="text-yellow-100/50 text-xs font-mono mt-1">
-              {eg ? (
-                'Change anything below and save. Points are recalculated.'
-              ) : onStartTimed ? (
-                <>Timed game? <button onClick={onStartTimed} className="text-emerald-300 hover:text-emerald-200 underline">Set one up instead →</button></>
-              ) : (
-                'Untimed game — for one with a blinds clock, use TIMED on the home screen.'
-              )}
-            </div>
+            {eg && (
+              <div className="text-yellow-100/50 text-xs font-mono mt-1">
+                Change anything below and save. Points are recalculated.
+              </div>
+            )}
           </div>
           <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100 shrink-0"><X size={20} /></button>
         </div>
