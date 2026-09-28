@@ -7036,6 +7036,17 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
     } catch (e) { setError(e.message); }
   };
 
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const doClearAll = async () => {
+    setConfirmClearAll(false);
+    try {
+      for (const g of games) {
+        await window.GRP_DB.deleteGame(g.id);
+      }
+      await refresh();
+    } catch (e) { setError(e.message); await refresh(); }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center" style={{ background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)' }}>
@@ -7191,6 +7202,27 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
               );
             })}
           </div>
+        )}
+
+        {fbUser && games.length > 0 && (
+          <div className="mt-8 text-center">
+            <button
+              onClick={() => setConfirmClearAll(true)}
+              className="px-4 py-2 rounded-lg bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-950/60"
+            >
+              CLEAR ALL POKER TOUR GAMES
+            </button>
+          </div>
+        )}
+
+        {confirmClearAll && (
+          <ConfirmDialog
+            title="Clear all Poker Tour games?"
+            message={`Deletes all ${games.length} Poker Tour game${games.length === 1 ? '' : 's'} and wipes the standings. The trip roster stays. League and High Rollers are not touched. This can't be undone.`}
+            requireType="DELETE"
+            onConfirm={doClearAll}
+            onCancel={() => setConfirmClearAll(false)}
+          />
         )}
 
         {showLog && (
@@ -7500,6 +7532,7 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed, existingGa
   const [buyIn, setBuyIn] = useState(eg && typeof eg.buyIn === 'number' ? String(eg.buyIn) : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
 
   const sorted = [...players].sort((a, b) => a.displayName.localeCompare(b.displayName));
   // Who played — needed so a buy-in counts against everyone who paid it,
@@ -7524,6 +7557,14 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed, existingGa
     if (!gameName.trim()) { setError('Enter a game name.'); return; }
     if (!p1) { setError('Pick at least a 1st place.'); return; }
     if (hasBuyIn && playing.size < 2) { setError('Tick who played so the buy-in counts for everyone.'); return; }
+    // Test mode: same as the timer's save — nothing is written.
+    if (readTestMode()) {
+      setError(null);
+      setNotice('Test mode — nothing saved.');
+      setBusy(true);
+      setTimeout(onClose, 1200);
+      return;
+    }
     setBusy(true);
     setError(null);
     const top = [p1, p2, p3].filter(Boolean);
@@ -7717,6 +7758,7 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed, existingGa
         ))}
 
         {error && <div className="text-red-400 text-xs mb-3 font-mono">{error}</div>}
+        {notice && <div className="text-yellow-300 text-xs mb-3 font-mono">{notice}</div>}
 
         <button
           onClick={save}
