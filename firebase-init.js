@@ -150,6 +150,15 @@ async function saveGame(game) {
   }
 }
 
+// Overwrite a game doc entirely (no merge), so fields/map keys removed
+// by an edit are really gone.
+async function replaceGame(game) {
+  const data = { ...game };
+  delete data.id;
+  await setDoc(doc(db, 'games', game.id), data);
+  return game.id;
+}
+
 async function deleteGame(id) {
   await deleteDoc(doc(db, 'games', id));
 }
@@ -287,7 +296,7 @@ window.GRP_DB = {
   // Seasons
   getAllSeasons, getActiveSeason, upsertSeason,
   // Games
-  getGamesForSeason, getAllLeagueGames, getAllHighRollerGames, getAllPokerTourGames, getGameById, saveGame, deleteGame, subscribeToSeasonGames,
+  getGamesForSeason, getAllLeagueGames, getAllHighRollerGames, getAllPokerTourGames, getGameById, saveGame, replaceGame, deleteGame, subscribeToSeasonGames,
   // Live (in-progress) game persistence
   saveLiveGame, getLiveGame, clearLiveGame,
   // Email

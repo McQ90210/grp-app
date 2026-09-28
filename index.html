@@ -6954,6 +6954,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
   const [error, setError] = useState(null);
   const [showLog, setShowLog] = useState(false);
   const [viewingGame, setViewingGame] = useState(null);
+  const [editingGame, setEditingGame] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
   const [showRoster, setShowRoster] = useState(false);
   const [selectedPid, setSelectedPid] = useState(null);
@@ -7151,9 +7152,10 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                 <tr className="border-b border-emerald-500/20">
                   <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest">#</th>
                   <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest">PLAYER</th>
-                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="1st place finishes">🥇</th>
-                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="2nd place finishes">🥈</th>
-                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="3rd place finishes">🥉</th>
+                  <th className="py-2 text-center font-mono text-xs text-emerald-300 tracking-widest" style={{ width: 72 }} title="1st place finishes">🥇</th>
+                  <th className="py-2 text-center font-mono text-xs text-emerald-300 tracking-widest" style={{ width: 72 }} title="2nd place finishes">🥈</th>
+                  <th className="py-2 text-center font-mono text-xs text-emerald-300 tracking-widest" style={{ width: 72 }} title="3rd place finishes">🥉</th>
+                  <th style={{ width: 36 }} />
                   <th className="py-2 px-4 text-center font-mono text-xs text-yellow-300 tracking-widest bg-emerald-500/15 border-l border-emerald-400/30">POINTS</th>
                 </tr>
               </thead>
@@ -7168,12 +7170,13 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                     <td className="py-2.5 px-4 font-mono text-yellow-100/60">{i + 1}</td>
                     <td className="py-2.5 px-4 text-emerald-100">{s.name}</td>
                     {[[s.firsts, '#f4d03f'], [s.seconds, '#d4d4d4'], [s.thirds, '#d4924a']].map(([n, colour], k) => (
-                      <td key={k} className="py-2.5 px-4 text-right font-mono">
+                      <td key={k} className="py-2.5 text-center font-mono" style={{ width: 72 }}>
                         {n > 0
                           ? <span style={{ color: colour, fontWeight: 600 }}>{n}</span>
                           : <span className="text-yellow-100/20">—</span>}
                       </td>
                     ))}
+                    <td style={{ width: 36 }} />
                     <td className="py-2.5 px-4 text-center font-display text-2xl leading-none text-yellow-200 bg-emerald-500/15 border-l border-emerald-400/30">{s.points}</td>
                   </tr>
                 ))}
@@ -7242,6 +7245,15 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
           />
         )}
 
+        {editingGame && (
+          <QuickLogGameModal
+            existingGame={editingGame}
+            players={players.filter((p) => p.pokerTour || (editingGame.finishOrder || []).includes(p.id))}
+            onClose={() => setEditingGame(null)}
+            onSaved={async () => { setEditingGame(null); await refresh(); }}
+          />
+        )}
+
         {viewingGame && (
           <div onClick={() => setViewingGame(null)} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
             <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[85vh] overflow-y-auto">
@@ -7271,12 +7283,20 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                 ))}
               </div>
               {fbUser && (
-                <button
-                  onClick={() => setPendingDelete({ id: viewingGame.id, label: viewingGame.gameName || 'this game' })}
-                  className="mt-4 w-full px-4 py-2 rounded-lg bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-950/60"
-                >
-                  DELETE GAME
-                </button>
+                <>
+                  <button
+                    onClick={() => { setEditingGame(viewingGame); setViewingGame(null); }}
+                    className="mt-4 w-full px-4 py-2 rounded-lg bg-black/40 border border-emerald-500/30 text-emerald-200 font-mono text-xs hover:bg-black/60"
+                  >
+                    EDIT GAME
+                  </button>
+                  <button
+                    onClick={() => setPendingDelete({ id: viewingGame.id, label: viewingGame.gameName || 'this game' })}
+                    className="mt-2 w-full px-4 py-2 rounded-lg bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-950/60"
+                  >
+                    DELETE GAME
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -7495,16 +7515,22 @@ function TripRosterModal({ players, fbUser, onToggle, onClose }) {
 // top 3 finishers, save. Used for the holiday's "silly games" and for
 // recording a timed poker night's result after the fact (run that on the
 // existing High Rollers timer, then log the same finish here).
-function QuickLogGameModal({ players, onClose, onSaved, onStartTimed }) {
-  const [gameName, setGameName] = useState('');
-  const [weight, setWeight] = useState(3);
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [p1, setP1] = useState('');
-  const [p2, setP2] = useState('');
-  const [p3, setP3] = useState('');
-  const [w1, setW1] = useState('');
-  const [w2, setW2] = useState('');
-  const [w3, setW3] = useState('');
+function QuickLogGameModal({ players, onClose, onSaved, onStartTimed, existingGame = null }) {
+  const eg = existingGame;
+  const egPlace = (i) => (eg?.finishOrder || [])[i] || '';
+  const egWon = (i) => {
+    const v = eg?.payouts?.[String(i + 1)];
+    return v ? String(v) : '';
+  };
+  const [gameName, setGameName] = useState(eg?.gameName || '');
+  const [weight, setWeight] = useState(eg?.weight === 1 ? 1 : 3);
+  const [date, setDate] = useState(eg?.date || new Date().toISOString().slice(0, 10));
+  const [p1, setP1] = useState(egPlace(0));
+  const [p2, setP2] = useState(egPlace(1));
+  const [p3, setP3] = useState(egPlace(2));
+  const [w1, setW1] = useState(egWon(0));
+  const [w2, setW2] = useState(egWon(1));
+  const [w3, setW3] = useState(egWon(2));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -7517,28 +7543,49 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed }) {
     if (!p1) { setError('Pick at least a 1st place.'); return; }
     setBusy(true);
     setError(null);
-    const finishOrder = [p1, p2, p3].filter(Boolean);
+    const top = [p1, p2, p3].filter(Boolean);
+    // Timed games have a full finish order beyond the podium — keep the
+    // rest of it (minus anyone now on the podium) when editing.
+    const rest = (eg?.finishOrder || []).slice(3).filter((pid) => !top.includes(pid));
+    const finishOrder = [...top, ...rest];
     const pts = pokerTourPoints(weight);
     const pointsAwarded = {};
-    finishOrder.forEach((pid, i) => { pointsAwarded[pid] = pts[i + 1]; });
+    top.forEach((pid, i) => { pointsAwarded[pid] = pts[i + 1]; });
     // Winnings — same place-keyed shape (payouts: {"1": amt, ...}) used
     // everywhere else in the app, so it reads the same whether a game was
     // quick-logged or run through the timer.
     const payouts = {};
+    // Keep any 4th-place-and-below payouts a timed game already had.
+    Object.entries(eg?.payouts || {}).forEach(([place, amt]) => {
+      if (parseInt(place, 10) > 3) payouts[place] = amt;
+    });
     [w1, w2, w3].forEach((w, i) => {
       const amt = parseFloat(w);
-      if (!isNaN(amt) && amt > 0 && finishOrder[i]) payouts[String(i + 1)] = amt;
+      if (!isNaN(amt) && amt > 0 && top[i]) payouts[String(i + 1)] = amt;
     });
+    const fields = {
+      type: 'pokertour',
+      date,
+      gameName: gameName.trim(),
+      weight,
+      finishOrder,
+      pointsAwarded,
+      payouts,
+    };
     try {
-      await window.GRP_DB.saveGame({
-        type: 'pokertour',
-        date,
-        gameName: gameName.trim(),
-        weight,
-        finishOrder,
-        pointsAwarded,
-        payouts,
-      });
+      if (eg) {
+        // Full replace, not a merge — a merge would keep the old
+        // points/payouts for anyone taken off the podium.
+        const full = { ...eg, ...fields };
+        if (window.GRP_DB.replaceGame) {
+          await window.GRP_DB.replaceGame(full);
+        } else {
+          await window.GRP_DB.deleteGame(eg.id);
+          await window.GRP_DB.saveGame(full);
+        }
+      } else {
+        await window.GRP_DB.saveGame(fields);
+      }
       onSaved();
     } catch (e) {
       setError(e.message);
@@ -7551,9 +7598,11 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed }) {
       <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-start mb-4">
           <div>
-            <div className="font-display text-2xl gold-text">LOG A GAME</div>
+            <div className="font-display text-2xl gold-text">{eg ? 'EDIT GAME' : 'LOG A GAME'}</div>
             <div className="text-yellow-100/50 text-xs font-mono mt-1">
-              {onStartTimed ? (
+              {eg ? (
+                'Change anything below and save. Points are recalculated.'
+              ) : onStartTimed ? (
                 <>Timed game? <button onClick={onStartTimed} className="text-emerald-300 hover:text-emerald-200 underline">Set one up instead →</button></>
               ) : (
                 'Untimed game — for one with a blinds clock, use + TIMED GAME instead.'
