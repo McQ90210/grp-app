@@ -7092,23 +7092,6 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
               </button>
             </div>
           </div>
-          <div className="flex flex-col gap-2 items-end">
-            <button
-              onClick={() => setShowLog(true)}
-              className="px-4 py-2.5 rounded-xl font-display text-base text-black whitespace-nowrap hover:brightness-110"
-              style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
-            >
-              + LOG A GAME
-            </button>
-            {onStartTimed && (
-              <button
-                onClick={onStartTimed}
-                className="px-4 py-1.5 rounded-lg font-mono text-xs text-emerald-200 bg-black/40 border border-emerald-500/30 hover:bg-black/60 whitespace-nowrap"
-              >
-                + TIMED GAME (with blinds timer)
-              </button>
-            )}
-          </div>
         </div>
 
         {error && (
@@ -7585,7 +7568,7 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed, existingGa
               ) : onStartTimed ? (
                 <>Timed game? <button onClick={onStartTimed} className="text-emerald-300 hover:text-emerald-200 underline">Set one up instead →</button></>
               ) : (
-                'Untimed game — for one with a blinds clock, use + TIMED GAME instead.'
+                'Untimed game — for one with a blinds clock, use TIMED on the home screen.'
               )}
             </div>
           </div>
