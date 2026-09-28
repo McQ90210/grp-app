@@ -7146,6 +7146,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
             players={players}
             onClose={() => setShowLog(false)}
             onSaved={async () => { setShowLog(false); await refresh(); }}
+            onStartTimed={onStartTimed ? () => { setShowLog(false); onStartTimed(); } : null}
           />
         )}
 
@@ -7207,7 +7208,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
 // top 3 finishers, save. Used for the holiday's "silly games" and for
 // recording a timed poker night's result after the fact (run that on the
 // existing High Rollers timer, then log the same finish here).
-function QuickLogGameModal({ players, onClose, onSaved }) {
+function QuickLogGameModal({ players, onClose, onSaved, onStartTimed }) {
   const [gameName, setGameName] = useState('');
   const [weight, setWeight] = useState(1);
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -7265,7 +7266,11 @@ function QuickLogGameModal({ players, onClose, onSaved }) {
           <div>
             <div className="font-display text-2xl gold-text">LOG A GAME</div>
             <div className="text-yellow-100/50 text-xs font-mono mt-1">
-              Timed game? Play it on the High Rollers timer, then log the finish here.
+              {onStartTimed ? (
+                <>Timed game? <button onClick={onStartTimed} className="text-emerald-300 hover:text-emerald-200 underline">Set one up instead →</button></>
+              ) : (
+                'Untimed game — for one with a blinds clock, use + TIMED GAME instead.'
+              )}
             </div>
           </div>
           <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100 shrink-0"><X size={20} /></button>
