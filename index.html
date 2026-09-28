@@ -6861,14 +6861,24 @@ function GameTypePicker({ onPick, fbUser }) {
               <li>• Most points wins the trophy</li>
             </ul>
             <div className="flex flex-col gap-2 mt-auto">
-              <button
-                onClick={() => onPick('pokertour', 'setup')}
-                className="game-card px-4 py-3 rounded-xl font-display text-lg text-black flex items-center justify-center gap-2"
-                style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)', opacity: fbUser ? 1 : 0.6 }}
-              >
-                {!fbUser && <span className="text-sm">🔒</span>}
-                LOG A GAME
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => onPick('pokertour', 'timed')}
+                  className="game-card px-3 py-3 rounded-xl font-display text-lg text-black flex items-center justify-center gap-2"
+                  style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)', opacity: fbUser ? 1 : 0.6 }}
+                >
+                  {!fbUser && <span className="text-sm">🔒</span>}
+                  TIMED
+                </button>
+                <button
+                  onClick={() => onPick('pokertour', 'setup')}
+                  className="game-card px-3 py-3 rounded-xl font-display text-lg text-black flex items-center justify-center gap-2"
+                  style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)', opacity: fbUser ? 1 : 0.6 }}
+                >
+                  {!fbUser && <span className="text-sm">🔒</span>}
+                  NOT TIMED
+                </button>
+              </div>
               <button
                 onClick={() => onPick('pokertour', 'info')}
                 className="game-card px-4 py-3 rounded-xl font-mono text-sm text-emerald-200 bg-black/40 border border-emerald-500/30 hover:bg-black/60 flex items-center justify-center gap-2"
@@ -12217,6 +12227,11 @@ function App() {
     // straight into the standings page with the quick-log modal up, since
     // most tour games aren't run through the timer at all.
     if (type === 'pokertour') {
+      if (action === 'timed') {
+        setGameType('pokertour');
+        setRoute('setup');
+        return;
+      }
       setPokerTourAutoLog(action === 'setup');
       setRoute('pokertour-info');
       return;
