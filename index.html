@@ -7036,17 +7036,6 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
     } catch (e) { setError(e.message); }
   };
 
-  const [confirmClearAll, setConfirmClearAll] = useState(false);
-  const doClearAll = async () => {
-    setConfirmClearAll(false);
-    try {
-      for (const g of games) {
-        await window.GRP_DB.deleteGame(g.id);
-      }
-      await refresh();
-    } catch (e) { setError(e.message); await refresh(); }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center" style={{ background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)' }}>
@@ -7202,27 +7191,6 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
               );
             })}
           </div>
-        )}
-
-        {fbUser && games.length > 0 && (
-          <div className="mt-8 text-center">
-            <button
-              onClick={() => setConfirmClearAll(true)}
-              className="px-4 py-2 rounded-lg bg-red-950/40 border border-red-500/30 text-red-300 font-mono text-xs hover:bg-red-950/60"
-            >
-              CLEAR ALL POKER TOUR GAMES
-            </button>
-          </div>
-        )}
-
-        {confirmClearAll && (
-          <ConfirmDialog
-            title="Clear all Poker Tour games?"
-            message={`Deletes all ${games.length} Poker Tour game${games.length === 1 ? '' : 's'} and wipes the standings. The trip roster stays. League and High Rollers are not touched. This can't be undone.`}
-            requireType="DELETE"
-            onConfirm={doClearAll}
-            onCancel={() => setConfirmClearAll(false)}
-          />
         )}
 
         {showLog && (
