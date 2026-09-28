@@ -2511,7 +2511,12 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       const allMembers = [...rawMembers].sort((a, b) => a.name.localeCompare(b.name));
       setAllGrpPlayers(allMembers);
       if (isCasual) {
-        const hrReg = readHrRegulars();
+        // Poker Tour: the trip roster lives on the player docs (pokerTour
+        // flag) so it's the same list on every device; merge in any local
+        // extras (non-club guests typed into the picker).
+        const hrReg = gameType === 'pokertour'
+          ? Array.from(new Set([...allMembers.filter((p) => p.pokerTour).map((p) => p.name), ...readHrRegulars()]))
+          : readHrRegulars();
         setHrRegulars(hrReg);
         // Build the displayed roster: GRP players in the allowlist, plus any
         // non-GRP names that were added via "new player" in the picker.
@@ -2554,6 +2559,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
           const members = firestorePlayers
             .filter((p) => p.active !== false)
             .map((p) => ({
+              id: p.id,
+              // Poker Tour trip roster flag (set from the Poker Tour page or
+              // by adding/removing players in a Poker Tour setup).
+              pokerTour: !!p.pokerTour,
               name: p.displayName,
               // Local choice wins so picks made without sign-in survive a reload.
               sound: localSounds[p.displayName] || p.sound || 'none',
@@ -2648,6 +2657,12 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       });
     setRoster([...roster, ...toAdd]);
     setPlayingTonight((prev) => new Set([...prev, ...names]));
+    if (gameType === 'pokertour') {
+      names.forEach((n) => {
+        const grp = allGrpPlayers.find((p) => p.name === n);
+        if (grp) setPokerTourMember(grp.id, grp.name, true, fbUser);
+      });
+    }
     // Seed each newly-added attendee with default paid=true so we don't
     // have to chase consent. Admin un-ticks anyone who walked in owing.
     setBuyInsPaidByName((m) => { const n = { ...m }; names.forEach((nm) => { n[nm] = false; }); return n; });
@@ -2721,6 +2736,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     setDealers((d) => { if (!d.has(name)) return d; const n = new Set(d); n.delete(name); return n; });
     if (isCasual) {
       setHrRegulars((prev) => prev.filter((n) => n !== name));
+    }
+    if (gameType === 'pokertour') {
+      const grp = allGrpPlayers.find((p) => p.name === name);
+      if (grp) setPokerTourMember(grp.id, grp.name, false, fbUser);
     }
   };
 
@@ -6918,6 +6937,16 @@ function pokerTourPoints(weight) {
   return { 1: 3 * weight, 2: 2 * weight, 3: 1 * weight };
 }
 
+// Add/remove a player from the Poker Tour trip roster (the `pokerTour`
+// flag on their player doc). Writes by doc id — upsertPlayer would
+// otherwise derive the id from the display name, which breaks for
+// renamed players (Mr Toby's doc is still "toby").
+function setPokerTourMember(id, displayName, on, fbUser) {
+  if (!id || !fbUser || !window.GRP_DB) return Promise.resolve();
+  return window.GRP_DB.upsertPlayer({ id, displayName, pokerTour: on })
+    .catch((e) => { console.error('[grp] failed to update trip roster:', e); });
+}
+
 function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTimed }) {
   const [games, setGames] = useState([]);
   const [players, setPlayers] = useState([]);
@@ -6926,6 +6955,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
   const [showLog, setShowLog] = useState(false);
   const [viewingGame, setViewingGame] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
+  const [showRoster, setShowRoster] = useState(false);
 
   const refresh = async () => {
     try {
@@ -6982,7 +7012,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
     const totals = {};
     games.forEach((g) => {
       Object.entries(g.pointsAwarded || {}).forEach(([pid, pts]) => {
-        if (!totals[pid]) totals[pid] = { pid, points: 0, firsts: 0, podiums: 0, winnings: 0 };
+        if (!totals[pid]) totals[pid] = { pid, points: 0, firsts: 0, seconds: 0, thirds: 0, podiums: 0, winnings: 0 };
         totals[pid].points += pts || 0;
         totals[pid].podiums += 1;
       });
@@ -6991,8 +7021,10 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
         const pid = finishOrder[parseInt(place, 10) - 1];
         if (pid && totals[pid]) totals[pid].winnings += amt || 0;
       });
-      const firstPid = finishOrder[0];
-      if (firstPid && totals[firstPid]) totals[firstPid].firsts += 1;
+      ['firsts', 'seconds', 'thirds'].forEach((key, i) => {
+        const pid = finishOrder[i];
+        if (pid && totals[pid]) totals[pid][key] += 1;
+      });
     });
     return Object.values(totals)
       .map((t) => ({ ...t, name: playersById[t.pid]?.displayName || t.pid }))
@@ -7069,6 +7101,34 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
           </div>
         </div>
 
+        {/* Trip roster — who's on the holiday. Drives the player lists in
+            both the not-timed log box and the timed setup. */}
+        {(() => {
+          const trip = players
+            .filter((p) => p.pokerTour)
+            .sort((a, b) => a.displayName.localeCompare(b.displayName));
+          return (
+            <div className="mb-6 p-3 rounded-lg bg-black/30 border border-emerald-500/15 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">
+                  TRIP ROSTER · {trip.length} PLAYER{trip.length === 1 ? '' : 'S'}
+                </div>
+                <div className="text-emerald-100 text-sm">
+                  {trip.length > 0
+                    ? trip.map((p) => p.displayName).join(', ')
+                    : <span className="text-yellow-100/50">Nobody picked yet. Tap EDIT to choose who's on the trip.</span>}
+                </div>
+              </div>
+              <button
+                onClick={() => setShowRoster(true)}
+                className="shrink-0 px-3 py-1.5 rounded-lg font-mono text-xs text-emerald-200 bg-black/40 border border-emerald-500/30 hover:bg-black/60"
+              >
+                EDIT
+              </button>
+            </div>
+          );
+        })()}
+
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-red-950/40 border border-red-500/30 text-red-200 text-sm font-mono">
             {error}
@@ -7084,15 +7144,16 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
         )}
 
         {standings.length > 0 && (
-          <div className="mb-8 rounded-xl bg-black/30 border border-emerald-500/15 overflow-hidden">
+          <div className="mb-8 rounded-xl bg-black/30 border border-emerald-500/15 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-emerald-500/20">
                   <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest">#</th>
                   <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest">PLAYER</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">POINTS</th>
-                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">1ST</th>
-                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">PODIUMS</th>
+                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="1st place finishes">🥇</th>
+                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="2nd place finishes">🥈</th>
+                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="3rd place finishes">🥉</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">WINNINGS</th>
                 </tr>
               </thead>
@@ -7102,8 +7163,13 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                     <td className="py-2.5 px-4 font-mono text-yellow-100/60">{i + 1}</td>
                     <td className="py-2.5 px-4 text-emerald-100">{s.name}</td>
                     <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-300">{s.points}</td>
-                    <td className="py-2.5 px-4 text-right font-mono text-yellow-100/70">{s.firsts}</td>
-                    <td className="py-2.5 px-4 text-right font-mono text-yellow-100/50">{s.podiums}</td>
+                    {[[s.firsts, '#f4d03f'], [s.seconds, '#d4d4d4'], [s.thirds, '#d4924a']].map(([n, colour], k) => (
+                      <td key={k} className="py-2.5 px-4 text-right font-mono">
+                        {n > 0
+                          ? <span style={{ color: colour, fontWeight: 600 }}>{n}</span>
+                          : <span className="text-yellow-100/20">—</span>}
+                      </td>
+                    ))}
                     <td className="py-2.5 px-4 text-right font-mono text-emerald-300">{s.winnings > 0 ? `£${s.winnings}` : '—'}</td>
                   </tr>
                 ))}
@@ -7165,7 +7231,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
 
         {showLog && (
           <QuickLogGameModal
-            players={players}
+            players={players.some((p) => p.pokerTour) ? players.filter((p) => p.pokerTour) : players}
             onClose={() => setShowLog(false)}
             onSaved={async () => { setShowLog(false); await refresh(); }}
             onStartTimed={onStartTimed ? () => { setShowLog(false); onStartTimed(); } : null}
@@ -7221,6 +7287,67 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
             onCancel={() => setPendingDelete(null)}
           />
         )}
+
+        {showRoster && (
+          <TripRosterModal
+            players={players}
+            fbUser={fbUser}
+            onToggle={(id, on) => setPlayers((prev) => prev.map((p) => (p.id === id ? { ...p, pokerTour: on } : p)))}
+            onClose={() => setShowRoster(false)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Pick who's on the trip. Each tap writes the player's pokerTour flag
+// straight to Firestore so the list is the same on every device.
+function TripRosterModal({ players, fbUser, onToggle, onClose }) {
+  const sorted = [...players]
+    .filter((p) => p.active !== false)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const count = sorted.filter((p) => p.pokerTour).length;
+  const toggle = (p) => {
+    const on = !p.pokerTour;
+    onToggle(p.id, on);
+    setPokerTourMember(p.id, p.displayName, on, fbUser);
+  };
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[85vh] flex flex-col">
+        <div className="flex justify-between items-start mb-2">
+          <div>
+            <div className="font-display text-2xl gold-text">TRIP ROSTER</div>
+            <div className="text-yellow-100/50 text-xs font-mono mt-1">
+              Tick everyone on the holiday. {count} selected.
+            </div>
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100 shrink-0"><X size={20} /></button>
+        </div>
+        <div className="overflow-y-auto flex-1 space-y-1.5 my-3 pr-1">
+          {sorted.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => toggle(p)}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border font-mono text-sm ${
+                p.pokerTour
+                  ? 'bg-emerald-600/25 border-emerald-400/60 text-emerald-100'
+                  : 'bg-black/30 border-yellow-500/15 text-yellow-100/60'
+              }`}
+            >
+              <span>{p.displayName}</span>
+              <span>{p.pokerTour ? '✓' : ''}</span>
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={onClose}
+          className="control-btn w-full px-6 py-2.5 rounded-full font-display text-xl text-black"
+          style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+        >
+          DONE
+        </button>
       </div>
     </div>
   );
