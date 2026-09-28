@@ -2968,10 +2968,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                       placeholder="Texas Hold'em"
                       className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 font-mono text-sm text-center focus:outline-none focus:border-yellow-500/50"
                     />
-                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1 mt-4 text-center">SIZE</div>
-                    <div className="text-yellow-100/50 text-xs text-center mb-2">
-                      How much this game counts toward the trophy. Use Mini Game for quick side games.
-                    </div>
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 mt-4 text-center">POINTS</div>
                     <div className="grid grid-cols-2 gap-2">
                       {POKER_TOUR_SIZES.map((w) => {
                         const pts = pokerTourPoints(w);
@@ -2990,9 +2987,6 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                           </button>
                         );
                       })}
-                    </div>
-                    <div className="text-yellow-100/40 text-[11px] font-mono text-center mt-2">
-                      1st / 2nd / 3rd. Everyone else scores 0.
                     </div>
                   </div>
                 )}
@@ -7600,7 +7594,7 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed, existingGa
             />
           </div>
           <div>
-            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">SIZE</div>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">POINTS</div>
             <div className="flex gap-1">
               {POKER_TOUR_SIZES.map((w) => (
                 <button
