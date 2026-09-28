@@ -2411,7 +2411,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   const [buyIn, setBuyIn] = useState(isCasual ? '40' : '30');
   const [stackSize, setStackSize] = useState(isCasual ? '6000' : '10000');
   const [pokerTourGameName, setPokerTourGameName] = useState('');
-  const [pokerTourWeight, setPokerTourWeight] = useState(1);
+  const [pokerTourWeight, setPokerTourWeight] = useState(3);
   // Format: 'rebuy' (default for league + HR), 'freezeout' (no rebuys
   // allowed once busted), or 'vegas' (rebuys allowed, same as 'rebuy' —
   // every in-game check only tests for 'freezeout' — but blind levels
@@ -2937,8 +2937,8 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                   ))}
                 </div>
                 {/* Poker Tour only — game name (for the standings list) and
-                    size (STANDARD/BIG/MASSIVE = 1x/2x/3x on the 3/2/1 tour
-                    points, same scale as the quick-log flow). */}
+                    size (STANDARD 9/6/3 or MINI GAME 3/2/1 tour points, same scale as
+                    the quick-log flow). */}
                 {gameType === 'pokertour' && (
                   <div className="mt-8 max-w-xs mx-auto">
                     <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 text-center">GAME</div>
@@ -2951,10 +2951,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                     />
                     <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1 mt-4 text-center">SIZE</div>
                     <div className="text-yellow-100/50 text-xs text-center mb-2">
-                      How much this game counts toward the trophy. Pick bigger for the main events.
+                      How much this game counts toward the trophy. Use Mini Game for quick side games.
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[1, 2, 3].map((w) => {
+                    <div className="grid grid-cols-2 gap-2">
+                      {POKER_TOUR_SIZES.map((w) => {
                         const pts = pokerTourPoints(w);
                         return (
                           <button
@@ -6866,8 +6866,8 @@ function GameTypePicker({ onPick, fbUser }) {
             <div className="text-yellow-100/70 text-sm mb-4 min-h-[20px]">Holiday trophy standings</div>
             <ul className="text-emerald-200/80 text-xs font-mono space-y-1.5 mb-5">
               <li>• Any game, timed or not</li>
-              <li>• Top 3 scored 3/2/1 points</li>
-              <li>• Bigger games weighted higher</li>
+              <li>• Top 3 score 9/6/3 points</li>
+              <li>• Mini games score 3/2/1</li>
               <li>• Most points wins the trophy</li>
             </ul>
             <div className="flex flex-col gap-2 mt-auto">
@@ -6910,7 +6910,9 @@ function GameTypePicker({ onPick, fbUser }) {
 // Any game (timed or not) gets logged with its top 3 finishers; points
 // are 3/2/1 for 1st/2nd/3rd, multiplied by the game's weight (bigger
 // games count for more). Admin-only end to end, per Mark.
-const POKER_TOUR_WEIGHTS = { 1: 'STANDARD', 2: 'BIG', 3: 'MASSIVE' };
+// Two sizes: STANDARD (weight 3 → 9/6/3) and MINI GAME (weight 1 → 3/2/1).
+const POKER_TOUR_WEIGHTS = { 3: 'STANDARD', 1: 'MINI GAME' };
+const POKER_TOUR_SIZES = [3, 1];
 
 function pokerTourPoints(weight) {
   return { 1: 3 * weight, 2: 2 * weight, 3: 1 * weight };
@@ -7230,7 +7232,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
 // existing High Rollers timer, then log the same finish here).
 function QuickLogGameModal({ players, onClose, onSaved, onStartTimed }) {
   const [gameName, setGameName] = useState('');
-  const [weight, setWeight] = useState(1);
+  const [weight, setWeight] = useState(3);
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [p1, setP1] = useState('');
   const [p2, setP2] = useState('');
@@ -7321,7 +7323,7 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed }) {
           <div>
             <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">SIZE</div>
             <div className="flex gap-1">
-              {[1, 2, 3].map((w) => (
+              {POKER_TOUR_SIZES.map((w) => (
                 <button
                   key={w}
                   onClick={() => setWeight(w)}
@@ -10269,7 +10271,7 @@ function SaveGameModal({
       // above is league-only and gets discarded for every other gameType.
       const pokerTourPointsAwarded = {};
       if (gameType === 'pokertour') {
-        const pts = pokerTourPoints(config.pokerTourWeight || 1);
+        const pts = pokerTourPoints(config.pokerTourWeight || 3);
         initialFinishOrder.slice(0, 3).forEach((pid, i) => {
           pokerTourPointsAwarded[pid] = pts[i + 1];
         });
@@ -10315,7 +10317,7 @@ function SaveGameModal({
         bountyClaims: isLeague ? bountyClaims : [],
         // Poker Tour only.
         gameName: gameType === 'pokertour' ? (config.pokerTourGameName || 'Poker') : null,
-        weight: gameType === 'pokertour' ? (config.pokerTourWeight || 1) : null,
+        weight: gameType === 'pokertour' ? (config.pokerTourWeight || 3) : null,
         notes: 'Saved from live timer.',
       };
 
