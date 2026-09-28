@@ -7150,10 +7150,10 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                 <tr className="border-b border-emerald-500/20">
                   <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest">#</th>
                   <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest">PLAYER</th>
-                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">POINTS</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="1st place finishes">🥇</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="2nd place finishes">🥈</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="3rd place finishes">🥉</th>
+                  <th className="py-2 px-4 text-center font-mono text-xs text-yellow-300 tracking-widest bg-emerald-500/15 border-x border-emerald-400/30">POINTS</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">WINNINGS</th>
                 </tr>
               </thead>
@@ -7162,7 +7162,6 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                   <tr key={s.pid} className="border-b border-emerald-500/10 last:border-0">
                     <td className="py-2.5 px-4 font-mono text-yellow-100/60">{i + 1}</td>
                     <td className="py-2.5 px-4 text-emerald-100">{s.name}</td>
-                    <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-300">{s.points}</td>
                     {[[s.firsts, '#f4d03f'], [s.seconds, '#d4d4d4'], [s.thirds, '#d4924a']].map(([n, colour], k) => (
                       <td key={k} className="py-2.5 px-4 text-right font-mono">
                         {n > 0
@@ -7170,6 +7169,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                           : <span className="text-yellow-100/20">—</span>}
                       </td>
                     ))}
+                    <td className="py-2.5 px-4 text-center font-display text-2xl leading-none text-yellow-200 bg-emerald-500/15 border-x border-emerald-400/30">{s.points}</td>
                     <td className="py-2.5 px-4 text-right font-mono text-emerald-300">{s.winnings > 0 ? `£${s.winnings}` : '—'}</td>
                   </tr>
                 ))}
