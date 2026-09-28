@@ -2402,9 +2402,16 @@ function SeatDrawModal({ players, initialDealers, rosterNames, onConfirm, onCanc
 // ============ SETUP WIZARD ============
 function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext = null, onBack, fbUser }) {
   const isFinal = leagueContext?.isFinal === true;
+  // Poker Tour reuses the whole casual (non-league) path through this
+  // wizard/timer — roster-linked "regulars" picker, no bounties/subs/league
+  // money — but keeps its own regulars list and adds a SIZE (weight) picker
+  // + game name field further down, both pokertour-only.
+  const isCasual = gameType === 'highrollers' || gameType === 'pokertour';
   const [step, setStep] = useState(0);
-  const [buyIn, setBuyIn] = useState(gameType === 'highrollers' ? '40' : '30');
-  const [stackSize, setStackSize] = useState(gameType === 'highrollers' ? '6000' : '10000');
+  const [buyIn, setBuyIn] = useState(isCasual ? '40' : '30');
+  const [stackSize, setStackSize] = useState(isCasual ? '6000' : '10000');
+  const [pokerTourGameName, setPokerTourGameName] = useState('');
+  const [pokerTourWeight, setPokerTourWeight] = useState(1);
   // Format: 'rebuy' (default for league + HR), 'freezeout' (no rebuys
   // allowed once busted), or 'vegas' (rebuys allowed, same as 'rebuy' —
   // every in-game check only tests for 'freezeout' — but blind levels
@@ -2472,9 +2479,13 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
   // than disabled (see the bottom-nav onClick below).
   const [showDealerWarning, setShowDealerWarning] = useState(false);
 
+  // Poker Tour keeps its own regulars list (the trip roster), separate
+  // from the home-game High Rollers regulars — adding holiday guests to
+  // one shouldn't pollute the other.
+  const regularsStorageKey = gameType === 'pokertour' ? 'grp-pokertour-regulars' : 'grp-hr-regulars';
   const readHrRegulars = () => {
     try {
-      const saved = localStorage.getItem('grp-hr-regulars');
+      const saved = localStorage.getItem(regularsStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
@@ -2499,7 +2510,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       // old alphabetical slot.
       const allMembers = [...rawMembers].sort((a, b) => a.name.localeCompare(b.name));
       setAllGrpPlayers(allMembers);
-      if (gameType === 'highrollers') {
+      if (isCasual) {
         const hrReg = readHrRegulars();
         setHrRegulars(hrReg);
         // Build the displayed roster: GRP players in the allowlist, plus any
@@ -2612,11 +2623,11 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     })();
   }, [roster, rosterLoaded]);
 
-  // Persist HR regulars allowlist when in HR mode
+  // Persist regulars allowlist when in HR or Poker Tour mode
   useEffect(() => {
-    if (!rosterLoaded || gameType !== 'highrollers') return;
+    if (!rosterLoaded || !isCasual) return;
     try {
-      localStorage.setItem('grp-hr-regulars', JSON.stringify(hrRegulars));
+      localStorage.setItem(regularsStorageKey, JSON.stringify(hrRegulars));
     } catch (e) { /* fail silently */ }
   }, [hrRegulars, rosterLoaded, gameType]);
 
@@ -2708,7 +2719,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
     setBuyInsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
     setSubsPaidByName((m) => { const n = { ...m }; delete n[name]; return n; });
     setDealers((d) => { if (!d.has(name)) return d; const n = new Set(d); n.delete(name); return n; });
-    if (gameType === 'highrollers') {
+    if (isCasual) {
       setHrRegulars((prev) => prev.filter((n) => n !== name));
     }
   };
@@ -2820,6 +2831,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       buyInsPaidByName,
       subsPaidByName,
       leagueContext, // pass through so the main timer & save flow know which season/game
+      // Poker Tour only — game name + size feed the tour-points calc and
+      // the standings list at save time.
+      pokerTourGameName: gameType === 'pokertour' ? (pokerTourGameName.trim() || 'Poker') : null,
+      pokerTourWeight: gameType === 'pokertour' ? pokerTourWeight : null,
     });
   };
 
@@ -2880,7 +2895,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       <div className="felt-texture w-full max-w-2xl">
         <div className="text-center mb-8">
           <div className="font-display text-5xl gold-text">
-            {gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE GAME'}
+            {gameType === 'pokertour' ? 'POKER TOUR' : gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE GAME'}
           </div>
           <div className="font-mono text-xs text-emerald-200/60 tracking-widest mt-1">TOURNAMENT SETUP</div>
           {onBack && (
@@ -2921,6 +2936,37 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                     <button key={v} onClick={() => setBuyIn(v)} className="px-4 py-1.5 rounded-full bg-black/30 border border-yellow-500/20 text-yellow-100/70 font-mono text-sm hover:border-yellow-500/50">£{v}</button>
                   ))}
                 </div>
+                {/* Poker Tour only — game name (for the standings list) and
+                    size (STANDARD/BIG/MASSIVE = 1x/2x/3x on the 3/2/1 tour
+                    points, same scale as the quick-log flow). */}
+                {gameType === 'pokertour' && (
+                  <div className="mt-8 max-w-xs mx-auto">
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 text-center">GAME</div>
+                    <input
+                      type="text"
+                      value={pokerTourGameName}
+                      onChange={(e) => setPokerTourGameName(e.target.value)}
+                      placeholder="Texas Hold'em"
+                      className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 font-mono text-sm text-center focus:outline-none focus:border-yellow-500/50"
+                    />
+                    <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2 mt-4 text-center">SIZE</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[1, 2, 3].map((w) => (
+                        <button
+                          key={w}
+                          onClick={() => setPokerTourWeight(w)}
+                          className={`px-2 py-2 rounded-lg font-mono text-xs tracking-widest border ${
+                            pokerTourWeight === w
+                              ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-100'
+                              : 'bg-black/30 border-yellow-500/20 text-yellow-100/50 hover:border-yellow-500/50'
+                          }`}
+                        >
+                          {POKER_TOUR_WEIGHTS[w]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {/* Format toggle — league + HR. Finals are auto-locked to
                     freezeout (no rebuys allowed). */}
                 {!isFinal && (
@@ -2930,7 +2976,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                       <button
                         onClick={() => {
                           if (format === 'vegas') {
-                            setStackSize(gameType === 'highrollers' ? '6000' : '10000');
+                            setStackSize(isCasual ? '6000' : '10000');
                             setDuration('180');
                           }
                           setFormat('rebuy');
@@ -2946,7 +2992,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                       <button
                         onClick={() => {
                           if (format === 'vegas') {
-                            setStackSize(gameType === 'highrollers' ? '6000' : '10000');
+                            setStackSize(isCasual ? '6000' : '10000');
                             setDuration('180');
                           }
                           setFormat('freezeout');
@@ -3038,7 +3084,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                     ? 'Add your regulars below'
                     : `${playersArray.length} of ${roster.length} playing tonight`}
                 </div>
-                {gameType === 'highrollers' ? (
+                {isCasual ? (
                   <div className="flex justify-center mb-4">
                     <button
                       onClick={() => setShowPlayerPicker(true)}
@@ -4236,6 +4282,8 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         rebuyCutoffLevelNumber: rebuyCutoffNumber,
         addOnsEnabled: config.addOnsEnabled || false,
         seating: config.seating || null,
+        pokerTourGameName: config.pokerTourGameName || null,
+        pokerTourWeight: config.pokerTourWeight || null,
       },
       levels,
       players,
@@ -5126,7 +5174,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
             <div className="flex items-center gap-3">
               <img src="logos/GreeneRoomPokerLogo-02.svg" alt="" className="h-12 w-12 shrink-0" />
               <div className="font-display text-3xl gold-text">
-                {config.gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE GAME'}
+                {config.gameType === 'pokertour' ? 'POKER TOUR' : config.gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE GAME'}
               </div>
             </div>
             <div className="flex gap-2 flex-wrap justify-end">
@@ -6848,7 +6896,7 @@ function pokerTourPoints(weight) {
   return { 1: 3 * weight, 2: 2 * weight, 3: 1 * weight };
 }
 
-function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled }) {
+function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTimed }) {
   const [games, setGames] = useState([]);
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -6912,11 +6960,16 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled }) {
     const totals = {};
     games.forEach((g) => {
       Object.entries(g.pointsAwarded || {}).forEach(([pid, pts]) => {
-        if (!totals[pid]) totals[pid] = { pid, points: 0, firsts: 0, podiums: 0 };
+        if (!totals[pid]) totals[pid] = { pid, points: 0, firsts: 0, podiums: 0, winnings: 0 };
         totals[pid].points += pts || 0;
         totals[pid].podiums += 1;
       });
-      const firstPid = (g.finishOrder || [])[0];
+      const finishOrder = g.finishOrder || [];
+      Object.entries(g.payouts || {}).forEach(([place, amt]) => {
+        const pid = finishOrder[parseInt(place, 10) - 1];
+        if (pid && totals[pid]) totals[pid].winnings += amt || 0;
+      });
+      const firstPid = finishOrder[0];
       if (firstPid && totals[firstPid]) totals[firstPid].firsts += 1;
     });
     return Object.values(totals)
@@ -6975,13 +7028,23 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled }) {
               HOLIDAY STANDINGS · {games.length} GAME{games.length === 1 ? '' : 'S'}
             </div>
           </div>
-          <button
-            onClick={() => setShowLog(true)}
-            className="px-4 py-2.5 rounded-xl font-display text-base text-black whitespace-nowrap hover:brightness-110"
-            style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
-          >
-            + LOG A GAME
-          </button>
+          <div className="flex flex-col gap-2 items-end">
+            <button
+              onClick={() => setShowLog(true)}
+              className="px-4 py-2.5 rounded-xl font-display text-base text-black whitespace-nowrap hover:brightness-110"
+              style={{ background: 'linear-gradient(135deg, #14a37b, #0e8c69)' }}
+            >
+              + LOG A GAME
+            </button>
+            {onStartTimed && (
+              <button
+                onClick={onStartTimed}
+                className="px-4 py-1.5 rounded-lg font-mono text-xs text-emerald-200 bg-black/40 border border-emerald-500/30 hover:bg-black/60 whitespace-nowrap"
+              >
+                + TIMED GAME (with blinds timer)
+              </button>
+            )}
+          </div>
         </div>
 
         {error && (
@@ -7008,6 +7071,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled }) {
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">POINTS</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">1ST</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">PODIUMS</th>
+                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">WINNINGS</th>
                 </tr>
               </thead>
               <tbody>
@@ -7018,6 +7082,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled }) {
                     <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-300">{s.points}</td>
                     <td className="py-2.5 px-4 text-right font-mono text-yellow-100/70">{s.firsts}</td>
                     <td className="py-2.5 px-4 text-right font-mono text-yellow-100/50">{s.podiums}</td>
+                    <td className="py-2.5 px-4 text-right font-mono text-emerald-300">{s.winnings > 0 ? `£${s.winnings}` : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -7037,6 +7102,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled }) {
                   place,
                   name: pid ? (playersById[pid]?.displayName || pid) : null,
                   points: g.pointsAwarded?.[pid] || 0,
+                  winnings: g.payouts?.[String(place)] || 0,
                 };
               });
               const medal = ['🥇', '🥈', '🥉'];
@@ -7062,7 +7128,10 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled }) {
                           <span className="flex-shrink-0">{medal[p.place - 1]}</span>
                           <span className="truncate min-w-0">{p.name || '—'}</span>
                         </span>
-                        {p.points > 0 && <span className="flex-shrink-0 text-emerald-300/80 text-xs">+{p.points}</span>}
+                        <span className="flex-shrink-0 flex items-center gap-1.5 text-xs">
+                          {p.points > 0 && <span className="text-emerald-300/80">+{p.points}</span>}
+                          {p.winnings > 0 && <span className="text-yellow-300/80">£{p.winnings}</span>}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -7099,7 +7168,12 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled }) {
                       <span className="w-6 text-center flex-shrink-0 text-yellow-100/60">{['🥇', '🥈', '🥉'][i] || i + 1}</span>
                       <span className="truncate text-emerald-100">{playersById[pid]?.displayName || pid}</span>
                     </span>
-                    <span className="font-mono text-sm text-emerald-300 shrink-0">+{viewingGame.pointsAwarded?.[pid] || 0}</span>
+                    <span className="flex items-center gap-3 shrink-0 font-mono text-sm">
+                      <span className="text-emerald-300">+{viewingGame.pointsAwarded?.[pid] || 0}</span>
+                      {(viewingGame.payouts?.[String(i + 1)] || 0) > 0 && (
+                        <span className="text-yellow-300">£{viewingGame.payouts[String(i + 1)]}</span>
+                      )}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -7140,6 +7214,9 @@ function QuickLogGameModal({ players, onClose, onSaved }) {
   const [p1, setP1] = useState('');
   const [p2, setP2] = useState('');
   const [p3, setP3] = useState('');
+  const [w1, setW1] = useState('');
+  const [w2, setW2] = useState('');
+  const [w3, setW3] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -7156,6 +7233,14 @@ function QuickLogGameModal({ players, onClose, onSaved }) {
     const pts = pokerTourPoints(weight);
     const pointsAwarded = {};
     finishOrder.forEach((pid, i) => { pointsAwarded[pid] = pts[i + 1]; });
+    // Winnings — same place-keyed shape (payouts: {"1": amt, ...}) used
+    // everywhere else in the app, so it reads the same whether a game was
+    // quick-logged or run through the timer.
+    const payouts = {};
+    [w1, w2, w3].forEach((w, i) => {
+      const amt = parseFloat(w);
+      if (!isNaN(amt) && amt > 0 && finishOrder[i]) payouts[String(i + 1)] = amt;
+    });
     try {
       await window.GRP_DB.saveGame({
         type: 'pokertour',
@@ -7164,6 +7249,7 @@ function QuickLogGameModal({ players, onClose, onSaved }) {
         weight,
         finishOrder,
         pointsAwarded,
+        payouts,
       });
       onSaved();
     } catch (e) {
@@ -7175,9 +7261,14 @@ function QuickLogGameModal({ players, onClose, onSaved }) {
   return (
     <div onClick={busy ? null : onClose} className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
       <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-2xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center mb-4">
-          <div className="font-display text-2xl gold-text">LOG A GAME</div>
-          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="font-display text-2xl gold-text">LOG A GAME</div>
+            <div className="text-yellow-100/50 text-xs font-mono mt-1">
+              Timed game? Play it on the High Rollers timer, then log the finish here.
+            </div>
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100 shrink-0"><X size={20} /></button>
         </div>
 
         <div className="mb-4">
@@ -7223,22 +7314,37 @@ function QuickLogGameModal({ players, onClose, onSaved }) {
         </div>
 
         {[
-          { label: '🥇 1ST', value: p1, set: setP1 },
-          { label: '🥈 2ND', value: p2, set: setP2 },
-          { label: '🥉 3RD', value: p3, set: setP3 },
+          { label: '🥇 1ST', value: p1, set: setP1, w: w1, setW: setW1 },
+          { label: '🥈 2ND', value: p2, set: setP2, w: w2, setW: setW2 },
+          { label: '🥉 3RD', value: p3, set: setP3, w: w3, setW: setW3 },
         ].map((row, i) => (
           <div key={i} className="mb-3">
-            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">{row.label}</div>
-            <select
-              value={row.value}
-              onChange={(e) => row.set(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
-            >
-              <option value="">—</option>
-              {optionsFor(row.value).map((p) => (
-                <option key={p.id} value={p.id}>{p.displayName}</option>
-              ))}
-            </select>
+            <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-1">
+              {row.label} <span className="text-emerald-300/70">+{pokerTourPoints(weight)[i + 1]} pts</span>
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={row.value}
+                onChange={(e) => row.set(e.target.value)}
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 font-mono text-sm focus:outline-none focus:border-yellow-500/50"
+              >
+                <option value="">—</option>
+                {optionsFor(row.value).map((p) => (
+                  <option key={p.id} value={p.id}>{p.displayName}</option>
+                ))}
+              </select>
+              <div className="relative w-24 shrink-0">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-yellow-100/40 font-mono text-sm">£</span>
+                <input
+                  type="number"
+                  value={row.w}
+                  onChange={(e) => row.setW(e.target.value)}
+                  placeholder="won"
+                  disabled={!row.value}
+                  className="w-full pl-5 pr-2 py-2 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 font-mono text-sm focus:outline-none focus:border-yellow-500/50 disabled:opacity-30"
+                />
+              </div>
+            </div>
           </div>
         ))}
 
@@ -10021,7 +10127,9 @@ function SaveGameModal({
   // numeric suffix is appended at save time (-2, -3, ...) to avoid clashes.
   const gameId = gameType === 'league'
     ? `${leagueContext?.seasonId}-g${leagueContext?.gameNumber}`
-    : `hr-${date}`;
+    : gameType === 'pokertour'
+      ? `pt-${date}`
+      : `hr-${date}`;
 
   const updatePoints = (pid, val) => {
     const num = parseInt(val);
@@ -10092,8 +10200,13 @@ function SaveGameModal({
           return;
         }
       } else {
-        const allHr = await window.GRP_DB.getAllHighRollerGames();
-        const sameDay = allHr.filter(
+        // Check for same-day repeats against this game's own collection —
+        // Poker Tour and High Rollers each get their own id sequence even
+        // though both use date-based ids (pt-YYYY-MM-DD / hr-YYYY-MM-DD).
+        const sameType = gameType === 'pokertour'
+          ? await window.GRP_DB.getAllPokerTourGames()
+          : await window.GRP_DB.getAllHighRollerGames();
+        const sameDay = sameType.filter(
           (g) => g.id === gameId || (g.id && g.id.startsWith(`${gameId}-`))
         );
         if (sameDay.length > 0) {
@@ -10122,6 +10235,17 @@ function SaveGameModal({
         buyInsPaidByPid[pid] = (buyInsPaidByName || {})[p.name] === true;
         subsPaidByPid[pid] = (subsPaidByName || {})[p.name] === true;
       });
+
+      // Poker Tour scoring — 3/2/1 for the top 3, times the game's size
+      // (weight). Nothing to do with league points; computePointsAwarded
+      // above is league-only and gets discarded for every other gameType.
+      const pokerTourPointsAwarded = {};
+      if (gameType === 'pokertour') {
+        const pts = pokerTourPoints(config.pokerTourWeight || 1);
+        initialFinishOrder.slice(0, 3).forEach((pid, i) => {
+          pokerTourPointsAwarded[pid] = pts[i + 1];
+        });
+      }
 
       const gameDoc = {
         id: finalId,
@@ -10158,9 +10282,12 @@ function SaveGameModal({
           return Math.max(0, p - lm);
         })(),
         subs: isLeague ? (parseFloat(subs) || 0) : 0,
-        pointsAwarded: isLeague ? pointsAwarded : {},
+        pointsAwarded: isLeague ? pointsAwarded : (gameType === 'pokertour' ? pokerTourPointsAwarded : {}),
         bountyHolders: isLeague ? bountyIds : [],
         bountyClaims: isLeague ? bountyClaims : [],
+        // Poker Tour only.
+        gameName: gameType === 'pokertour' ? (config.pokerTourGameName || 'Poker') : null,
+        weight: gameType === 'pokertour' ? (config.pokerTourWeight || 1) : null,
         notes: 'Saved from live timer.',
       };
 
@@ -11896,7 +12023,7 @@ function ResumeGameBanner({ snap, onResume, onDiscard }) {
     const hrs = Math.floor(mins / 60);
     return `${hrs}h ${mins % 60}m ago`;
   })();
-  const label = snap.gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE';
+  const label = snap.gameType === 'pokertour' ? 'POKER TOUR' : snap.gameType === 'highrollers' ? 'HIGH ROLLERS' : 'LEAGUE';
 
   return (
     <div className="fixed left-1/2 -translate-x-1/2 top-4 z-50 max-w-md w-[calc(100%-2rem)] px-4">
@@ -12045,6 +12172,8 @@ function App() {
       rebuyCutoffLevelNumber: oc.rebuyCutoffLevelNumber ?? null,
       addOnsEnabled: oc.addOnsEnabled || false,
       seating: oc.seating || null,
+      pokerTourGameName: oc.pokerTourGameName || null,
+      pokerTourWeight: oc.pokerTourWeight || null,
       gameType: liveResume.gameType || 'league',
       leagueContext: liveResume.leagueContext || null,
       levels: lvls,
@@ -12143,6 +12272,7 @@ function App() {
         fbUser={fbUser}
         autoLog={pokerTourAutoLog}
         onAutoLogHandled={() => setPokerTourAutoLog(false)}
+        onStartTimed={() => { setGameType('pokertour'); setRoute('setup'); }}
       />
     );
   } else if (route === 'league-context') {
