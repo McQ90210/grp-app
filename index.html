@@ -7132,11 +7132,11 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                 <tr className="border-b border-emerald-500/20">
                   <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest">#</th>
                   <th className="py-2 px-4 text-left font-mono text-xs text-emerald-300 tracking-widest w-full">PLAYER</th>
-                  <th className="py-2 text-center font-mono text-xs text-emerald-300 tracking-widest" style={{ width: 72 }} title="1st place finishes">🥇</th>
-                  <th className="py-2 text-center font-mono text-xs text-emerald-300 tracking-widest" style={{ width: 72 }} title="2nd place finishes">🥈</th>
-                  <th className="py-2 text-center font-mono text-xs text-emerald-300 tracking-widest" style={{ width: 72 }} title="3rd place finishes">🥉</th>
-                  <th style={{ width: 36 }} />
-                  <th className="py-2 px-4 text-center font-mono text-xs text-yellow-300 tracking-widest bg-emerald-500/15 border-l border-emerald-400/30" style={{ width: 110 }}>POINTS</th>
+                  <th className="py-2 text-center font-mono text-xs text-emerald-300 tracking-widest" style={{ width: 72, minWidth: 72 }} title="1st place finishes">🥇</th>
+                  <th className="py-2 text-center font-mono text-xs text-emerald-300 tracking-widest" style={{ width: 72, minWidth: 72 }} title="2nd place finishes">🥈</th>
+                  <th className="py-2 text-center font-mono text-xs text-emerald-300 tracking-widest" style={{ width: 72, minWidth: 72 }} title="3rd place finishes">🥉</th>
+                  <th style={{ width: 36, minWidth: 36 }} />
+                  <th className="py-2 px-4 text-center font-mono text-xs text-yellow-300 tracking-widest bg-emerald-500/15 border-l border-emerald-400/30" style={{ width: 190, minWidth: 190 }}>POINTS</th>
                 </tr>
               </thead>
               <tbody>
@@ -7150,13 +7150,13 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                     <td className="py-2.5 px-4 font-mono text-yellow-100/60">{i + 1}</td>
                     <td className="py-2.5 px-4 text-emerald-100">{s.name}</td>
                     {[[s.firsts, '#f4d03f'], [s.seconds, '#d4d4d4'], [s.thirds, '#d4924a']].map(([n, colour], k) => (
-                      <td key={k} className="py-2.5 text-center font-mono" style={{ width: 72 }}>
+                      <td key={k} className="py-2.5 text-center font-mono" style={{ width: 72, minWidth: 72 }}>
                         {n > 0
                           ? <span style={{ color: colour, fontWeight: 600 }}>{n}</span>
                           : <span className="text-yellow-100/20">—</span>}
                       </td>
                     ))}
-                    <td style={{ width: 36 }} />
+                    <td style={{ width: 36, minWidth: 36 }} />
                     <td className="py-2.5 px-4 text-center font-display text-2xl leading-none text-yellow-200 bg-emerald-500/15 border-l border-emerald-400/30">{s.points}</td>
                   </tr>
                 ))}
