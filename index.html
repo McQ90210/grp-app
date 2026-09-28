@@ -6956,6 +6956,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
   const [viewingGame, setViewingGame] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null); // { id, label }
   const [showRoster, setShowRoster] = useState(false);
+  const [selectedPid, setSelectedPid] = useState(null);
 
   const refresh = async () => {
     try {
@@ -7153,13 +7154,17 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="1st place finishes">🥇</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="2nd place finishes">🥈</th>
                   <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest" title="3rd place finishes">🥉</th>
-                  <th className="py-2 px-4 text-center font-mono text-xs text-yellow-300 tracking-widest bg-emerald-500/15 border-x border-emerald-400/30">POINTS</th>
-                  <th className="py-2 px-4 text-right font-mono text-xs text-emerald-300 tracking-widest">WINNINGS</th>
+                  <th className="py-2 px-4 text-center font-mono text-xs text-yellow-300 tracking-widest bg-emerald-500/15 border-l border-emerald-400/30">POINTS</th>
                 </tr>
               </thead>
               <tbody>
                 {standings.map((s, i) => (
-                  <tr key={s.pid} className="border-b border-emerald-500/10 last:border-0">
+                  <tr
+                    key={s.pid}
+                    onClick={() => setSelectedPid(s.pid)}
+                    className="border-b border-emerald-500/10 last:border-0 cursor-pointer hover:bg-emerald-500/5 transition-colors"
+                    title="See this player's games"
+                  >
                     <td className="py-2.5 px-4 font-mono text-yellow-100/60">{i + 1}</td>
                     <td className="py-2.5 px-4 text-emerald-100">{s.name}</td>
                     {[[s.firsts, '#f4d03f'], [s.seconds, '#d4d4d4'], [s.thirds, '#d4924a']].map(([n, colour], k) => (
@@ -7169,8 +7174,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                           : <span className="text-yellow-100/20">—</span>}
                       </td>
                     ))}
-                    <td className="py-2.5 px-4 text-center font-display text-2xl leading-none text-yellow-200 bg-emerald-500/15 border-x border-emerald-400/30">{s.points}</td>
-                    <td className="py-2.5 px-4 text-right font-mono text-emerald-300">{s.winnings > 0 ? `£${s.winnings}` : '—'}</td>
+                    <td className="py-2.5 px-4 text-center font-display text-2xl leading-none text-yellow-200 bg-emerald-500/15 border-l border-emerald-400/30">{s.points}</td>
                   </tr>
                 ))}
               </tbody>
@@ -7288,6 +7292,15 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
           />
         )}
 
+        {selectedPid && (
+          <PokerTourPlayerProfile
+            pid={selectedPid}
+            players={players}
+            games={games}
+            onClose={() => setSelectedPid(null)}
+          />
+        )}
+
         {showRoster && (
           <TripRosterModal
             players={players}
@@ -7295,6 +7308,131 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
             onToggle={(id, on) => setPlayers((prev) => prev.map((p) => (p.id === id ? { ...p, pokerTour: on } : p)))}
             onClose={() => setShowRoster(false)}
           />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Per-player Poker Tour history: every tour game they played or placed in,
+// with finishing position, tour points and money. Timed games carry a
+// buy-in (and rebuys), so those count against their £; not-timed games
+// only record winnings, so they can only add to it.
+function PokerTourPlayerProfile({ pid, players, games, onClose }) {
+  const player = players.find((p) => p.id === pid);
+  const name = player?.displayName || pid;
+  const ordinal = (n) => {
+    const suffix = ['th', 'st', 'nd', 'rd'];
+    const v = n % 100;
+    return n + (suffix[(v - 20) % 10] || suffix[v] || suffix[0]);
+  };
+
+  const rows = [...games]
+    .filter((g) => (g.finishOrder || []).includes(pid) || (g.attendees || []).includes(pid))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    .map((g) => {
+      const idx = (g.finishOrder || []).indexOf(pid);
+      const place = idx >= 0 ? idx + 1 : null;
+      const won = place ? (parseFloat(g.payouts?.[String(place)]) || 0) : 0;
+      const timed = typeof g.buyIn === 'number' && (g.attendees || []).length > 0;
+      const spent = timed ? g.buyIn * (1 + (g.rebuys?.[pid] || 0)) : 0;
+      return {
+        id: g.id,
+        date: g.date,
+        gameName: g.gameName || 'Untitled game',
+        size: POKER_TOUR_WEIGHTS[g.weight] || 'STANDARD',
+        timed,
+        place,
+        fieldSize: timed ? g.attendees.length : null,
+        points: g.pointsAwarded?.[pid] || 0,
+        won,
+        spent,
+        net: won - spent,
+      };
+    });
+
+  const totals = rows.reduce((t, r) => ({
+    points: t.points + r.points,
+    won: t.won + r.won,
+    spent: t.spent + r.spent,
+    p1: t.p1 + (r.place === 1 ? 1 : 0),
+    p2: t.p2 + (r.place === 2 ? 1 : 0),
+    p3: t.p3 + (r.place === 3 ? 1 : 0),
+  }), { points: 0, won: 0, spent: 0, p1: 0, p2: 0, p3: 0 });
+  const net = totals.won - totals.spent;
+  const money = (n) => `${n < 0 ? '−' : ''}£${Math.abs(Math.round(n))}`;
+  const medal = { 1: '🥇', 2: '🥈', 3: '🥉' };
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div onClick={(e) => e.stopPropagation()} className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950 to-black p-6 max-w-2xl w-full max-h-[92vh] overflow-y-auto">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="font-display text-4xl gold-text">{name}</div>
+            <div className="text-emerald-300/60 font-mono text-xs mt-1">Poker Tour · {rows.length} game{rows.length === 1 ? '' : 's'}</div>
+          </div>
+          <button onClick={onClose} className="text-yellow-100/60 hover:text-yellow-100"><X size={20} /></button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20 text-center">
+            <div className="font-mono text-xs text-yellow-100/40">FINISHES</div>
+            <div className="font-display text-2xl text-emerald-200 leading-tight">
+              🥇{totals.p1} 🥈{totals.p2} 🥉{totals.p3}
+            </div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20 text-center">
+            <div className="font-mono text-xs text-yellow-100/40">POINTS</div>
+            <div className="font-display text-2xl text-yellow-200">{totals.points}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20 text-center">
+            <div className="font-mono text-xs text-yellow-100/40">£ WON</div>
+            <div className="font-display text-2xl text-emerald-300">{money(totals.won)}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-black/40 border border-emerald-500/20 text-center">
+            <div className="font-mono text-xs text-yellow-100/40">PROFIT / LOSS</div>
+            <div className={`font-display text-2xl ${net >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
+              {net > 0 ? '+' : ''}{money(net)}
+            </div>
+          </div>
+        </div>
+        {totals.spent > 0 && (
+          <div className="-mt-4 mb-5 text-center font-mono text-[11px] text-yellow-100/40">
+            {money(totals.won)} won − {money(totals.spent)} buy-ins on timed games
+          </div>
+        )}
+
+        <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">GAME HISTORY</div>
+        {rows.length === 0 ? (
+          <div className="text-yellow-100/40 text-sm text-center py-6 font-mono">No games yet.</div>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3 px-3 font-mono text-[10px] text-yellow-100/30 tracking-widest">
+              <div className="flex-1">GAME</div>
+              <div className="shrink-0 w-20 text-center">FINISH</div>
+              <div className="shrink-0 w-12 text-right">PTS</div>
+              <div className="shrink-0 w-16 text-right">£</div>
+            </div>
+            {rows.map((r) => (
+              <div key={r.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-black/30 border border-emerald-500/10 font-mono text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="text-emerald-100 truncate">{r.gameName}</div>
+                  <div className="text-[11px] text-yellow-100/40">
+                    {r.date || 'unknown date'} · {r.size}{r.timed ? ' · timed' : ''}
+                  </div>
+                </div>
+                <div className="shrink-0 w-20 text-center">
+                  {r.place
+                    ? <span>{medal[r.place] || ''} <span className="text-yellow-100/80">{ordinal(r.place)}</span>{r.fieldSize ? <span className="text-yellow-100/30">/{r.fieldSize}</span> : null}</span>
+                    : <span className="text-yellow-100/30">—</span>}
+                </div>
+                <div className="shrink-0 w-12 text-right text-yellow-200">{r.points > 0 ? `+${r.points}` : '—'}</div>
+                <div className={`shrink-0 w-16 text-right ${r.net > 0 ? 'text-emerald-300' : r.net < 0 ? 'text-red-400' : 'text-yellow-100/30'}`}>
+                  {r.net === 0 ? '—' : `${r.net > 0 ? '+' : ''}${money(r.net)}`}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>
