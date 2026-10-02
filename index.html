@@ -3733,6 +3733,9 @@ const WLED_RECIPES = {
 };
 
 // ============ MAIN TIMER ============
+// Hand choices for the timer's HIGH HAND panel, best first.
+const HIGH_HAND_RANKS = ['Royal Flush', 'Straight Flush', 'Four of a Kind', 'Full House', 'Flush', 'Straight', 'Three of a Kind', 'Two Pair', 'Pair'];
+
 function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser }) {
   // Resume hydration: when the app boots into an in-progress game, App
   // injects the last saved snapshot at config._resume so we restore state
@@ -3844,6 +3847,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // where `rebought: true` means the player bought back in immediately
   // (so they stayed in the active pool — not in eliminatedPlayers).
   const [knockouts, setKnockouts] = useState(resume?.knockouts || []);
+  // High hand of the night — { player, hand, detail } | null. Overwritten
+  // whenever a better hand turns up; whoever holds it at the end wins the
+  // prize. Rides in the live snapshot and is stored on the game doc.
+  const [highHand, setHighHand] = useState(resume?.highHand || null);
+  const [highHandDraft, setHighHandDraft] = useState({ player: '', hand: '', detail: '' });
   // Standings-rail delayed reveal: lag the visible knockouts log by a few
   // seconds so the room can look up after a KO and *watch* the points move.
   // The real `knockouts` state stays authoritative for the save flow /
@@ -4318,6 +4326,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       addOnsTaken: Array.from(addOnsTaken),
       knockedOutBy,
       knockouts,
+      highHand,
       buyInsPaidByName,
       subsPaidByName,
       payoutKey,
@@ -4333,7 +4342,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         console.error('[grp] live save to Firestore failed:', e);
       });
     }
-  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, knockouts, buyInsPaidByName, subsPaidByName, payoutKey, gameStartedAt, fbUser, config, rebuyCutoff]);
+  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, knockouts, highHand, buyInsPaidByName, subsPaidByName, payoutKey, gameStartedAt, fbUser, config, rebuyCutoff]);
 
   // Load the full club roster from Firestore so late-entry can suggest existing names
   useEffect(() => {
@@ -5017,6 +5026,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const level = levels[currentLevel] || levels[levels.length - 1] || { sb: 0, bb: 0, ante: 0, duration: 1, isBreak: false };
   const nextLvl = levels[currentLevel + 1];
   const activePlayers = players.filter((p) => !eliminatedPlayers.includes(p.name));
+  const openHighHandPanel = () => {
+    if (activePanel === 'highhand') { setActivePanel(null); return; }
+    setHighHandDraft(highHand
+      ? { player: highHand.player, hand: highHand.hand, detail: highHand.detail || '' }
+      : { player: '', hand: '', detail: '' });
+    setActivePanel('highhand');
+  };
   const progress = 1 - timeLeft / ((level.duration || 1) * 60);
   // Pot includes rebuys and add-ons (an add-on costs the same as a
   // rebuy — see the wizard toggle). `prizePool` here is the raw pot
@@ -5228,6 +5244,13 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               </button>
               <button onClick={() => setActivePanel(activePanel === 'payouts' ? null : 'payouts')} className={`control-btn p-3 rounded-full border text-yellow-100 ${activePanel === 'payouts' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`} title="Payouts">
                 <Trophy size={18} />
+              </button>
+              <button
+                onClick={openHighHandPanel}
+                className={`control-btn p-3 rounded-full border text-base leading-none ${activePanel === 'highhand' ? 'bg-yellow-500/20 border-yellow-500/60' : 'bg-black/40 border-yellow-500/20'}`}
+                title="High hand"
+              >
+                🃏
               </button>
               {config.gameType === 'league' && !config.leagueContext?.isFinal && (
                 <>
@@ -5615,6 +5638,91 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
               <UserMinus size={16} /> ELIMINATE PLAYER
             </button>
           </div>
+
+          {/* High hand strip — always visible once one is recorded; tap to change. */}
+          {highHand && activePanel !== 'highhand' && (
+            <button
+              onClick={openHighHandPanel}
+              className="w-full gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3 mb-6 flex items-center justify-between gap-3 text-left"
+              title="Change high hand"
+            >
+              <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest shrink-0">🃏 HIGH HAND</div>
+              <div className="min-w-0 text-right">
+                <span className="font-display text-xl gold-text">{highHand.player}</span>
+                <span className="font-mono text-sm text-yellow-100/80"> — {highHand.hand}{highHand.detail ? ` (${highHand.detail})` : ''}</span>
+              </div>
+            </button>
+          )}
+
+          {/* HIGH HAND PANEL */}
+          {activePanel === 'highhand' && (
+            <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
+              <div className="flex justify-between items-center mb-4">
+                <div className="font-display text-2xl gold-text">HIGH HAND</div>
+                <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <div>
+                  <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">WHOSE HAND</div>
+                  <select
+                    value={highHandDraft.player}
+                    onChange={(e) => setHighHandDraft((d) => ({ ...d, player: e.target.value }))}
+                    className="w-full px-3 py-2.5 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 focus:outline-none focus:border-yellow-500/50"
+                  >
+                    <option value="" style={{ background: '#0a3d1f' }}>Select player…</option>
+                    {players.map((p) => (
+                      <option key={p.name} value={p.name} style={{ background: '#0a3d1f' }}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">HAND</div>
+                  <select
+                    value={highHandDraft.hand}
+                    onChange={(e) => setHighHandDraft((d) => ({ ...d, hand: e.target.value }))}
+                    className="w-full px-3 py-2.5 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 focus:outline-none focus:border-yellow-500/50"
+                  >
+                    <option value="" style={{ background: '#0a3d1f' }}>Select hand…</option>
+                    {HIGH_HAND_RANKS.map((h) => (
+                      <option key={h} value={h} style={{ background: '#0a3d1f' }}>{h}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="mb-4">
+                <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">DETAILS (optional)</div>
+                <input
+                  type="text"
+                  value={highHandDraft.detail}
+                  onChange={(e) => setHighHandDraft((d) => ({ ...d, detail: e.target.value }))}
+                  placeholder="e.g. Aces full of Kings"
+                  maxLength={60}
+                  className="w-full px-3 py-2.5 rounded-lg bg-black/40 border border-yellow-500/20 text-yellow-50 placeholder-yellow-100/30 focus:outline-none focus:border-yellow-500/50"
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                {highHand && (
+                  <button
+                    onClick={() => { setHighHand(null); setActivePanel(null); }}
+                    className="control-btn px-5 py-2.5 rounded-full bg-red-900/30 border border-red-500/40 text-red-200 font-mono text-sm"
+                  >
+                    CLEAR
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setHighHand({ player: highHandDraft.player, hand: highHandDraft.hand, detail: highHandDraft.detail.trim() });
+                    setActivePanel(null);
+                  }}
+                  disabled={!highHandDraft.player || !highHandDraft.hand}
+                  className="control-btn px-6 py-2.5 rounded-full font-display text-lg text-white disabled:opacity-40"
+                  style={{ background: 'linear-gradient(135deg, #1ec890, #14a37b)' }}
+                >
+                  SAVE HIGH HAND
+                </button>
+              </div>
+            </div>
+          )}
 
           {activePanel === 'players' && (
             <div className="gold-border rounded-2xl bg-black/60 backdrop-blur p-6 mb-6">
@@ -6552,6 +6660,15 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                       })}
                     </div>
 
+                    {highHand && (
+                      <div className="max-w-sm mx-auto px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/10 mb-8 -mt-4">
+                        <div className="font-mono text-xs text-yellow-300/60 tracking-widest mb-1">🃏 HIGH HAND</div>
+                        <div className="font-mono text-sm text-yellow-100/80">
+                          <span className="text-yellow-100">{highHand.player}</span> — {highHand.hand}{highHand.detail ? ` (${highHand.detail})` : ''}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Save status — the game saves itself when the winner
                         lands. The button only appears on the manual paths:
                         test mode, signed out, resume-inferred winner, or
@@ -6649,6 +6766,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           rebuyCounts={rebuyCounts}
           knockedOutBy={knockedOutBy}
           knockouts={knockouts}
+          highHand={highHand}
           buyInsPaidByName={buyInsPaidByName}
           subsPaidByName={subsPaidByName}
           payoutKey={payoutKey}
@@ -6673,6 +6791,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           rebuyCounts={rebuyCounts}
           knockedOutBy={knockedOutBy}
           knockouts={knockouts}
+          highHand={highHand}
           buyInsPaidByName={buyInsPaidByName}
           subsPaidByName={subsPaidByName}
           payoutKey={payoutKey}
@@ -10346,6 +10465,7 @@ function SaveGameModal({
   rebuyCounts,     // { name: count }
   knockedOutBy,    // { eliminatedName: knockerOuterName } — legacy single-shot map
   knockouts,       // [{ eliminated, knocker, rebought }] — chronological log (v2)
+  highHand = null, // { player: name, hand, detail } | null — high hand of the night
   buyInsPaidByName, // { displayName: bool } — per-attendee buy-in paid (league)
   subsPaidByName,   // { displayName: bool } — per-attendee subs paid (league, non-final)
   payoutKey,
@@ -10642,6 +10762,9 @@ function SaveGameModal({
         finishOrder: initialFinishOrder,
         firstOut: firstOutName ? resolvePid(firstOutName) : null,
         knockouts: isLeague ? knockoutsByPid : [],
+        highHand: highHand
+          ? { player: resolvePid(highHand.player), hand: highHand.hand, detail: highHand.detail || '' }
+          : null,
         // League-only payment tracking. Falsy maps for HR + finals'
         // subs are still written (as empty objects) so the read-side
         // always sees a defined shape.
@@ -12566,6 +12689,7 @@ function App() {
         addOnsTaken: liveResume.addOnsTaken || [],
         knockedOutBy: liveResume.knockedOutBy || {},
         knockouts: liveResume.knockouts || [],
+        highHand: liveResume.highHand || null,
         buyInsPaidByName: liveResume.buyInsPaidByName || {},
         subsPaidByName: liveResume.subsPaidByName || {},
         gameStartedAt: liveResume.gameStartedAt || null,
