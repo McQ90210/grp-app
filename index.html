@@ -3736,6 +3736,19 @@ const WLED_RECIPES = {
 // Hand choices for the timer's HIGH HAND panel, best first.
 const HIGH_HAND_RANKS = ['Royal Flush', 'Straight Flush', 'Four of a Kind', 'Full House', 'Flush', 'Straight', 'Three of a Kind', 'Two Pair', 'Pair'];
 
+// Best high hand across saved games ({ player: pid, hand, detail, rank } | null).
+// Games arrive newest-first, so on a tie the most recent game keeps it.
+function bestHighHand(games) {
+  let best = null;
+  (games || []).forEach((g) => {
+    const h = g.highHand;
+    const rank = h ? HIGH_HAND_RANKS.indexOf(h.hand) : -1;
+    if (rank < 0) return;
+    if (!best || rank < best.rank) best = { ...h, rank };
+  });
+  return best;
+}
+
 function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser }) {
   // Resume hydration: when the app boots into an in-progress game, App
   // injects the last saved snapshot at config._resume so we restore state
@@ -3852,6 +3865,23 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // prize. Rides in the live snapshot and is stored on the game doc.
   const [highHand, setHighHand] = useState(resume?.highHand || null);
   const [highHandDraft, setHighHandDraft] = useState({ player: '', hand: '', detail: '' });
+  // Poker Tour only: the trip's saved games, for the trip-wide high hand.
+  const [tripGames, setTripGames] = useState([]);
+  useEffect(() => {
+    if (config.gameType !== 'pokertour') return;
+    let cancelled = false;
+    const doLoad = () => {
+      window.GRP_DB.getAllPokerTourGames()
+        .then((g) => { if (!cancelled) setTripGames(g || []); })
+        .catch(() => {});
+    };
+    if (window.GRP_DB) doLoad();
+    else {
+      window.addEventListener('firebase-ready', doLoad);
+      return () => { cancelled = true; window.removeEventListener('firebase-ready', doLoad); };
+    }
+    return () => { cancelled = true; };
+  }, []);
   // Standings-rail delayed reveal: lag the visible knockouts log by a few
   // seconds so the room can look up after a KO and *watch* the points move.
   // The real `knockouts` state stays authoritative for the save flow /
@@ -5026,6 +5056,18 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   const level = levels[currentLevel] || levels[levels.length - 1] || { sb: 0, bb: 0, ante: 0, duration: 1, isBreak: false };
   const nextLvl = levels[currentLevel + 1];
   const activePlayers = players.filter((p) => !eliminatedPlayers.includes(p.name));
+  // Poker Tour: the strip shows the trip's best hand — this game's entry
+  // takes it once it matches or beats the best from earlier games.
+  const isTour = config.gameType === 'pokertour';
+  const tripBest = isTour ? bestHighHand(tripGames) : null;
+  const tripBestNamed = tripBest && {
+    player: fullRosterFromDB.find((p) => p.id === tripBest.player)?.displayName || tripBest.player,
+    hand: tripBest.hand,
+    detail: tripBest.detail || '',
+  };
+  const shownHighHand = (highHand && (!tripBest || HIGH_HAND_RANKS.indexOf(highHand.hand) <= tripBest.rank))
+    ? highHand
+    : (tripBestNamed || highHand);
   const openHighHandPanel = () => {
     if (activePanel === 'highhand') { setActivePanel(null); return; }
     setHighHandDraft(highHand
@@ -5640,16 +5682,16 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           </div>
 
           {/* High hand strip — always visible once one is recorded; tap to change. */}
-          {highHand && activePanel !== 'highhand' && (
+          {shownHighHand && activePanel !== 'highhand' && (
             <button
               onClick={openHighHandPanel}
               className="w-full gold-border rounded-2xl bg-black/40 backdrop-blur px-4 py-3 mb-6 flex items-center justify-between gap-3 text-left"
               title="Change high hand"
             >
-              <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest shrink-0">🃏 HIGH HAND</div>
+              <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest shrink-0">🃏 {isTour ? 'TRIP HIGH HAND' : 'HIGH HAND'}</div>
               <div className="min-w-0 text-right">
-                <span className="font-display text-xl gold-text">{highHand.player}</span>
-                <span className="font-mono text-sm text-yellow-100/80"> — {highHand.hand}{highHand.detail ? ` (${highHand.detail})` : ''}</span>
+                <span className="font-display text-xl gold-text">{shownHighHand.player}</span>
+                <span className="font-mono text-sm text-yellow-100/80"> — {shownHighHand.hand}{shownHighHand.detail ? ` (${shownHighHand.detail})` : ''}</span>
               </div>
             </button>
           )}
@@ -5661,6 +5703,11 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 <div className="font-display text-2xl gold-text">HIGH HAND</div>
                 <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
               </div>
+              {tripBestNamed && (
+                <div className="font-mono text-xs text-yellow-100/60 mb-3">
+                  Trip best so far: <span className="text-yellow-100">{tripBestNamed.player}</span> — {tripBestNamed.hand}{tripBestNamed.detail ? ` (${tripBestNamed.detail})` : ''}
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                 <div>
                   <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-1">WHOSE HAND</div>
@@ -7122,6 +7169,7 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
 
   const playersById = {};
   players.forEach((p) => { playersById[p.id] = p; });
+  const tripHighHand = bestHighHand(games);
 
   const standings = (() => {
     const totals = {};
@@ -7258,6 +7306,16 @@ function PokerTourHistory({ onBack, fbUser, autoLog, onAutoLogHandled, onStartTi
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {tripHighHand && (
+          <div className="gold-border rounded-2xl bg-black/40 px-4 py-3 mb-6 flex items-center justify-between gap-3">
+            <div className="font-mono text-[10px] text-yellow-300/80 tracking-widest shrink-0">🃏 TRIP HIGH HAND</div>
+            <div className="min-w-0 text-right">
+              <span className="font-display text-xl gold-text">{playersById[tripHighHand.player]?.displayName || tripHighHand.player}</span>
+              <span className="font-mono text-sm text-yellow-100/80"> — {tripHighHand.hand}{tripHighHand.detail ? ` (${tripHighHand.detail})` : ''}</span>
+            </div>
           </div>
         )}
 
