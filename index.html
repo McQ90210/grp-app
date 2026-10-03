@@ -1051,20 +1051,59 @@ const VOICE_CLIP_VERSION = '8.63';
 let _voiceAudio = null;
 let _voiceResolve = null;
 let _voiceReject = null;
+function ensureVoiceAudio() {
+  if (!_voiceAudio) {
+    _voiceAudio = new Audio();
+    _voiceAudio.volume = 1;
+    _voiceAudio.onended = () => {
+      const r = _voiceResolve; _voiceResolve = _voiceReject = null;
+      if (r) r();
+    };
+    _voiceAudio.onerror = () => {
+      const r = _voiceReject; _voiceResolve = _voiceReject = null;
+      if (r) r(new Error('clip error'));
+    };
+  }
+  return _voiceAudio;
+}
+
+// Call synchronously inside a tap handler when the first clip will play
+// later, outside the gesture (e.g. the seat draw, which starts its reveal
+// from a mount effect). A muted play() during the tap unlocks the shared
+// element on iOS so the later clips don't fail over to the system voice.
+function unlockVoiceAudio() {
+  const a = ensureVoiceAudio();
+  if (_voiceResolve) return; // a clip is already playing — already unlocked
+  try {
+    a.muted = true;
+    a.src = `sounds/voice/dealer.mp3?v=${VOICE_CLIP_VERSION}`;
+    const p = a.play();
+    const done = () => {
+      if (!_voiceResolve) { try { a.pause(); } catch (e) {} }
+      a.muted = false;
+    };
+    if (p && p.then) p.then(done, done); else done();
+  } catch (e) { a.muted = false; }
+}
+
+// Same preference order as the timer's voice picker, for TTS fallbacks
+// that run outside PokerTimerMain — so a missing clip doesn't switch to
+// the device's default system voice.
+function pickPreferredVoice() {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return null;
+  const all = window.speechSynthesis.getVoices() || [];
+  return all.find(v => /google.*us english/i.test(v.name))
+    || all.find(v => /google/i.test(v.name) && v.lang === 'en-US')
+    || all.find(v => /google/i.test(v.name) && v.lang.startsWith('en'))
+    || all.find(v => /natural|premium|enhanced|neural/i.test(v.name) && v.lang.startsWith('en'))
+    || all.find(v => v.lang === 'en-US')
+    || all.find(v => v.lang.startsWith('en'))
+    || null;
+}
+
 function playVoiceClip(key) {
   return new Promise((resolve, reject) => {
-    if (!_voiceAudio) {
-      _voiceAudio = new Audio();
-      _voiceAudio.volume = 1;
-      _voiceAudio.onended = () => {
-        const r = _voiceResolve; _voiceResolve = _voiceReject = null;
-        if (r) r();
-      };
-      _voiceAudio.onerror = () => {
-        const r = _voiceReject; _voiceResolve = _voiceReject = null;
-        if (r) r(new Error('clip error'));
-      };
-    }
+    ensureVoiceAudio().muted = false;
     // Abandon any in-flight clip's promise — caller of the new one wins.
     _voiceResolve = _voiceReject = null;
     try { _voiceAudio.pause(); } catch (e) {}
@@ -1272,6 +1311,8 @@ function seatDrawSpeak(key, fallbackText) {
       if (!fallbackText || typeof window === 'undefined' || !window.speechSynthesis) { resolve(); return; }
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(fallbackText);
+      const v = pickPreferredVoice();
+      if (v) u.voice = v;
       u.rate = 0.95;
       let done = false;
       const finish = () => { if (!done) { done = true; resolve(); } };
@@ -2778,6 +2819,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
       return;
     }
     setShowDealerWarning(false);
+    unlockVoiceAudio();
     setShowSeatDraw(true);
   };
 
