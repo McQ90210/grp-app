@@ -303,6 +303,14 @@ function nextBlindStep(current) {
   return next || current * 2;
 }
 
+// Voice clip for a blind level. Clips exist for antes of a full BB (Vegas)
+// or BB/4 (standard); any other ante (e.g. Poker Tour's ante = SB) uses
+// the no-ante clip so the recorded voice stays — the ante is on screen.
+function blindsClipKey(sb, bb, ante) {
+  if (ante > 0 && (ante === bb || ante * 4 === bb)) return `blinds-${bb}-ante-${ante}`;
+  return `blinds-${bb}`;
+}
+
 // Next level when the game runs past the last preset level. Keeps the
 // ante at the same proportion of the BB as the level it follows (Vegas is
 // a full BB; standard antes are BB/4) and uses the format's own BB ladder
@@ -315,7 +323,9 @@ function nextLevelAfter(cur, format) {
   const sb = vegas
     ? vegasSmallBlind(bb)
     : Math.floor(bb / 2);
-  const ante = cur.ante > 0 && cur.bb > 0 ? Math.round(bb * (cur.ante / cur.bb)) : 0;
+  const ante = cur.ante > 0 && cur.ante === cur.sb
+    ? sb // Poker Tour: ante tracks the SB
+    : (cur.ante > 0 && cur.bb > 0 ? Math.round(bb * (cur.ante / cur.bb)) : 0);
   return { sb, bb, ante, duration: cur.duration, isBreak: false };
 }
 
@@ -2865,6 +2875,10 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
         includeAntes
       );
     }
+    // Poker Tour: wherever a level has an ante, it's the small blind.
+    if (gameType === 'pokertour') {
+      levels = levels.map((l) => (l.ante > 0 ? { ...l, ante: l.sb } : l));
+    }
     onStart({
       gameType,
       buyIn: parseFloat(buyIn),
@@ -3091,7 +3105,7 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                       {format === 'freezeout'
                         ? 'No rebuys — once busted, you\'re out.'
                         : format === 'vegas'
-                        ? 'Casino-style escalating blinds, full ante from level 1. Players can buy back in after busting.'
+                        ? `Casino-style escalating blinds, ${gameType === 'pokertour' ? 'small-blind ante' : 'full ante'} from level 1. Players can buy back in after busting.`
                         : 'Players can buy back in after busting.'}
                     </div>
                   </div>
@@ -3459,9 +3473,9 @@ function SetupWizard({ onStart, customSounds, gameType = 'league', leagueContext
                   <div className="font-mono text-xs text-yellow-500/60 tracking-widest mb-2">TARGET DURATION</div>
                   <div className="font-display text-2xl text-emerald-200">
                     {Math.floor(parseInt(duration) / 60)}h {parseInt(duration) % 60}m
-                    {format === 'vegas' && <span className="text-sm text-yellow-100/40 ml-3 font-sans">• Vegas structure, full ante from level 1</span>}
+                    {format === 'vegas' && <span className="text-sm text-yellow-100/40 ml-3 font-sans">• Vegas structure, {gameType === 'pokertour' ? 'SB ante' : 'full ante'} from level 1</span>}
                     {format !== 'vegas' && !includeAntes && <span className="text-sm text-yellow-100/40 ml-3 font-sans">• no antes</span>}
-                    {format !== 'vegas' && includeAntes && <span className="text-sm text-yellow-100/40 ml-3 font-sans">• with antes</span>}
+                    {format !== 'vegas' && includeAntes && <span className="text-sm text-yellow-100/40 ml-3 font-sans">• with {gameType === 'pokertour' ? 'SB antes' : 'antes'}</span>}
                   </div>
                 </div>
                 <div className="text-center text-xs font-mono text-yellow-100/40">
@@ -4595,7 +4609,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       speakClip(`break-${level.duration}`, `Break time. ${level.duration} minute break. Stretch your legs.`);
     } else {
       const anteText = level.ante > 0 ? `, with an ante of ${level.ante}` : '';
-      const key = level.ante > 0 ? `blinds-${level.bb}-ante-${level.ante}` : `blinds-${level.bb}`;
+      const key = blindsClipKey(level.sb, level.bb, level.ante);
       const fallback = opts.silentIfNoClip
         ? ''
         : `Blinds are now ${level.sb} and ${level.bb}${anteText}.`;
@@ -4709,7 +4723,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         await speakClip('blinds-up', 'Blinds up!');
         await new Promise((r) => setTimeout(r, 200));
         const anteText = newAnte > 0 ? `, with an ante of ${newAnte}` : '';
-        const key = newAnte > 0 ? `blinds-${newBB}-ante-${newAnte}` : `blinds-${newBB}`;
+        const key = blindsClipKey(newSB, newBB, newAnte);
         speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
       } catch (e) { /* ignore */ }
     }, 100);
@@ -4762,7 +4776,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           await speakClip('blinds-up', 'Blinds up!');
           await new Promise((r) => setTimeout(r, 200));
           const anteText = newAnte > 0 ? `, with an ante of ${newAnte}` : '';
-          const key = newAnte > 0 ? `blinds-${newBB}-ante-${newAnte}` : `blinds-${newBB}`;
+          const key = blindsClipKey(newSB, newBB, newAnte);
           speakClip(key, `Blinds are now ${newSB} and ${newBB}${anteText}.`);
         } catch (e) { /* ignore */ }
       }, 100);
