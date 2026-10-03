@@ -7696,7 +7696,12 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed, existingGa
     p.id === current || (!taken.has(p.id) && (playing.size === 0 || playing.has(p.id))));
   const buyInNum = parseFloat(buyIn);
   const hasBuyIn = !isNaN(buyInNum) && buyInNum > 0;
-  const pot = hasBuyIn ? buyInNum * playing.size : 0;
+  // Editing a timed game: keep its rebuys and add-ons in the pot (this
+  // screen has no rebuy field, but they're still on the game doc).
+  const entriesFor = (ids) => ids.length
+    + ids.reduce((n, pid) => n + (eg?.rebuys?.[pid] || 0), 0)
+    + (eg?.totalAddOns || 0);
+  const pot = hasBuyIn ? buyInNum * entriesFor([...playing]) : 0;
 
   const save = async () => {
     if (!gameName.trim()) { setError('Enter a game name.'); return; }
@@ -7744,7 +7749,7 @@ function QuickLogGameModal({ players, onClose, onSaved, onStartTimed, existingGa
       payouts,
       attendees,
       buyIn: hasBuyIn ? buyInNum : null,
-      pot: hasBuyIn ? buyInNum * attendees.length : null,
+      pot: hasBuyIn ? buyInNum * entriesFor(attendees) : null,
     };
     try {
       if (eg) {
