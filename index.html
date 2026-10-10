@@ -6999,7 +6999,15 @@ function SignInModal({ onClose }) {
 }
 
 // ============ GAME TYPE PICKER (shown before setup wizard) ============
-function GameTypePicker({ onPick, fbUser }) {
+function GameTypePicker({ onPick, fbUser, showHR = true, showTour = true }) {
+  // League always shows; HR and Poker Tour only when signed in and toggled
+  // on (App's bottom-corner chips). Grid narrows to fit the cards shown.
+  const cardCount = 1 + (showHR ? 1 : 0) + (showTour ? 1 : 0);
+  const gridClass = cardCount === 3
+    ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'
+    : cardCount === 2
+    ? 'grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-4xl mx-auto'
+    : 'grid grid-cols-1 gap-4 max-w-md mx-auto';
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4" style={{
       background: 'radial-gradient(ellipse at top, #0a3d1f 0%, #062815 40%, #020a06 100%)',
@@ -7036,7 +7044,7 @@ function GameTypePicker({ onPick, fbUser }) {
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className={gridClass}>
           {/* LEAGUE CARD */}
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-6 flex flex-col text-center">
             <div className="font-display text-4xl gold-text mb-2 leading-none whitespace-nowrap">LEAGUE</div>
@@ -7066,6 +7074,7 @@ function GameTypePicker({ onPick, fbUser }) {
           </div>
 
           {/* HIGH ROLLERS CARD */}
+          {showHR && (
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-6 flex flex-col text-center">
             <div className="font-display text-4xl gold-text mb-2 leading-none whitespace-nowrap">HIGH ROLLERS</div>
             <div className="text-yellow-100/70 text-sm mb-4 min-h-[20px]">Casual side game</div>
@@ -7095,7 +7104,10 @@ function GameTypePicker({ onPick, fbUser }) {
             </div>
           </div>
 
+)}
+
           {/* POKER TOUR CARD */}
+          {showTour && (
           <div className="gold-border rounded-3xl bg-gradient-to-br from-emerald-950/80 to-black/80 backdrop-blur p-6 flex flex-col text-center">
             <div className="font-display text-4xl gold-text mb-2 leading-none whitespace-nowrap">POKER TOUR</div>
             <div className="text-yellow-100/70 text-sm mb-4 min-h-[20px]">Holiday trophy standings</div>
@@ -7134,6 +7146,7 @@ function GameTypePicker({ onPick, fbUser }) {
               </button>
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>
@@ -12730,6 +12743,20 @@ function App() {
   const [customSounds, setCustomSounds] = useState({});
   const [showSignIn, setShowSignIn] = useState(false);
   const [pokerTourAutoLog, setPokerTourAutoLog] = useState(false);
+  // Home-screen visibility of the HR / Poker Tour cards (signed-in only;
+  // signed-out visitors just see League). Per-device preference.
+  const [homeShowHR, setHomeShowHR] = useState(() => {
+    try { return localStorage.getItem('grp-home-hr') !== '0'; } catch (_) { return true; }
+  });
+  const [homeShowTour, setHomeShowTour] = useState(() => {
+    try { return localStorage.getItem('grp-home-tour') !== '0'; } catch (_) { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('grp-home-hr', homeShowHR ? '1' : '0'); } catch (_) {}
+  }, [homeShowHR]);
+  useEffect(() => {
+    try { localStorage.setItem('grp-home-tour', homeShowTour ? '1' : '0'); } catch (_) {}
+  }, [homeShowTour]);
   const [liveResume, setLiveResume] = useState(null); // saved in-progress game snapshot
   const [resumeChecked, setResumeChecked] = useState(false);
   const { ready: fbReady, user: fbUser } = useFirebase();
@@ -12864,9 +12891,24 @@ function App() {
   if (route === 'home') {
     content = (
       <>
-        <GameTypePicker onPick={handlePick} fbUser={fbUser} />
+        <GameTypePicker onPick={handlePick} fbUser={fbUser} showHR={!!fbUser && homeShowHR} showTour={!!fbUser && homeShowTour} />
         {liveResume && <ResumeGameBanner snap={liveResume} onResume={acceptResume} onDiscard={dismissResume} />}
-        <div className="fixed bottom-4 right-4 z-40">
+        <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2">
+          {fbUser && [
+            ['HR', homeShowHR, setHomeShowHR, 'High Rollers'],
+            ['TOUR', homeShowTour, setHomeShowTour, 'Poker Tour'],
+          ].map(([label, on, set, name]) => (
+            <button
+              key={label}
+              onClick={() => set(!on)}
+              className={`px-3 py-1.5 rounded-full font-mono text-xs border ${on
+                ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-200'
+                : 'bg-black/40 border-emerald-500/20 text-emerald-200/40 line-through'}`}
+              title={`${on ? 'Hide' : 'Show'} ${name} on the home screen`}
+            >
+              {label}
+            </button>
+          ))}
           {fbUser ? (
             <button
               onClick={() => window.GRP_FIREBASE?.signOut(window.GRP_FIREBASE.auth)}
