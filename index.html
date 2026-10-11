@@ -8193,7 +8193,6 @@ function HighRollersHistory({ onBack, fbUser }) {
                 >
                   {adminBusy === 'resendHR' ? 'SENDING…' : '✉ RESEND HR RESULTS'}
                 </button>
-                <TestModeToggle />
               </div>
             )}
             {adminMessage && (
@@ -9147,7 +9146,6 @@ function LeagueDashboard({ onBack, fbUser }) {
                 >
                   🗓 SEASONS
                 </button>
-                <TestModeToggle />
               </div>
             )}
           </div>
@@ -12697,7 +12695,7 @@ function TestModeToggle() {
   return (
     <button
       onClick={() => setOn(!on)}
-      className={`px-3 py-1.5 rounded font-mono text-xs border ${
+      className={`px-3 py-1.5 rounded-full font-mono text-xs border ${
         on
           ? 'border-red-400/60 bg-red-900/40 text-red-100 hover:bg-red-900/60'
           : 'border-emerald-500/40 text-emerald-100 hover:bg-emerald-500/15'
@@ -12894,6 +12892,7 @@ function App() {
         <GameTypePicker onPick={handlePick} fbUser={fbUser} showHR={!!fbUser && homeShowHR} showTour={!!fbUser && homeShowTour} />
         {liveResume && <ResumeGameBanner snap={liveResume} onResume={acceptResume} onDiscard={dismissResume} />}
         <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2">
+          {fbUser && <TestModeToggle />}
           {fbUser && [
             ['HR', homeShowHR, setHomeShowHR, 'High Rollers'],
             ['TOUR', homeShowTour, setHomeShowTour, 'Poker Tour'],
