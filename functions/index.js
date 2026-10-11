@@ -1167,7 +1167,7 @@ exports.auditGame = onCall(
       const positionBonus = pos >= 0 && pos < 6 ? POSITION_BONUSES_V2[pos] : 0;
       const attendance = 2000;
       const kos = knockouts.filter((k) => k.knocker === pid).length;
-      const koBonus = kos * 1000;
+      const koBonus = kos * (game.koPoints ?? 1000);
       // First-out reads game.firstOut as the source of truth. Fall back
       // to knockouts[0].eliminated (v2 rule: first ever KO'd, even if
       // they later rebought), then to finishOrder[last] for pre-v7.60

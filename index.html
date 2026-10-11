@@ -1390,6 +1390,7 @@ function computePointsAwarded({
   knockouts,
   bountyClaims,
   firstOut,
+  koPoints = 1000,   // v2 points per knockout — editable per game on the timer
 }) {
   if (isFinal) return {}; // Finals don't award league points
   const version = rulesVersionForGame({ date, rulesVersion });
@@ -1426,7 +1427,7 @@ function computePointsAwarded({
         .filter(([, k]) => !!k)
         .map(([eliminated, knocker]) => ({ eliminated, knocker }));
   koList.forEach(({ knocker }) => {
-    if (knocker && points[knocker] !== undefined) points[knocker] += 1000;
+    if (knocker && points[knocker] !== undefined) points[knocker] += koPoints;
   });
 
   // Bounty claims: prefer the explicit list (which supports self-claims and
@@ -1507,7 +1508,7 @@ function computePointsBreakdownForGame(pid, game, playersById = {}) {
     if (kos.length > 0) {
       parts.push({
         label: `Knockouts (×${kos.length})`,
-        points: kos.length * 1000,
+        points: kos.length * (game.koPoints ?? 1000),
         detail: kos.map((k) => nameOf(k.eliminated)).join(', '),
       });
     }
@@ -3920,6 +3921,9 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
   // whenever a better hand turns up; whoever holds it at the end wins the
   // prize. Rides in the live snapshot and is stored on the game doc.
   const [highHand, setHighHand] = useState(resume?.highHand || null);
+  // League points per knockout for THIS game (v2 default 1,000). Edited from
+  // the PLAYERS & REBUYS panel; rides the snapshot and is stored on the doc.
+  const [koPoints, setKoPoints] = useState(resume?.koPoints ?? config.koPoints ?? 1000);
   const [highHandDraft, setHighHandDraft] = useState({ player: '', hand: '', detail: '' });
   // Poker Tour only: the trip's saved games, for the trip-wide high hand.
   const [tripGames, setTripGames] = useState([]);
@@ -4037,7 +4041,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         (k) => k.knocker === pl.name && bountyNameSet.has(k.eliminated)
       ).length;
       const isFirstOut = firstOutName === pl.name;
-      const liveTonight = 2000 + kos * 1000 + claims * 2000 + (isFirstOut ? 1000 : 0);
+      const liveTonight = 2000 + kos * koPoints + claims * 2000 + (isFirstOut ? 1000 : 0);
       const preGame = pid ? (preTotals[pid] || 0) : 0;
       return {
         name: pl.name, pid, isAttendee: true,
@@ -4413,6 +4417,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
       knockedOutBy,
       knockouts,
       highHand,
+      koPoints,
       buyInsPaidByName,
       subsPaidByName,
       payoutKey,
@@ -4428,7 +4433,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
         console.error('[grp] live save to Firestore failed:', e);
       });
     }
-  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, knockouts, highHand, buyInsPaidByName, subsPaidByName, payoutKey, gameStartedAt, fbUser, config, rebuyCutoff]);
+  }, [hasStarted, winner, levels, players, currentLevel, isRunning, eliminatedPlayers, rebuyCounts, knockedOutBy, knockouts, highHand, koPoints, buyInsPaidByName, subsPaidByName, payoutKey, gameStartedAt, fbUser, config, rebuyCutoff]);
 
   // Load the full club roster from Firestore so late-entry can suggest existing names
   useEffect(() => {
@@ -5833,6 +5838,23 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                 <div className="font-display text-2xl gold-text">PLAYERS & REBUYS</div>
                 <button onClick={() => setActivePanel(null)} className="text-yellow-100/60 hover:text-yellow-100"><X size={18} /></button>
               </div>
+              {config.gameType === 'league' && !config.leagueContext?.isFinal && (
+                <div className="flex items-center justify-between gap-3 mb-4 px-4 py-3 rounded-xl bg-black/30 border border-yellow-500/15">
+                  <div>
+                    <div className="font-mono text-xs text-yellow-500/70 tracking-widest">KNOCKOUT POINTS</div>
+                    <div className="font-mono text-[11px] text-yellow-100/40">League points per knockout this game</div>
+                  </div>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    step={100}
+                    value={koPoints}
+                    onChange={(e) => setKoPoints(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                    className="w-28 px-3 py-2 rounded-lg bg-black/40 border border-yellow-500/30 text-yellow-50 font-mono text-right focus:outline-none focus:border-yellow-500/60"
+                  />
+                </div>
+              )}
               {/* Late-entry typeahead — suggests existing roster members */}
               {(() => {
                 const search = newPlayerName.trim().toLowerCase();
@@ -6657,7 +6679,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
                   (k) => k.knocker === pl.name && bountyNameSet.has(k.eliminated)
                 ).length;
                 const isFirstOut = firstOutName === pl.name;
-                const tonight = 2000 + posBonus + kos * 1000 + claims * 2000 + (isFirstOut ? 1000 : 0);
+                const tonight = 2000 + posBonus + kos * koPoints + claims * 2000 + (isFirstOut ? 1000 : 0);
                 const preGame = pid ? (preTotals[pid] || 0) : 0;
                 // Narrative breakdown, not arithmetic: finishing place, WHO
                 // they knocked out (repeat KOs collapse to ×n), bounty count
@@ -6870,6 +6892,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           knockedOutBy={knockedOutBy}
           knockouts={knockouts}
           highHand={highHand}
+          koPoints={koPoints}
           buyInsPaidByName={buyInsPaidByName}
           subsPaidByName={subsPaidByName}
           payoutKey={payoutKey}
@@ -6895,6 +6918,7 @@ function PokerTimerMain({ config, onReset, customSounds, onViewLeague, fbUser })
           knockedOutBy={knockedOutBy}
           knockouts={knockouts}
           highHand={highHand}
+          koPoints={koPoints}
           buyInsPaidByName={buyInsPaidByName}
           subsPaidByName={subsPaidByName}
           payoutKey={payoutKey}
@@ -10596,6 +10620,7 @@ function SaveGameModal({
   knockedOutBy,    // { eliminatedName: knockerOuterName } — legacy single-shot map
   knockouts,       // [{ eliminated, knocker, rebought }] — chronological log (v2)
   highHand = null, // { player: name, hand, detail } | null — high hand of the night
+  koPoints = 1000, // league points per knockout for this game
   buyInsPaidByName, // { displayName: bool } — per-attendee buy-in paid (league)
   subsPaidByName,   // { displayName: bool } — per-attendee subs paid (league, non-final)
   payoutKey,
@@ -10702,6 +10727,7 @@ function SaveGameModal({
     isFinal,
     date: today,
     rulesVersion,
+    koPoints,
   });
   // Convert to PIDs
   const initialPoints = {};
@@ -10895,6 +10921,7 @@ function SaveGameModal({
         highHand: highHand
           ? { player: resolvePid(highHand.player), hand: highHand.hand, detail: highHand.detail || '' }
           : null,
+        koPoints: isLeague ? koPoints : null,
         // League-only payment tracking. Falsy maps for HR + finals'
         // subs are still written (as empty objects) so the read-side
         // always sees a defined shape.
@@ -12834,6 +12861,7 @@ function App() {
         knockedOutBy: liveResume.knockedOutBy || {},
         knockouts: liveResume.knockouts || [],
         highHand: liveResume.highHand || null,
+        koPoints: liveResume.koPoints ?? null,
         buyInsPaidByName: liveResume.buyInsPaidByName || {},
         subsPaidByName: liveResume.subsPaidByName || {},
         gameStartedAt: liveResume.gameStartedAt || null,
