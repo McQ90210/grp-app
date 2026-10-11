@@ -11,7 +11,7 @@ A Progressive Web App for the **Greene Room Poker** league in Berkhamsted. Publi
 **Live URL**: https://mcq90210.github.io/grp-app/
 **Repo**: https://github.com/McQ90210/grp-app
 **Hosting**: GitHub Pages via `.github/workflows/pages.yml` (actions/deploy-pages; Settings → Pages → Source = "GitHub Actions"). The legacy "Deploy from a branch" mode was retired after it repeatedly wedged in `deployment_queued`.
-**Current version**: v8.45 (see `sw.js` `CACHE_NAME` for what's deployed)
+**Current version**: v8.93 (see `sw.js` `CACHE_NAME` for what's deployed)
 **Cloud Functions**: deployed in `europe-west2`, Node 22 — `dailyResultsEmail` (cron 09:00 UK), `resendLatestResults`, `resendLatestHRResults`, `sendTestResults`, `sendTestHRResults`, `auditGame`, `applyGamePatch` (whitelisted one-off game repairs incl. `setLeagueMoney`/`setPrizePool`), `migrateSeason` (break-glass — no UI), `wipeSimData`, `simulateGames`
 
 ### State as of last session (2026-08-06)
@@ -26,6 +26,8 @@ A Progressive Web App for the **Greene Room Poker** league in Berkhamsted. Publi
 - ✅ **Uploaded custom sounds play again** (v8.43/v8.44) — they route through an `HTMLAudioElement` (`playAudioUrl()`) instead of Web Audio `fetch` + `decodeAudioData`, which needed a CORS policy the `gr-poker` Storage bucket doesn't have. The wizard's 🎵 preview also now enables on `customSoundUrl`, not just a library sound.
 - ⚠️ **GitHub Pages deploys flake often** ("Deployment failed, try again later" at the deploy step, ~50% some evenings). Remedy: empty commit + push again, retry until success. The Actions workflow itself is fine.
 - ⏳ Next league game: R2 G2, early August 2026.
+
+> **Session 2026-10-02 → 10-11 (Mac, v8.86–v8.93).** High hand on the timer (+ trip-wide high hand for Poker Tour), Poker Tour edit-pot fix, seat-draw iOS voice fix, Poker Tour antes = SB, signed-out home screen shows League only (HR / TOUR / TEST MODE chips when signed in), and an editable per-game KNOCKOUT POINTS value. `auditGame` redeployed. Details in the v8.86–v8.93 checkpoint below.
 
 > **Handover note (2026-09-15).** Development moved off the Mac to a Windows PC and a different Claude account. See "Working environment" below — in particular, `grp-app.jsx` and the build sandbox described in older revisions of this file **no longer exist**, and `index.html` is now edited directly.
 
@@ -121,6 +123,7 @@ Development moved from Mark's Mac to a **Windows PC** on 2026-09-15 (and to a di
 
   backed by `~/.ssh/id_ed25519_mcq90210` and a `Host github-mcq90210` block in `~/.ssh/config`. If push ever 403s, check the remote hasn't been reset to HTTPS.
 - **Commits** are authored as `Mark McQueen <mark.mcqueen@flawlessai.com>` (matches all existing history), set repo-locally — there is no global `.gitconfig` on this PC.
+- **Mac (from 2026-10-02)**: work has also been done from a Mac on yet another Claude account. Its clone uses an **HTTPS** remote (`https://github.com/McQ90210/grp-app.git`) with `gh auth login` as **McQ90210** (keyring) — no SSH alias there. That Mac has Node, `gh` and the Firebase CLI (logged in to the account that owns `gr-poker`), so `firebase deploy --only functions:<name>` works from it. Its working copy lived in a temporary session folder, so always `git pull` first on any machine.
 - **Missing toolchain**: no Node, npm, Firebase CLI or `gh` on the Windows PC. The app needs none of them (no build step, CDN everything) and Python 3.11 covers local preview. But **`functions/` work and `firebase deploy` are not possible from this machine** until Node + `firebase-tools` are installed.
 
 ---
@@ -203,6 +206,8 @@ games/{id}                         # id = "{seasonId}-g{N}", e.g. "2026-r1-g3"
   pointsAwarded: { cactus: 10000, duck: 7000, ... }
   bountyHolders: ["chit-chat"]     # players bountied THIS game
   bountyClaims: []                 # players who claimed a bounty (eliminated a bountied player)
+  highHand: { player: "quads", hand: "Full House", detail: "Aces full of Kings" } | null   # v8.86+, all game types
+  koPoints: 1000                   # v8.93+, league only — points per KO used for THIS game (null/absent = 1,000)
   imported: true                   # flag for spreadsheet-imported games
   notes: "Imported from spreadsheet..."
 ```
@@ -231,7 +236,7 @@ The query `games where seasonId == X order by gameNumber` requires a composite i
 **v2 rules (Jul 2026, R2 onwards)**:
 - Turn-up: **2,000**
 - Position bonuses: 1st **+8,000**, 2nd **+6,000**, 3rd **+4,000**, 4th **+3,000**, 5th **+2,000**, 6th **+1,000** (attendance stacks on top)
-- KO: **+1,000** per knockout (goes to knocker)
+- KO: **+1,000** per knockout (goes to knocker). Editable per game (v8.93) via the KNOCKOUT POINTS box in the timer's PLAYERS & REBUYS panel — e.g. 500 for a one-off £5 game. Stored as `koPoints` on the game doc; every new game starts at 1,000 (only a RESUME carries a non-default value). `computePointsAwarded({ koPoints })`, the dashboard breakdown and `auditGame` all read it, falling back to 1,000.
 - First out: **+1,000** (goes to first player KO'd chronologically, even if they later rebought)
 - Bounty claim: **+2,000** per claim (goes to whoever knocks out a bountied player; bountied player self-claims their respawn if they survive to game end)
 
@@ -478,7 +483,9 @@ In rough priority order:
 
 1. **End-of-round AWARDS screen** — for the Christmas (R2) final: scan the round's game docs and compute award winners automatically. Agreed award ideas (all computable from existing data): Nemesis (most KOs of the same victim), The Hitman (most total KOs), Most Rebuys, The Early Bath (most first-outs), Bounty Hunter (most bounty claims), The Marked Man (most-claimed bountied player), The Bridesmaid (most 2nds, no win), Bubble Boy (most just-out-of-the-money), Iron Man (perfect attendance), The Banker (most £ won), Best ROI, The Philanthropist (most £ in, least back), The Punchbag (most times KO'd), Giant Killer (most KOs of the round champion), Mr Consistent (best avg finish), The Comeback (biggest climb), Wooden Spoon. Could feed the Gemini recap for the final's results email.
 2. **Real-time multi-device sync (deferred)** — phone-as-controller + laptop/TV-as-display via Firebase Realtime Database (Mark wants this "one day", not yet)
-3. **`firebase-admin` / `nodemailer` major-version bumps** — 13→14 and 6→9 respectively. Both have breaking changes; check release notes before bumping. Not urgent — current versions are stable.
+3. **High hand gaps** — quick-logged (NOT TIMED) Poker Tour games have no high-hand field, so they can't set the trip high hand; League/HR timers show only their own game's hand. High hand isn't in game history or the results email.
+4. **Voice clips for SB antes** — no `blinds-{bb}-ante-{sb}` clips exist, so Poker Tour levels announce with the no-ante `blinds-{bb}` clip (ante on screen only). Generating them needs `generate_voice.py` + the ElevenLabs key.
+5. **`firebase-admin` / `nodemailer` major-version bumps** — 13→14 and 6→9 respectively. Both have breaking changes; check release notes before bumping. Not urgent — current versions are stable.
 
 ### Done in previous sessions
 - ~~Roster sync from Firestore into SetupWizard~~ — v7.8
@@ -512,6 +519,7 @@ In rough priority order:
 - Values pace — ship small versions, test, iterate; don't over-engineer
 - For destructive operations (deletes), always prefer multiple confirmation steps and "type DELETE" gates
 - When re-posting files or snippets earlier in a session, send them directly rather than telling Mark to scroll back
+- **Pushing (2026-10 sessions)**: Mark has been saying "just push it" / "push it" — in those sessions each finished change was committed + pushed after a local check. Still confirm per change unless he's said so for that change.
 - **Don't commit eagerly** — Mark usually has follow-up changes and prefers to batch them into a single version bump + commit (keeps the commit log clean). After making a change, bump `sw.js` cache if relevant, then *wait*. Ask "ready to commit as vX.Y?" rather than committing right away. Only commit when Mark explicitly says so.
 - **Do run deploys directly** — `firebase deploy --only functions` doesn't require asking. Mark has the CLI installed, his auth token is cached, and the deploy is reversible. Same for any read-only Firebase / git diagnostic commands. The deferral pattern is just for git commits.
 - **Cache-bumping awareness**: when changes touch `index.html`, `firebase-init.js`, `manifest.json`, `sw.js` itself, or `logos/*`, bump `CACHE_NAME` in `sw.js`. Pure `functions/` changes don't need it. After pushing, expect the user to need to force-refresh (Cmd+Shift+R, or unregister SW + Clear site data via DevTools, or Incognito) — Chrome on Mac keeps stale module-script copies across cache bumps in stubborn ways.
@@ -549,6 +557,7 @@ Each version is summarised here so a new session can pick up at the right point.
 - **v8.32–v8.41** (2026-07-03/04) — new-player registration modal (birthday + email → immediate player doc, bounty applies same game); winner overlay rebuilt: two-column layout (champion/payouts left, UPDATED STANDINGS right, one page, ✕ to exit), per-player narrative breakdowns (place, KO victims by name, bounty counts, first-out — no point arithmetic), **auto-save on winner** (silent SaveGameModal instance; manual button kept for test mode / signed-out / resume-inferred winners / failures); eliminated player always flashes red on the rail reveal.
 - **v8.42 + functions** (2026-07-04) — KO timestamps (`at: Date.now()` on every knockouts entry, carried to Firestore; null pre-v8.42) accumulating for the Christmas awards; **storyful Gemini recap**: prompt gets a pre-tallied match-facts block (per-knocker KO totals + victim lists, KNOCKOUT LEADER line at 3+, direction-proof bounty-claim wording, first-out, rebuys) with a STRICT ACCURACY clause — an earlier raw-log version made Gemini miscount and swap names; **`sendTestResults` callable** (league twin of `sendTestHRResults`: full pipeline, one recipient, [TEST] subject) — tested end-to-end against R2 G1, recap verified factually correct (River Dan's 6 KOs lead, £240 winner payout confirmed by Mark: £20 was moved from 1st to fund a 4th payout at save time).
 - **v8.43–v8.45** (2026-08-05/06) — **uploaded sounds fixed**: custom per-player sounds in Firebase Storage never played, because `playSound` fetched the download URL and decoded it through Web Audio (`fetch` + `decodeAudioData`), which reads raw bytes cross-origin and needs a CORS policy on the `gr-poker` bucket allowing `mcq90210.github.io` — there is none (uploads work because Firebase's *upload* endpoint sets its own permissive CORS; the download fetch doesn't). New `playAudioUrl()` streams the URL through an `HTMLAudioElement`, which needs no CORS because it never exposes samples to JS; the `customUrl` branch routes through it and falls back to the library `soundKey` if the element errors. No bucket change needed. v8.44 then enabled the wizard's 🎵 preview for those players (its disabled check only looked at `player.sound` and ignored `player.customSoundUrl`, though the onClick already passed the URL). **v8.45: payouts split `pot − leagueMoney`** at all three sites (timer PAYOUTS panel, winner overlay, SaveGameModal seed) — the 10% league money was tracked but never deducted, so suggested payouts ran ~10% high on league games and were trimmed by hand every time. `leagueMoney` = 10% of pot rounded to nearest £10 on regular league games, 0 for finals and High Rollers; subs stay separate and never touch payouts. "POT" still shows the raw pot; "PRIZE POOL" shows the payable pool with a `£X pot − £Y league money` note. SaveGameModal's default reuses the same computed value so seed and field can't drift.
+- **v8.86–v8.93** (2026-10-02 → 10-11, Mac) — **v8.86 High hand**: 🃏 header button on the timer opens a HIGH HAND panel (player, hand from `HIGH_HAND_RANKS`, optional detail); current hand shows as a strip under the timer and on the winner overlay, rides the live snapshot + resume bag, saved as `highHand` (player as PID). Must be entered before the last KO — the winner auto-save fires immediately. **v8.87 trip high hand**: `bestHighHand(games)` (rank by `HIGH_HAND_RANKS` index; games newest-first so ties go to the most recent) shown at the bottom of the Poker Tour standings and as a TRIP HIGH HAND strip on every Poker Tour timer — this game's entry takes it once it matches or beats the trip best. **v8.88**: QuickLogGameModal (Poker Tour log/EDIT) recomputed `pot` as buy-in × players, dropping a timed game's stored rebuys/add-ons — three trip games were saved £20–£120 short; now counts them (re-saving a game fixes its pot). Payouts were always right. **v8.89 seat-draw voice on iOS**: the reveal starts from a mount effect (outside the tap), so Safari blocked the first clip and every name fell back to the default TTS voice. `unlockVoiceAudio()` does a muted play of the shared `_voiceAudio` element inside the SEAT DRAW tap; `seatDrawSpeak`'s fallback now uses `pickPreferredVoice()` (same order as the timer). **v8.90 Poker Tour antes = SB**: SetupWizard maps every ante>0 level to `ante: sb` for `pokertour`; `nextLevelAfter` keeps ante=SB; `blindsClipKey()` uses the no-ante clip when no recorded ante clip matches. **v8.91 home screen**: signed out → League card only; signed in → HR / TOUR chips (bottom-right, `grp-home-hr` / `grp-home-tour` in localStorage) show/hide those cards. **v8.92**: 🧪 TEST MODE toggle moved to that chip row (removed from HR history + league dashboard admin rows). **v8.93 KNOCKOUT POINTS** per league game (see League rules); `auditGame` redeployed to read `game.koPoints`.
 
 ---
 
