@@ -1,7 +1,7 @@
 // GR Poker — results-email Cloud Functions
 //
 // What this does:
-//   1. dailyResultsEmail (scheduled): 09:00 Europe/London every day. Looks for
+//   1. dailyResultsEmail (scheduled): 07:00 Europe/London every day. Looks for
 //      any LEAGUE or HIGH ROLLERS game played "yesterday" (UK calendar date).
 //      If found, emails all active players (BCC'd) via Gmail SMTP. League and
 //      HR get different templates (HR has no points/standings, instead shows
@@ -296,27 +296,62 @@ Context:
 Now write the recap (3-4 sentences, 70-110 words):`;
 }
 
-// Wrap a Gemini API call with a single retry on 503 (the "high demand"
-// throttle). Free-tier gemini-2.5-flash returns 503s reasonably often at
-// peak times (~8am UK = cron time), and a 3-second retry clears most of
-// them. Returns the fetch Response so callers can still inspect status
-// codes for non-retryable errors.
-async function fetchGeminiWithRetry(url, body, { label = 'Gemini' } = {}) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) return res;
-    if (res.status === 503 && attempt === 0) {
-      logger.warn(`${label} HTTP 503, retrying in 3s…`);
-      await new Promise((r) => setTimeout(r, 3000));
-      continue;
+// Gemini call helpers.
+//
+// The recap sits at the top of the email, but only when Gemini returns text.
+// If every attempt fails the email still sends WITHOUT a recap (we never block
+// the results on the AI), which is why the recap sometimes goes missing. The
+// free tier throws transient 429 / 500 / 503 / 504 errors fairly often, so:
+//   - each model is tried up to 3 times with a growing pause (3s, then 8s)
+//   - if gemini-2.5-flash keeps failing we fall back to gemini-2.5-flash-lite
+//   - every part of the reply is joined (not just parts[0]), and the finish
+//     reason is logged whenever nothing usable comes back
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+const GEMINI_RETRY_STATUSES = new Set([429, 500, 503, 504]);
+const GEMINI_BACKOFF_MS = [3000, 8000];
+
+async function geminiText(key, body, { label = 'Gemini' } = {}) {
+  for (const model of GEMINI_MODELS) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let res;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        logger.warn(`${label} (${model}) network error: ${err.message}`);
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, GEMINI_BACKOFF_MS[attempt]));
+          continue;
+        }
+        break; // try the next model
+      }
+      if (res.ok) {
+        const json = await res.json();
+        const cand = json?.candidates?.[0];
+        const text = (cand?.content?.parts || [])
+          .filter((part) => typeof part.text === 'string' && !part.thought)
+          .map((part) => part.text)
+          .join('')
+          .trim();
+        if (text) return text;
+        logger.warn(`${label} (${model}) returned no text, finishReason=${cand?.finishReason || 'none'}: ${JSON.stringify(json).slice(0, 200)}`);
+        break; // an empty answer rarely improves on retry, try the next model
+      }
+      const detail = (await res.text()).slice(0, 200);
+      logger.warn(`${label} (${model}) HTTP ${res.status} on attempt ${attempt + 1}: ${detail}`);
+      if (GEMINI_RETRY_STATUSES.has(res.status) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, GEMINI_BACKOFF_MS[attempt]));
+        continue;
+      }
+      break; // non retryable (or out of attempts): try the next model
     }
-    return res;
   }
-  return null; // unreachable
+  logger.error(`${label}: all models failed, email will go out WITHOUT a recap.`);
+  return null;
 }
 
 // Returns a 2-3 sentence recap string, or null if Gemini is unavailable or
@@ -394,11 +429,7 @@ async function generateRecap({ game, season, standings, players }) {
     : buildRegularRecapPrompt({ game, season, podium, standingsBlurb, eventsBlurb });
 
   try {
-    // gemini-2.5-flash is the current free-tier flagship. If 429s come back,
-    // try gemini-2.5-flash-lite (smaller, more generous quota) or
-    // gemini-1.5-flash (legacy, very stable free tier).
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
-    const res = await fetchGeminiWithRetry(url, {
+    return await geminiText(key, {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         // Disable Gemini 2.5's internal "thinking" tokens. Without this, the
@@ -408,18 +439,7 @@ async function generateRecap({ game, season, standings, players }) {
         temperature: 0.8,
         maxOutputTokens: 400,
       },
-    }, { label: 'Gemini API' });
-    if (!res.ok) {
-      logger.warn(`Gemini API HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      return null;
-    }
-    const json = await res.json();
-    const text = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (!text) {
-      logger.warn('Gemini returned no text:', JSON.stringify(json).slice(0, 200));
-      return null;
-    }
-    return text;
+    }, { label: 'Gemini league recap' });
   } catch (err) {
     logger.warn('generateRecap failed (continuing without):', err.message);
     return null;
@@ -494,21 +514,14 @@ If you mention the next game, just say "next time" — High Rollers has no fixed
 Now write the recap (3-4 sentences, 60-100 words):`;
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
-    const res = await fetchGeminiWithRetry(url, {
+    return await geminiText(key, {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         thinkingConfig: { thinkingBudget: 0 },
         temperature: 0.8,
         maxOutputTokens: 400,
       },
-    }, { label: 'Gemini HR' });
-    if (!res.ok) {
-      logger.warn(`Gemini HR HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      return null;
-    }
-    const json = await res.json();
-    return json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+    }, { label: 'Gemini HR recap' });
   } catch (err) {
     logger.warn('generateHRRecap failed:', err.message);
     return null;
@@ -917,10 +930,10 @@ async function sendEmailAndLog({ game, subject, html, recipients, extra }) {
 // Exported functions
 // ============================================================================
 
-// Scheduled: every day at 09:00 Europe/London.
+// Scheduled: every day at 07:00 Europe/London.
 exports.dailyResultsEmail = onSchedule(
   {
-    schedule: '0 9 * * *',
+    schedule: '0 7 * * *',
     timeZone: 'Europe/London',
     region: REGION,
     secrets: [GMAIL_USER, GMAIL_APP_PASSWORD, GEMINI_API_KEY],
