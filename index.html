@@ -8929,15 +8929,47 @@ function LeagueDashboard({ onBack, fbUser }) {
     });
   });
 
-  // Sort players by total points (descending), only show those who played at least one game
+  // Tiebreak stats — same as the timer rail / winner overlay and the
+  // results email (functions/index.js computeStandings): money won this
+  // season (payouts by finishing place), then knockouts, then name.
+  const seasonWinnings = {};
+  const seasonKos = {};
+  games.forEach(g => {
+    const paidCount = Object.keys(g.payouts || {}).length;
+    (g.finishOrder || []).slice(0, paidCount).forEach((pid, i) => {
+      seasonWinnings[pid] = (seasonWinnings[pid] || 0) + (parseFloat(g.payouts?.[String(i + 1)]) || 0);
+    });
+    (g.knockouts || []).forEach((k) => {
+      if (k.knocker) seasonKos[k.knocker] = (seasonKos[k.knocker] || 0) + 1;
+    });
+  });
+
+  // Sort players by total points (descending) then tiebreaks; only show
+  // those who played at least one game. Rank is shared only when points,
+  // winnings AND knockouts all match.
   const playerRows = Object.entries(playerTotals)
     .filter(([_, pts]) => pts > 0)
-    .sort((a, b) => b[1] - a[1])
     .map(([pid, total]) => ({
       player: playersById[pid] || { displayName: pid, id: pid },
       total,
+      winnings: seasonWinnings[pid] || 0,
+      kos: seasonKos[pid] || 0,
       gamePoints: games.map(g => g.pointsAwarded?.[pid] || null),
-    }));
+    }))
+    .sort((a, b) => {
+      if (b.total !== a.total) return b.total - a.total;
+      if (b.winnings !== a.winnings) return b.winnings - a.winnings;
+      if (b.kos !== a.kos) return b.kos - a.kos;
+      return (a.player.displayName || '').trim().localeCompare((b.player.displayName || '').trim());
+    });
+  {
+    let lastKey = null, lastRank = 0;
+    playerRows.forEach((row, i) => {
+      const key = `${row.total}|${row.winnings}|${row.kos}`;
+      if (key !== lastKey) { lastRank = i + 1; lastKey = key; }
+      row.rank = lastRank;
+    });
+  }
 
   // Aggregate stats at the bottom (subs, league money, etc.). Player count
   // reads from attendees (the ground truth for who was at the table);
@@ -9231,8 +9263,8 @@ function LeagueDashboard({ onBack, fbUser }) {
                 </tr>
               </thead>
               <tbody>
-                {playerRows.map((row, i) => {
-                  const pos = i + 1;
+                {playerRows.map((row) => {
+                  const pos = row.rank;
                   return (
                     <tr key={row.player.id}>
                       <td className="sticky-col">

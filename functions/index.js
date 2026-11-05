@@ -131,6 +131,43 @@ function ukYesterdayString() {
   return `${yParts.year}-${yParts.month}-${yParts.day}`;
 }
 
+// Tiebreak stats for a set of games — MUST match the app's League table
+// (index.html, LeagueDashboard) and timer rail: money won (payouts by
+// finishing place) and knockouts per player.
+function tiebreakStats(games) {
+  const winnings = {};
+  const kos = {};
+  games.forEach((g) => {
+    const paidCount = Object.keys(g.payouts || {}).length;
+    (g.finishOrder || []).slice(0, paidCount).forEach((pid, i) => {
+      winnings[pid] = (winnings[pid] || 0) + (parseFloat(g.payouts?.[String(i + 1)]) || 0);
+    });
+    (g.knockouts || []).forEach((k) => {
+      if (k.knocker) kos[k.knocker] = (kos[k.knocker] || 0) + 1;
+    });
+  });
+  return { winnings, kos };
+}
+
+// Order [{ pid, total }] by points, then money won, then knockouts, then
+// name; attach a shared `rank` (shared only when all three numbers match).
+function rankRows(rows, stats, nameOf) {
+  const w = (pid) => stats.winnings[pid] || 0;
+  const k = (pid) => stats.kos[pid] || 0;
+  const sorted = [...rows].sort((a, b) => {
+    if (b.total !== a.total) return b.total - a.total;
+    if (w(b.pid) !== w(a.pid)) return w(b.pid) - w(a.pid);
+    if (k(b.pid) !== k(a.pid)) return k(b.pid) - k(a.pid);
+    return nameOf(a.pid).localeCompare(nameOf(b.pid));
+  });
+  let lastKey = null, lastRank = 0;
+  return sorted.map((r, i) => {
+    const key = `${r.total}|${w(r.pid)}|${k(r.pid)}`;
+    if (key !== lastKey) { lastRank = i + 1; lastKey = key; }
+    return { ...r, rank: lastRank };
+  });
+}
+
 // Compute standings rows for a season, sorted by total points desc.
 //
 // If `latestGameId` is passed, each row also carries:
@@ -161,19 +198,29 @@ function computeStandings(games, players, latestGameId) {
     Object.entries(totals).forEach(([pid, t]) => {
       priorTotals[pid] = t - (latestPoints[pid] || 0);
     });
-    // Build prior ranking — only players who had points before this game qualify
-    Object.entries(priorTotals)
-      .filter(([, t]) => t > 0)
-      .sort((a, b) => b[1] - a[1])
-      .forEach(([pid], i) => { priorRankMap[pid] = i + 1; });
+    // Build prior ranking — only players who had points before this game
+    // qualify. Tiebreak stats exclude the latest game too.
+    const priorNameOf = (pid) => (players.find((p) => p.id === pid)?.displayName || pid).trim();
+    rankRows(
+      Object.entries(priorTotals)
+        .filter(([, t]) => t > 0)
+        .map(([pid, total]) => ({ pid, total })),
+      tiebreakStats(games.filter((g) => g.id !== latestGameId)),
+      priorNameOf
+    ).forEach(({ pid, rank }) => { priorRankMap[pid] = rank; });
   }
 
   const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
-  return Object.entries(totals)
-    .filter(([, t]) => t > 0)
-    .sort((a, b) => b[1] - a[1])
-    .map(([pid, total], i) => {
-      const currentRank = i + 1;
+  const nameOf = (pid) => (playersById[pid]?.displayName || pid).trim();
+  const ordered = rankRows(
+    Object.entries(totals)
+      .filter(([, t]) => t > 0)
+      .map(([pid, total]) => ({ pid, total })),
+    tiebreakStats(games),
+    nameOf
+  );
+  return ordered
+    .map(({ pid, total, rank: currentRank }) => {
       const priorRank = priorRankMap[pid];
       let delta = null;
       let isNew = false;
@@ -186,6 +233,7 @@ function computeStandings(games, players, latestGameId) {
       }
       return {
         pid,
+        rank: currentRank,
         displayName: playersById[pid]?.displayName || pid,
         total,
         gamesPlayed: playedCount[pid] || 0,
@@ -622,10 +670,11 @@ function renderResultsEmail({ game, season, standings, players, recap }) {
   const standingsRows = standings
     .map((row, i) => {
       const rankColours = ['#f4d03f', '#d4d4d4', '#d4924a'];
-      const rankColour = rankColours[i] || TEXT_LIGHT;
+      const rank = row.rank || i + 1;
+      const rankColour = rankColours[rank - 1] || TEXT_LIGHT;
       const last = i === standings.length - 1 ? '' : ROW_DIVIDER;
       return `<tr>
-        <td style="padding:8px 4px;color:${rankColour};font-weight:700;font-family:monospace;width:32px;${last}">${i + 1}</td>
+        <td style="padding:8px 4px;color:${rankColour};font-weight:700;font-family:monospace;width:32px;${last}">${rank}</td>
         <td style="padding:8px 4px;text-align:left;font-size:12px;width:48px;${last}">${renderDelta(row)}</td>
         <td style="padding:8px 4px;color:${TEXT_LIGHT};${last}">${escape(row.displayName)}</td>
         <td style="padding:8px 4px;color:${BRAND_GREEN_LIGHT};text-align:right;font-family:monospace;font-weight:600;${last}">${row.total.toLocaleString()}</td>
