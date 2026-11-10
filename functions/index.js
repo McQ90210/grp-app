@@ -540,11 +540,15 @@ async function generateHRRecap({ game, players, runningTotals }) {
 
   const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
   const podium = [1, 2, 3].map((place) => {
+    if (place === 1 && game.firstPlaceForfeited) return '1. N/A (no winner logged)';
     const pid = (game.finishOrder || [])[place - 1];
     const name = pid ? playersById[pid]?.displayName || pid : null;
     const payout = (game.payouts && game.payouts[String(place)]) || 0;
     return name ? `${place}. ${name} (£${payout})` : null;
   }).filter(Boolean).join(', ');
+  const forfeitNote = game.firstPlaceForfeited
+    ? `\n- Ruling: a player who left early handed his chips to a player who had already been knocked out, who then played them to the end. The group ruled that is a forfeit, so NO win and NO winnings are logged for anyone in first place. Mention this ruling briefly, do not name a winner, and do not credit anyone with first place.`
+    : '';
 
   // Pick the biggest winner / loser tonight to give Gemini something concrete.
   const tonightNets = (game.attendees || []).map((pid) => ({
@@ -576,7 +580,7 @@ Context:
 - Date: ${game.date}
 - ${(game.attendees || []).length} players, pot £${game.pot || 0}, ${game.totalRebuys || 0} rebuys
 - Buy-in: £${game.buyIn || 30}
-- Podium: ${podium || 'no results recorded'}
+- Podium: ${podium || 'no results recorded'}${forfeitNote}
 - Biggest winner tonight: ${topNet ? `${topNet.name} (+£${topNet.net})` : '—'}
 - Biggest loser tonight: ${bottomNet ? `${bottomNet.name} (${bottomNet.net >= 0 ? '+' : ''}£${bottomNet.net})` : '—'}
 - All-time HR leaderboard: ${leaderboard || '(no history yet)'}
@@ -759,20 +763,23 @@ function renderHRResultsEmail({ game, players, allHRGames, recap }) {
   const playersById = Object.fromEntries(players.map((p) => [p.id, p]));
   const finishOrder = (game.finishOrder || []).map((pid) => ({
     pid,
-    name: playersById[pid]?.displayName || pid,
+    name: pid ? (playersById[pid]?.displayName || pid) : null,
   }));
   const ROW_DIVIDER = 'border-bottom:1px solid rgba(20,163,123,0.12);';
 
-  // Podium (top 3)
+  // Podium (top 3). When 1st place was ruled N/A (chips handed over, no win
+  // logged for anyone) the row shows N/A with no payout.
   const podium = [1, 2, 3].map((place) => {
     const f = finishOrder[place - 1];
-    const payout = (game.payouts && game.payouts[String(place)]) || 0;
+    const naFirst = place === 1 && game.firstPlaceForfeited;
+    const payout = naFirst ? null : ((game.payouts && game.payouts[String(place)]) || 0);
     const last = place === 3 ? '' : ROW_DIVIDER;
-    return f
+    const name = naFirst ? 'N/A' : f && f.name;
+    return name
       ? `<tr>
            <td style="padding:10px 4px;font-size:18px;width:32px;${last}">${['🥇', '🥈', '🥉'][place - 1]}</td>
-           <td style="padding:10px 4px;color:${TEXT_LIGHT};font-weight:600;font-size:15px;${last}">${escape(f.name)}</td>
-           <td style="padding:10px 4px;color:${BRAND_GREEN_LIGHT};text-align:right;font-family:monospace;font-size:15px;${last}">£${payout}</td>
+           <td style="padding:10px 4px;color:${TEXT_LIGHT};font-weight:600;font-size:15px;${last}">${escape(name)}</td>
+           <td style="padding:10px 4px;color:${BRAND_GREEN_LIGHT};text-align:right;font-family:monospace;font-size:15px;${last}">${payout === null ? '' : '£' + payout}</td>
          </tr>`
       : '';
   }).join('');

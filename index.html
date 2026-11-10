@@ -8324,10 +8324,11 @@ function HighRollersHistory({ onBack, fbUser }) {
                 {games.slice(0, 10).map((g) => {
                   const podium = [1, 2, 3].map((place) => {
                     const pid = (g.finishOrder || [])[place - 1];
+                    const naFirst = place === 1 && g.firstPlaceForfeited;
                     return {
                       place,
-                      name: pid ? (playersById[pid]?.displayName || pid) : null,
-                      payout: g.payouts?.[String(place)] || 0,
+                      name: naFirst ? 'N/A' : (pid ? (playersById[pid]?.displayName || pid) : null),
+                      payout: naFirst ? 0 : (g.payouts?.[String(place)] || 0),
                       pid,
                     };
                   });
@@ -8454,7 +8455,7 @@ function HRGameReportModal({ game, players, onClose }) {
 
   // Finishing order first, then any attendees missing from it (shouldn't
   // normally happen, but keeps the report complete on incomplete data).
-  const orderedPids = [...finishOrder, ...attendees.filter((pid) => !finishOrder.includes(pid))];
+  const orderedPids = [...finishOrder.filter(Boolean), ...attendees.filter((pid) => !finishOrder.includes(pid))];
 
   const rows = orderedPids.map((pid) => {
     const idx = finishOrder.indexOf(pid);
@@ -8515,6 +8516,17 @@ function HRGameReportModal({ game, players, onClose }) {
           </div>
         </div>
         <div className="space-y-2">
+          {game.firstPlaceForfeited && (
+            <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-black/30 border border-emerald-500/10">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <span className="w-6 text-center flex-shrink-0 font-mono text-sm text-yellow-100/60">🥇</span>
+                <span className="truncate text-emerald-100 font-mono text-sm">N/A</span>
+                <span className="flex-shrink-0 text-[10px] font-mono text-yellow-100/50 bg-yellow-500/10 border border-yellow-500/20 rounded-full px-1.5 py-0.5">
+                  chips handed over, no win logged
+                </span>
+              </div>
+            </div>
+          )}
           {rows.map((r) => (
             <div key={r.pid} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-black/30 border border-emerald-500/10">
               <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -11321,6 +11333,11 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
   const [payouts, setPayouts] = useState({ ...(game.payouts || {}) });
   const [pointsAwarded, setPointsAwarded] = useState({ ...(game.pointsAwarded || {}) });
   const [finishOrder, setFinishOrder] = useState([...(game.finishOrder || [])]);
+  // HR only: 1st place logged as N/A (the winner played with chips handed
+  // over by a player who left early, so the club ruled no win and no
+  // winnings are credited to anyone). Stored as finishOrder[0] = null plus
+  // firstPlaceForfeited: true on the game doc.
+  const [firstForfeited, setFirstForfeited] = useState(game.type === 'highrollers' && !!game.firstPlaceForfeited);
   // Per-player rebuy counts. Needed for HR so the profit/loss math
   // (buyIns += buyIn * (1 + rebuys[pid])) lands correctly per player.
   const [rebuys, setRebuys] = useState({ ...(game.rebuys || {}) });
@@ -11469,6 +11486,14 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
         updates.pot = newBuyIn * (attendees.length + totalR);
         // HR has no league money / subs — prize pool = pot.
         updates.prizePool = updates.pot;
+        updates.firstPlaceForfeited = firstForfeited;
+        if (firstForfeited) {
+          // N/A first place: nobody is credited with the win or its money.
+          // saveGame merges maps, so zero the 1st payout rather than
+          // deleting the key (a delete would leave the old value behind).
+          updates.finishOrder = [null, ...trimmedFinishOrder.slice(1)];
+          updates.payouts = { ...payouts, '1': 0 };
+        }
       }
       await window.GRP_DB.saveGame(updates);
       onSaved();
@@ -11654,11 +11679,22 @@ function EditGameModal({ game, players, onClose, onSaved, onRequestDeleteSeason 
                       {placeLabel}
                     </div>
                     <select
-                      value={current}
-                      onChange={(e) => setPlaceTo(i, e.target.value)}
+                      value={i === 0 && firstForfeited ? '__na__' : current}
+                      onChange={(e) => {
+                        if (e.target.value === '__na__') {
+                          setFirstForfeited(true);
+                          setFinishOrder((prev) => { const next = [...prev]; next[0] = null; return next; });
+                        } else {
+                          if (i === 0) setFirstForfeited(false);
+                          setPlaceTo(i, e.target.value);
+                        }
+                      }}
                       className={`flex-1 px-2 py-1.5 rounded bg-black/40 border text-yellow-50 font-mono text-sm focus:outline-none ${isDup ? 'border-red-400/60 focus:border-red-400' : 'border-yellow-500/20 focus:border-yellow-500/50'}`}
                     >
                       <option value="" style={{ background: '#0a3d1f' }}>—</option>
+                      {!isLeague && i === 0 && (
+                        <option value="__na__" style={{ background: '#0a3d1f' }}>N/A (chips handed over, no win logged)</option>
+                      )}
                       {attendees.map((pid) => (
                         <option key={pid} value={pid} style={{ background: '#0a3d1f' }}>
                           {(playersById[pid]?.displayName) || pid}
