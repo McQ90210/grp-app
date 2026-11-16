@@ -8321,7 +8321,7 @@ function HighRollersHistory({ onBack, fbUser }) {
             <div className="mt-6 pt-4 border-t border-emerald-500/10">
               <div className="font-mono text-xs text-yellow-100/40 tracking-widest mb-2">RECENT GAMES</div>
               <div className="space-y-3">
-                {games.slice(0, 10).map((g) => {
+                {filteredGames.map((g) => {
                   const podium = [1, 2, 3].map((place) => {
                     const pid = (g.finishOrder || [])[place - 1];
                     const naFirst = place === 1 && g.firstPlaceForfeited;
