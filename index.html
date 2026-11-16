@@ -9318,7 +9318,14 @@ function LeagueDashboard({ onBack, fbUser }) {
                             onClick={openGameBreakdown}
                             title="Tap to see how these points were earned"
                           >
-                            {pts.toLocaleString()}
+                            <span className="relative inline-block">
+                              {finishPos >= 0 && finishPos < 3 && (
+                                <span className="absolute right-full mr-1.5 top-1/2 -translate-y-1/2 leading-none" style={{ fontSize: '0.9em' }} aria-label={`${finishPos + 1}${['st', 'nd', 'rd'][finishPos]} place`}>
+                                  {['🥇', '🥈', '🥉'][finishPos]}
+                                </span>
+                              )}
+                              {pts.toLocaleString()}
+                            </span>
                           </td>
                         );
                       })}
